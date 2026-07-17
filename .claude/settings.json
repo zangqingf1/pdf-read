@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python -c \"import sys,json,os; inp=json.load(sys.stdin); fp=inp.get('tool_input',{}).get('file_path','') or inp.get('tool_response',{}).get('filePath',''); targets=['PRD.md','TECH_DESING.md','backend/app/models/','backend/app/services/','backend/app/api/','frontend/src/pages/','frontend/src/stores/']; matched=any(t in fp.replace(chr(92),'/') for t in targets); claude_md=os.path.join(os.path.dirname(fp),'..','CLAUDE.md') if fp else ''; [sys.exit(0) if not matched else (print(json.dumps({'systemMessage':'CLAUDE.md may be stale. Run /init to refresh.'})), sys.exit(0))]\" 2>/dev/null || true",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

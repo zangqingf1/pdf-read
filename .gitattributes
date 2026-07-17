@@ -1,0 +1,29 @@
+# Auto-detect text files, convert to LF on commit
+* text=auto
+
+# Source code
+*.tsx text eol=lf
+*.ts text eol=lf
+*.js text eol=lf
+*.jsx text eol=lf
+*.py text eol=lf
+*.json text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+*.md text eol=lf
+*.css text eol=lf
+*.html text eol=lf
+*.sh text eol=lf
+Dockerfile text eol=lf
+*.conf text eol=lf
+
+# Windows-specific: force CRLF for batch scripts
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Binary files
+*.db binary
+*.pdf binary
+*.png binary
+*.jpg binary
+*.ico binary

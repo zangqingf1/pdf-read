@@ -1,0 +1,112 @@
+version: '3.8'
+
+services:
+  # ========== Frontend ==========
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  # ========== Backend API ==========
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql://user:pass@db:5432/pdfreader
+      - REDIS_URL=redis://redis:6379/0
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
+      - DEEPSEEK_BASE_URL=${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
+      - DEEPSEEK_MODEL=${DEEPSEEK_MODEL:-deepseek-chat}
+      - PADDLEOCR_MODEL_PATH=/models/paddleocr
+      - SECRET_KEY=${SECRET_KEY:-dev-secret}
+      - ENVIRONMENT=${ENVIRONMENT:-development}
+      - DEBUG=${DEBUG:-true}
+      - MAX_UPLOAD_SIZE_MB=${MAX_UPLOAD_SIZE_MB:-50}
+      - UPLOAD_DIR=/app/uploads
+    volumes:
+      - uploads_data:/app/uploads
+      - paddleocr_models:/models
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    restart: unless-stopped
+
+  # ========== Celery Worker ==========
+  celery_worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: celery -A app.tasks.celery_app worker -l info -c 2
+    environment:
+      - DATABASE_URL=postgresql://user:pass@db:5432/pdfreader
+      - REDIS_URL=redis://redis:6379/0
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
+      - DEEPSEEK_BASE_URL=${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
+      - DEEPSEEK_MODEL=${DEEPSEEK_MODEL:-deepseek-chat}
+      - PADDLEOCR_MODEL_PATH=/models/paddleocr
+      - UPLOAD_DIR=/app/uploads
+    volumes:
+      - uploads_data:/app/uploads
+      - paddleocr_models:/models
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    restart: unless-stopped
+
+  # ========== PostgreSQL ==========
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: pdfreader
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: pass
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U user -d pdfreader"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ========== Redis ==========
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    restart: unless-stopped
+
+  # ========== Nginx (Reverse Proxy) ==========
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - frontend
+      - backend
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  redisdata:
+  uploads_data:
+  paddleocr_models:

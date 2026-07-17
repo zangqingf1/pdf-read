@@ -1,0 +1,53 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Global styles */
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+    'Helvetica Neue', Arial, 'Noto Sans', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Word token hover effect */
+.word-token {
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+  border-radius: 3px;
+  padding: 0 1px;
+}
+
+.word-token:hover {
+  background-color: #bfdbfe;
+}
+
+.word-token.complex-sentence {
+  border-bottom: 2px dashed #f59e0b;
+  cursor: pointer;
+}
+
+/* Grammar tree node styles */
+.grammar-tree-node {
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.grammar-tree-node:hover {
+  filter: brightness(0.9);
+}
+
+/* Reading progress */
+.reading-progress-bar {
+  transition: width 0.3s ease;
+}
+
+/* Cloze card animation */
+.cloze-card {
+  transition: transform 0.3s ease, opacity 0.3s ease;
+}
+
+.cloze-card.flipping {
+  transform: rotateY(90deg);
+}
