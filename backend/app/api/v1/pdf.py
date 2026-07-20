@@ -2,7 +2,6 @@
 
 import json
 import uuid
-import asyncio
 from typing import Optional
 
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Depends, BackgroundTasks
@@ -28,10 +27,10 @@ router = APIRouter()
 
 @router.post("/upload", response_model=PDFUploadResponse)
 async def upload_pdf(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     mineru_token: str = Form(""),
     db: AsyncSession = Depends(get_db),
-    background_tasks: BackgroundTasks = BackgroundTasks(),
 ):
     """Upload a PDF file for parsing.
 
@@ -55,31 +54,20 @@ async def upload_pdf(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+    task_id = str(document.id)
+
+    # Fire-and-forget background parsing (standalone deployment without Celery worker)
     async def _parse_in_background(doc_id: uuid.UUID, file_path: str, token: str):
-        """Parse PDF in background with its own DB session."""
         async with async_session_factory() as bg_db:
             try:
                 await pdf_service.parse_document(doc_id, bg_db, mineru_token=token)
             except Exception:
-                pass  # parse_document already marks status as 'failed' and flushes
+                pass  # parse_document already marks status as 'failed'
             await bg_db.commit()
 
-    task_id = str(document.id)
-    use_celery = False
-    try:
-        from app.tasks.pdf_tasks import parse_pdf_task
-        if parse_pdf_task is not None:
-            parse_pdf_task.delay(
-                task_id=task_id, file_path=document.file_path, mineru_token=mineru_token
-            )
-            use_celery = True
-    except Exception:
-        pass  # Celery/Redis unavailable → fall back to BackgroundTasks
-
-    if not use_celery:
-        background_tasks.add_task(
-            _parse_in_background, document.id, document.file_path, mineru_token
-        )
+    background_tasks.add_task(
+        _parse_in_background, document.id, document.file_path, mineru_token
+    )
 
     return PDFUploadResponse(task_id=task_id, status="processing")
 
