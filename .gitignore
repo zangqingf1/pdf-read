@@ -36,7 +36,9 @@ Thumbs.db
 uploads/
 backend/uploads/
 *.db
-models/
+# PaddleOCR models only (NOT app/models/)
+/paddleocr_models/
+/models/
 
 # Logs
 *.log
