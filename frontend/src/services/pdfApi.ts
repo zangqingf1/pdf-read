@@ -18,6 +18,18 @@ export interface ParagraphResult {
   text_zh?: string | null;
 }
 
+export interface WordAnalysisItem {
+  id: string;
+  paragraph_index: number;
+  word: string;
+  phonetic: string;
+  part_of_speech: string;
+  definition: string;
+  definition_zh: string;
+  example_sentences: string[];
+  example_sentences_zh: string[];
+}
+
 export interface PDFResultResponse {
   document_id: string;
   title?: string;
@@ -25,6 +37,8 @@ export interface PDFResultResponse {
   paragraphs: ParagraphResult[];
   word_count: number;
   paragraph_count: number;
+  word_analyses: WordAnalysisItem[];
+  sentence_analyses: any[];
 }
 
 export interface DocumentListItem {

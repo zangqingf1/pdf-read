@@ -14,9 +14,8 @@ from app.api.v1 import api_v1_router
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan: startup and shutdown events."""
-    # Startup
-    if settings.ENVIRONMENT == "development":
-        await init_db()
+    # Startup: always create tables on startup (create_all is idempotent)
+    await init_db()
     yield
     # Shutdown
     await close_db()

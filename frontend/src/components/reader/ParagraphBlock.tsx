@@ -1,169 +1,200 @@
-import { useCallback, useMemo, useState } from 'react';
-import { Typography, Button } from 'antd';
-import { DownOutlined, RightOutlined } from '@ant-design/icons';
+import React, { useState, useCallback, useMemo } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import { Typography } from 'antd';
+import { EyeOutlined, EyeInvisibleOutlined, LoadingOutlined } from '@ant-design/icons';
 import type { ParagraphResult } from '../../services/pdfApi';
-import { useReaderStore, normalizeWord } from '../../stores/readerStore';
+import { useReaderStore } from '../../stores/readerStore';
+import { useDocumentStore } from '../../stores/documentStore';
 
 const { Text } = Typography;
 
 interface ParagraphBlockProps {
   paragraph: ParagraphResult;
   translation?: string;
+  isTranslating?: boolean;
 }
 
-/** Split text into sentences, keeping delimiters attached. */
-function splitSentences(text: string): { text: string; startPos: number }[] {
-  const result: { text: string; startPos: number }[] = [];
-  // Match: everything up to a sentence-ending punctuation + optional quotes + trailing whitespace
-  const re = /[^.!?\n]+(?:[.!?]+["'»”)]*\s*)/g;
-  let m: RegExpExecArray | null;
-  let lastEnd = 0;
-
-  while ((m = re.exec(text)) !== null) {
-    const start = m.index;
-    // Capture any leading whitespace/gap between this sentence and the last
-    result.push({ text: m[0], startPos: start });
-    lastEnd = re.lastIndex;
-  }
-
-  // Any remaining text after the last match (fragment without ending punctuation)
-  if (lastEnd < text.length) {
-    const remaining = text.slice(lastEnd).trim();
-    if (remaining.length >= 5) {
-      result.push({ text: remaining, startPos: lastEnd });
-    }
-  }
-
-  // If no sentences found, return the whole text as one
-  if (result.length === 0 && text.trim().length > 0) {
-    result.push({ text: text.trim(), startPos: 0 });
-  }
-
-  return result;
+/** Split text into sentences, preserving leading whitespace. */
+function splitSentences(text: string): { text: string; index: number }[] {
+  // Split on .!? followed by whitespace + capital letter / quote
+  const parts = text.split(/(?<=[.!?])\s+(?=[A-Z"'])/g);
+  return parts
+    .map((s, i) => ({ text: s.trim(), index: i }))
+    .filter(s => s.text.length > 0);
 }
 
-/** Tokenize a string into word and non-word segments with character positions. */
-function tokenize(text: string): { text: string; isWord: boolean; charPos: number }[] {
-  const tokens: { text: string; isWord: boolean; charPos: number }[] = [];
-  const re = /([a-zA-Z0-9À-ɏ'’‘’\-]+)|([^a-zA-Z0-9À-ɏ'’‘’\-]+)/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(text)) !== null) {
-    if (m[1] !== undefined) {
-      tokens.push({ text: m[1], isWord: true, charPos: m.index });
-    } else if (m[2] !== undefined) {
-      tokens.push({ text: m[2], isWord: false, charPos: m.index });
-    }
-  }
-  if (tokens.length === 0 && text.length > 0) {
-    tokens.push({ text, isWord: false, charPos: 0 });
-  }
-  return tokens;
-}
+/** A single clickable word token with selection & analysis state. */
+function WordToken({
+  text,
+  word,
+  paragraphIndex,
+}: {
+  text: string;
+  word: string;
+  paragraphIndex: number;
+}) {
+  const { selectedWords, wordAnalyses, toggleWordSelection } = useDocumentStore();
+  const key = `${paragraphIndex}:${word.toLowerCase()}`;
+  const isSelected = !!selectedWords[key];
+  const hasAnalysis = !!wordAnalyses[key];
 
-export default function ParagraphBlock({ paragraph, translation }: ParagraphBlockProps) {
-  const [transExpanded, setTransExpanded] = useState(false);
-  const {
-    selectedKeys,
-    toggleWord,
-    selectedSentenceSpans,
-    toggleSentenceSpan,
-  } = useReaderStore();
-  const paraIndex = paragraph.index;
-
-  const sentences = useMemo(
-    () => splitSentences(paragraph.text),
-    [paragraph.text]
-  );
-
-  const handleWordClick = useCallback(
-    (e: React.MouseEvent, rawWord: string, charPos: number) => {
+  const handleClick = useCallback(
+    (e: React.MouseEvent) => {
       e.stopPropagation();
-      toggleWord(rawWord, paragraph.text, { paraIndex, charPos });
+      toggleWordSelection(paragraphIndex, word.toLowerCase());
     },
-    [paragraph.text, paraIndex, toggleWord]
+    [paragraphIndex, word, toggleWordSelection]
   );
-
-  const handleSentenceClick = useCallback(
-    (sentText: string, sentIndex: number) => {
-      const spanKey = `sent-${paraIndex}-${sentIndex}`;
-      toggleSentenceSpan(spanKey, sentText.trim(), paraIndex, paragraph.text);
-    },
-    [paraIndex, paragraph.text, toggleSentenceSpan]
-  );
-
-  const selectedSet = useMemo(() => new Set(selectedKeys), [selectedKeys]);
-  const spansSet = useMemo(() => new Set(selectedSentenceSpans), [selectedSentenceSpans]);
 
   return (
-    <div className="paragraph-block" data-para-index={paragraph.index}>
-      <Text className="text-lg leading-8 text-gray-900 font-serif paragraph-text">
-        {sentences.map((sent, si) => {
-          const spanKey = `sent-${paraIndex}-${si}`;
-          const isSentSelected = spansSet.has(spanKey);
-          const tokens = tokenize(sent.text);
+    <span
+      className={`word-token ${isSelected ? 'word-token-selected' : ''} ${hasAnalysis && !isSelected ? 'word-token-has-analysis' : ''}`}
+      onClick={handleClick}
+    >
+      {text}
+    </span>
+  );
+}
 
-          return (
-            <span
-              key={si}
-              onClick={() => handleSentenceClick(sent.text, si)}
-              className={`sentence-span cursor-pointer transition-all duration-150 rounded-sm
-                ${isSentSelected
-                  ? 'border-b-2 border-dashed border-blue-500 bg-blue-50/50 pb-0.5'
-                  : 'border-b-2 border-transparent hover:bg-gray-50 hover:border-gray-300 pb-0.5'
-                }`}
-              title="点击选中/取消整句（可选择多句）"
-            >
-              {tokens.map((tok, ti) => {
-                const tokenKey = `${si}-${ti}`;
-                if (!tok.isWord) {
-                  return (
-                    <span key={tokenKey}>{tok.text}</span>
-                  );
-                }
+/** Render a plain text string with clickable word tokens. */
+function renderTokenizedText(text: string, paragraphIndex: number): React.ReactNode {
+  const parts = text.split(/(\s+)/g);
+  return parts.map((part, i) => {
+    if (/^\s+$/.test(part)) return part;
+    if (/[a-zA-Z]/.test(part)) {
+      const word = part.replace(/[^a-zA-Z'-]/g, '');
+      if (word.length > 0) {
+        return (
+          <WordToken key={i} text={part} word={word} paragraphIndex={paragraphIndex} />
+        );
+      }
+    }
+    return part;
+  });
+}
 
-                const wordKey = normalizeWord(tok.text);
-                const isWordSelected = selectedSet.has(wordKey);
+/** Recursively process React children, replacing text nodes with clickable word tokens. */
+function processChildren(children: React.ReactNode, paragraphIndex: number): React.ReactNode {
+  return React.Children.map(children, (child) => {
+    if (typeof child === 'string') {
+      return renderTokenizedText(child, paragraphIndex);
+    }
+    if (React.isValidElement(child)) {
+      const childProps = (child.props as any) || {};
+      if (childProps.children) {
+        return React.cloneElement(child, {
+          ...childProps,
+          children: processChildren(childProps.children, paragraphIndex),
+        } as any);
+      }
+    }
+    return child;
+  });
+}
 
-                return (
-                  <span
-                    key={tokenKey}
-                    onClick={(e) => handleWordClick(e, tok.text, tok.charPos)}
-                    className={`cursor-pointer transition-colors px-0.5 rounded ${
-                      isWordSelected
-                        ? 'bg-yellow-300 outline outline-2 outline-yellow-400'
-                        : 'hover:bg-gray-100'
-                    }`}
-                    title="点击选中/取消单词"
-                  >
-                    {tok.text}
-                  </span>
-                );
-              })}
-            </span>
-          );
-        })}
-      </Text>
+/** A single clickable sentence with selection & analysis state. */
+function SentenceToken({
+  sentence,
+  paragraphIndex,
+}: {
+  sentence: { text: string; index: number };
+  paragraphIndex: number;
+}) {
+  const {
+    selectedSentences,
+    sentenceAnalyses,
+    toggleSentenceSelection,
+  } = useDocumentStore();
+  const key = `${paragraphIndex}:${sentence.index}`;
+  const isSelected = !!selectedSentences[key];
+  const hasAnalysis = !!sentenceAnalyses[key];
 
-      {translation && (
-        <div className="mt-1">
-          <Button
-            type="text"
-            size="small"
-            icon={transExpanded ? <DownOutlined /> : <RightOutlined />}
-            onClick={() => setTransExpanded(!transExpanded)}
-            className="!text-gray-400 !text-xs !px-1 !py-0 hover:!text-blue-500"
+  const handleClick = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation();
+      toggleSentenceSelection(paragraphIndex, sentence.index, sentence.text);
+    },
+    [paragraphIndex, sentence, toggleSentenceSelection]
+  );
+
+  // Word-token-enabled markdown components for this sentence
+  const components = useMemo(
+    () => ({
+      p: ({ children, ...props }: any) => (
+        <span {...props}>{processChildren(children, paragraphIndex)}</span>
+      ),
+    }),
+    [paragraphIndex]
+  );
+
+  return (
+    <span
+      className={`sentence-selectable ${isSelected ? 'sentence-selected' : ''} ${hasAnalysis && !isSelected ? 'sentence-has-analysis' : ''}`}
+      onClick={handleClick}
+      data-paragraph-index={paragraphIndex}
+      data-sentence-index={sentence.index}
+    >
+      <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
+        {sentence.text}
+      </ReactMarkdown>
+    </span>
+  );
+}
+
+export default function ParagraphBlock({
+  paragraph,
+  translation,
+  isTranslating,
+}: ParagraphBlockProps) {
+  const { fontSize } = useReaderStore();
+  const [showTranslation, setShowTranslation] = useState(false);
+
+  // Split the paragraph into sentences for sentence-level selection
+  const sentences = useMemo(() => splitSentences(paragraph.text), [paragraph.text]);
+
+  return (
+    <div
+      className="paragraph-block prose max-w-none text-gray-900 font-serif [&_p]:mb-0"
+      style={{ fontSize: `${fontSize}px` }}
+      data-paragraph-index={paragraph.index}
+    >
+      {/* Sentence-level rendering with clickable sentences */}
+      <p>
+        {sentences.map((sentence) => (
+          <SentenceToken
+            key={sentence.index}
+            sentence={sentence}
+            paragraphIndex={paragraph.index}
+          />
+        ))}{' '}
+      </p>
+
+      {/* Translation section */}
+      {translation ? (
+        <div className="not-prose" style={{ fontSize: `${fontSize - 4}px`, marginTop: 4 }}>
+          <span
+            onClick={() => setShowTranslation(!showTranslation)}
+            className="inline-flex items-center gap-1 cursor-pointer select-none"
+            style={{ color: '#9ca3af' }}
           >
-            {transExpanded ? '收起翻译' : '展开翻译'}
-          </Button>
-          {transExpanded && (
-            <div className="mt-1 pl-4 border-l-2 border-blue-400">
-              <Text className="text-base text-gray-500 leading-7">
-                {translation}
-              </Text>
+            {showTranslation ? <EyeInvisibleOutlined /> : <EyeOutlined />}
+            {showTranslation ? '隐藏翻译' : '查看翻译'}
+          </span>
+          {showTranslation && (
+            <div className="mt-1 p-3 bg-blue-50 rounded-md text-gray-600 border-l-2 border-blue-300">
+              {translation}
             </div>
           )}
         </div>
-      )}
+      ) : isTranslating ? (
+        <div className="mt-1 not-prose">
+          <Text type="secondary" className="text-xs">
+            <LoadingOutlined className="mr-1" />
+            翻译中...
+          </Text>
+        </div>
+      ) : null}
     </div>
   );
 }

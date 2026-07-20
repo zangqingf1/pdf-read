@@ -1,0 +1,316 @@
+"""Word analysis API routes — AI-powered vocabulary lookup."""
+
+import json
+import re
+import uuid
+
+from fastapi import APIRouter, HTTPException, Depends
+from sqlalchemy import select, delete
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.database import get_db
+from app.models.word_analysis import WordAnalysis
+from app.schemas.words import (
+    WordAnalysisRequest,
+    WordAnalysisResponse,
+    WordAnalysisResult,
+)
+from app.services.ai_service import AIService, ai_service
+
+router = APIRouter()
+
+
+def _extract_sentence(text: str, word: str) -> str:
+    """Extract the sentence containing `word` from `text`.
+
+    Two-level split: paragraph/heading breaks (``\\n{2,}``), then
+    sentence-ending punctuation (``[.!?]\\s+``).  Skips markdown headings
+    when the word also appears in body text.
+
+    **Crucially**, when the best candidate is longer than 150 chars
+    (e.g. a run-on PDF paragraph without punctuation) the function
+    narrows to a ~200-char window around *this specific word*.  This
+    guarantees each word in the same paragraph gets its own unique
+    context for the AI prompt, producing distinct translations.
+    """
+    if not text or not word:
+        return text or ""
+
+    word_lower = word.lower()
+    HEADING_RE = re.compile(r'^#{1,6}\s+', re.MULTILINE)
+    SENTENCE_SPLIT = re.compile(r'(?<=[.!?])\s+')
+
+    # ── Stage 1: split into blocks by paragraph / heading breaks ──
+    blocks = re.split(r'\n{2,}', text)
+
+    candidates: list[tuple[str, bool]] = []  # (sentence, is_heading)
+
+    for block in blocks:
+        block = block.strip()
+        if not block:
+            continue
+
+        is_heading = bool(HEADING_RE.match(block)) and len(block) < 120
+        clean_block = HEADING_RE.sub('', block)
+
+        for s in SENTENCE_SPLIT.split(clean_block):
+            s = s.strip()
+            if s and word_lower in s.lower():
+                candidates.append((s, is_heading))
+
+        # Also check the original (with heading markers) — the word may
+        # only exist in a heading line.
+        if clean_block != block:
+            for s in SENTENCE_SPLIT.split(block):
+                s = s.strip()
+                if s and word_lower in s.lower():
+                    if s not in [c[0] for c in candidates]:
+                        candidates.append((s, is_heading))
+
+    # ── Pick the best candidate ──
+    if candidates:
+        body = [s for s, h in candidates if not h]
+        best = (body or [s for s, _ in candidates])[0]
+    else:
+        best = ""  # signal: no sentence found
+
+    # ── Narrow to a window if the "sentence" is too long ──
+    # A real English sentence is rarely > 150 chars.  Beyond that we're
+    # looking at a run-on paragraph — fall back to a per-word window so
+    # every word gets a distinct AI context.
+    MAX_SENTENCE = 150
+    WINDOW_HALF = 100  # chars on each side of the target word
+
+    if best and len(best) <= MAX_SENTENCE:
+        return best
+
+    # Either no sentence candidate at all, or the one we found is a
+    # run-on blob.  Extract a window tightly around the target word.
+    idx = text.lower().find(word_lower)
+    if idx >= 0:
+        start = max(0, idx - WINDOW_HALF)
+        end = min(len(text), idx + len(word) + WINDOW_HALF)
+        # Try not to break mid-word at the boundaries
+        while start > 0 and text[start - 1] not in (' ', '\n', '\r', '\t'):
+            start -= 1
+        while end < len(text) and text[end] not in (' ', '\n', '\r', '\t'):
+            end += 1
+        return text[start:end].strip()
+
+    return text[:200]
+
+
+async def _persist_analyses(
+    document_id: str,
+    analyses: list[dict],
+    db: AsyncSession,
+):
+    """Persist word analyses to DB. Uses upsert: same (doc_id, para_index, word)
+    overwrites existing record."""
+    for entry in analyses:
+        para_index = entry.get("paragraph_index", 0)
+        word = entry.get("word", "")
+        if not word:
+            continue
+
+        # Check if an analysis already exists for this (document, paragraph, word) tuple
+        stmt = select(WordAnalysis).where(
+            WordAnalysis.document_id == document_id,
+            WordAnalysis.paragraph_index == para_index,
+            WordAnalysis.word == word,
+        )
+        result = await db.execute(stmt)
+        existing = result.scalars().first()
+
+        if existing:
+            # Update existing record
+            existing.phonetic = entry.get("phonetic", "")
+            existing.part_of_speech = entry.get("part_of_speech", "")
+            existing.definition = entry.get("definition", "")
+            existing.definition_zh = entry.get("definition_zh", "")
+            examples = entry.get("example_sentences", [])
+            examples_zh = entry.get("example_sentences_zh", [])
+            existing.example_sentences = (
+                json.dumps(examples, ensure_ascii=False) if examples else "[]"
+            )
+            existing.example_sentences_zh = (
+                json.dumps(examples_zh, ensure_ascii=False) if examples_zh else "[]"
+            )
+        else:
+            # Create new record
+            examples = entry.get("example_sentences", [])
+            examples_zh = entry.get("example_sentences_zh", [])
+            new_analysis = WordAnalysis(
+                document_id=document_id,
+                paragraph_index=para_index,
+                word=word,
+                phonetic=entry.get("phonetic", ""),
+                part_of_speech=entry.get("part_of_speech", ""),
+                definition=entry.get("definition", ""),
+                definition_zh=entry.get("definition_zh", ""),
+                example_sentences=json.dumps(examples, ensure_ascii=False) if examples else "[]",
+                example_sentences_zh=json.dumps(examples_zh, ensure_ascii=False) if examples_zh else "[]",
+            )
+            db.add(new_analysis)
+
+    await db.commit()
+
+
+@router.post("/analyze", response_model=WordAnalysisResponse)
+async def analyze_words(
+    request: WordAnalysisRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Analyze selected words using DeepSeek AI.
+
+    Accepts entries grouped by paragraph (each entry has a sentence context,
+    word list, and optional existing translation). Calls DeepSeek in parallel
+    batches and persists results to the database so they survive page reloads.
+
+    Returns a list of word analyses with id fields for later deletion.
+    """
+    if not request.entries:
+        raise HTTPException(status_code=400, detail="No words to analyze")
+
+    ai = ai_service
+    if request.api_key:
+        ai = AIService(api_key=request.api_key)
+
+    try:
+        # Flatten entries: each entry may contain multiple words.
+        # For each word, extract the sentence that contains it from the paragraph.
+        flat_entries: list[dict] = []
+        for entry in request.entries:
+            for word in entry.words:
+                word = word.strip()
+                extracted_sentence = _extract_sentence(entry.sentence, word)
+                flat_entries.append({
+                    "paragraph_index": entry.paragraph_index,
+                    "word": word,
+                    "sentence": extracted_sentence,
+                    "sentence_translation": None,  # Per-sentence translation not available
+                })
+
+        # Deduplicate: if same word+paragraph already requested, skip duplicate
+        seen = set()
+        unique_entries = []
+        for e in flat_entries:
+            key = (e["paragraph_index"], e["word"].lower())
+            if key not in seen:
+                seen.add(key)
+                unique_entries.append(e)
+
+        # Call AI service
+        raw_results = await ai.analyze_words(unique_entries)
+
+        # Build result list
+        analyses: list[WordAnalysisResult] = []
+        for r in raw_results:
+            analyses.append(WordAnalysisResult(
+                paragraph_index=r.get("paragraph_index", 0),
+                word=r.get("word", ""),
+                phonetic=r.get("phonetic", ""),
+                part_of_speech=r.get("part_of_speech", ""),
+                definition=r.get("definition", ""),
+                definition_zh=r.get("definition_zh", ""),
+                example_sentences=r.get("example_sentences", []),
+                example_sentences_zh=r.get("example_sentences_zh", []),
+            ))
+
+        # Persist to DB
+        if request.document_id and raw_results:
+            try:
+                await _persist_analyses(request.document_id, raw_results, db)
+            except Exception:
+                pass  # Persistence failure is non-fatal
+
+        return WordAnalysisResponse(analyses=analyses)
+
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        err_msg = str(e)
+        if "401" in err_msg or "Unauthorized" in err_msg or "Authorization" in err_msg:
+            raise HTTPException(
+                status_code=401,
+                detail="DeepSeek API Key 无效或未配置，请点击右上角🔑图标设置。",
+            )
+        elif "402" in err_msg or "insufficient" in err_msg.lower():
+            raise HTTPException(
+                status_code=402,
+                detail="DeepSeek 账户余额不足，请前往 platform.deepseek.com 充值。",
+            )
+        elif "429" in err_msg or "rate" in err_msg.lower():
+            raise HTTPException(
+                status_code=429,
+                detail="API 请求过于频繁，请稍后重试。",
+            )
+        elif "timeout" in err_msg.lower() or "timed out" in err_msg.lower():
+            raise HTTPException(
+                status_code=504,
+                detail="AI 服务响应超时，请稍后重试。",
+            )
+        else:
+            raise HTTPException(
+                status_code=502,
+                detail=f"单词解析失败: {err_msg[:200]}",
+            )
+
+
+@router.get("/list/{document_id}", response_model=WordAnalysisResponse)
+async def get_word_analyses(
+    document_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Get all saved word analyses for a document.
+
+    Used to restore word analysis results when re-opening a document.
+    """
+    stmt = (
+        select(WordAnalysis)
+        .where(WordAnalysis.document_id == document_id)
+        .order_by(WordAnalysis.paragraph_index, WordAnalysis.word)
+    )
+    result = await db.execute(stmt)
+    records = result.scalars().all()
+
+    analyses = []
+    for wa in records:
+        try:
+            examples = json.loads(wa.example_sentences) if wa.example_sentences else []
+        except (json.JSONDecodeError, TypeError):
+            examples = []
+        try:
+            examples_zh = json.loads(wa.example_sentences_zh) if wa.example_sentences_zh else []
+        except (json.JSONDecodeError, TypeError):
+            examples_zh = []
+
+        analyses.append(WordAnalysisResult(
+            id=str(wa.id),
+            paragraph_index=wa.paragraph_index,
+            word=wa.word,
+            phonetic=wa.phonetic or "",
+            part_of_speech=wa.part_of_speech or "",
+            definition=wa.definition or "",
+            definition_zh=wa.definition_zh or "",
+            example_sentences=examples,
+            example_sentences_zh=examples_zh,
+        ))
+
+    return WordAnalysisResponse(analyses=analyses)
+
+
+@router.delete("/{analysis_id}")
+async def delete_word_analysis(
+    analysis_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete a single word analysis record."""
+    stmt = delete(WordAnalysis).where(WordAnalysis.id == analysis_id)
+    result = await db.execute(stmt)
+    await db.commit()
+
+    if result.rowcount == 0:
+        raise HTTPException(status_code=404, detail="Word analysis not found")
+
+    return {"status": "ok"}

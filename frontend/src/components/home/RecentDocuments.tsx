@@ -88,9 +88,6 @@ export default function RecentDocuments() {
               }
               description={
                 <Space size="large">
-                  {doc.source && (
-                    <Text type="secondary">{doc.source}</Text>
-                  )}
                   {doc.word_count && (
                     <Text type="secondary">
                       {doc.word_count.toLocaleString()} 词

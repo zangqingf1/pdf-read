@@ -1,18 +1,23 @@
 """F01: PDF upload and text extraction API routes."""
 
+import json
 import uuid
 import asyncio
 from typing import Optional
 
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Depends, BackgroundTasks
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db, async_session_factory
+from app.models.sentence_analysis import SentenceAnalysis
+from app.models.word_analysis import WordAnalysis
 from app.schemas.pdf import (
     PDFUploadResponse,
     PDFStatusResponse,
     PDFResultResponse,
     ParagraphResult,
+    WordAnalysisItem,
     DocumentListResponse,
     DocumentListItem,
 )
@@ -135,6 +140,63 @@ async def get_parse_result(
         for p in sorted(document.paragraphs, key=lambda p: p.index)
     ]
 
+    # Query saved word analyses
+    wa_stmt = (
+        select(WordAnalysis)
+        .where(WordAnalysis.document_id == task_id)
+        .order_by(WordAnalysis.paragraph_index, WordAnalysis.word)
+    )
+    wa_result = await db.execute(wa_stmt)
+    wa_records = wa_result.scalars().all()
+
+    word_analyses = []
+    for wa in wa_records:
+        try:
+            examples = json.loads(wa.example_sentences) if wa.example_sentences else []
+        except (json.JSONDecodeError, TypeError):
+            examples = []
+        try:
+            examples_zh = json.loads(wa.example_sentences_zh) if wa.example_sentences_zh else []
+        except (json.JSONDecodeError, TypeError):
+            examples_zh = []
+        word_analyses.append(
+            WordAnalysisItem(
+                id=str(wa.id),
+                paragraph_index=wa.paragraph_index,
+                word=wa.word,
+                phonetic=wa.phonetic or "",
+                part_of_speech=wa.part_of_speech or "",
+                definition=wa.definition or "",
+                definition_zh=wa.definition_zh or "",
+                example_sentences=examples,
+                example_sentences_zh=examples_zh,
+            )
+        )
+
+    # Query saved sentence analyses
+    sa_stmt = (
+        select(SentenceAnalysis)
+        .where(SentenceAnalysis.document_id == task_id)
+        .order_by(SentenceAnalysis.paragraph_index, SentenceAnalysis.sentence_index)
+    )
+    sa_result = await db.execute(sa_stmt)
+    sa_records = sa_result.scalars().all()
+
+    sentence_analyses = []
+    for sa in sa_records:
+        try:
+            sa_data = json.loads(sa.structure_json) if sa.structure_json else {}
+        except (json.JSONDecodeError, TypeError):
+            sa_data = {}
+        sentence_analyses.append({
+            "id": str(sa.id),
+            "paragraph_index": sa.paragraph_index,
+            "sentence_index": sa.sentence_index,
+            "sentence_text": sa.sentence_text or "",
+            "structure": sa_data.get("structure", []),
+            "idiomatic_translation": sa_data.get("idiomatic_translation", ""),
+        })
+
     return PDFResultResponse(
         document_id=str(document.id),
         title=document.title,
@@ -142,6 +204,8 @@ async def get_parse_result(
         paragraphs=paragraphs,
         word_count=document.word_count or 0,
         paragraph_count=document.paragraph_count or 0,
+        word_analyses=word_analyses,
+        sentence_analyses=sentence_analyses,
     )
 
 

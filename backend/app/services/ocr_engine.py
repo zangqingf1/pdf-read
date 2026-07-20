@@ -5,12 +5,13 @@ Flow for local files (batch upload):
   2. PUT PDF bytes to pre-signed URL (no Content-Type header per API spec)
   3. MinerU auto-parses the file
   4. GET /api/v4/extract-results/batch/{batch_id}  →  poll until done
-  5. Download zip from full_zip_url  →  extract full.md
-  6. Convert markdown → clean paragraphs
+  5. Download zip from full_zip_url  →  extract content_list.json + full.md
+  6. Use content_list.json block types to filter headers/footers/page-numbers
 """
 
 import asyncio
 import io
+import json as json_mod
 import os
 import re
 import zipfile
@@ -48,45 +49,119 @@ SOURCE_PATTERNS = [
 POLL_INTERVAL = 3       # seconds between status checks
 POLL_TIMEOUT = 300       # max seconds to wait for parsing
 
+# Minimum characters for a block to be considered a paragraph (fallback)
+MIN_PARAGRAPH_LEN = 15
 
-def _extract_title_and_source(paragraphs: list[str]) -> tuple[Optional[str], Optional[str]]:
-    title = None
-    if len(paragraphs) > 1 and len(paragraphs[0].strip()) <= 100:
-        title = paragraphs[0].strip()
-
-    source = None
-    full_text = " ".join(paragraphs)
-    for pattern in SOURCE_PATTERNS:
-        if re.search(pattern, full_text, re.IGNORECASE):
-            source = pattern
-            break
-    return title, source
+# content_list.json block types to EXCLUDE (non-content junk)
+EXCLUDED_BLOCK_TYPES = {"header", "footer", "page_number"}
 
 
-def _markdown_to_paragraphs(md_text: str) -> list[str]:
-    """Convert MinerU markdown output to clean plain-text paragraphs."""
+def _content_list_to_paragraphs(content_list: list[dict]) -> tuple[list[str], str | None]:
+    """Convert MinerU content_list.json blocks to clean paragraphs.
+
+    Uses block type labels to:
+    - Filter out headers, footers, page numbers
+    - Keep titles/headings in the article (not removed)
+    - Extract the first top-level title as document title
+
+    Returns (paragraphs, title).
+    """
+    paragraphs: list[str] = []
+    title: str | None = None
+
+    for block in content_list:
+        btype = block.get("type", "")
+        # Skip junk blocks
+        if btype in EXCLUDED_BLOCK_TYPES:
+            continue
+
+        text = (block.get("text") or "").strip()
+        if not text:
+            continue
+
+        # Clean control characters
+        text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]', '', text)
+
+        # Handle lists: join items
+        if btype == "list":
+            items = block.get("list_items", [])
+            if items:
+                text = "\n".join(item.get("text", "") for item in items if item.get("text"))
+            if not text.strip():
+                continue
+
+        # Handle tables: include as HTML or text dump
+        if btype == "table":
+            html = block.get("table_body") or ""
+            if html:
+                paragraphs.append(html)
+            elif text:
+                paragraphs.append(text)
+            continue
+
+        # Handle code blocks
+        if btype == "code":
+            code = block.get("code_body") or text
+            if code.strip():
+                paragraphs.append(code)
+            continue
+
+        # Handle equations
+        if btype == "equation":
+            if text.strip():
+                paragraphs.append(f"[公式] {text}")
+            continue
+
+        # --- text / title blocks ---
+        text_level = block.get("text_level", 0) or 0
+
+        # Extract first meaningful title (keep it in paragraphs too)
+        if title is None and (btype == "title" or text_level >= 1):
+            title = text
+
+        paragraphs.append(text)
+
+    return paragraphs, title
+
+
+def _markdown_to_paragraphs(md_text: str) -> tuple[list[str], str | None]:
+    """Fallback: convert markdown to paragraphs (used when content_list.json unavailable)."""
+    # Remove code blocks
     md_text = re.sub(r'```[\s\S]*?```', '', md_text)
+    # Remove inline code
     md_text = re.sub(r'`[^`]+`', '', md_text)
+    # Remove images
     md_text = re.sub(r'!\[.*?\]\(.*?\)', '', md_text)
+    # Convert links to text only
     md_text = re.sub(r'\[([^\]]*)\]\(.*?\)', r'\1', md_text)
-    md_text = re.sub(r'^#{1,6}\s+', '', md_text, flags=re.MULTILINE)
-    md_text = re.sub(r'\*\*([^*]+)\*\*', r'\1', md_text)
-    md_text = re.sub(r'\*([^*]+)\*', r'\1', md_text)
+    # Remove horizontal rules
     md_text = re.sub(r'^[-*_]{3,}\s*$', '', md_text, flags=re.MULTILINE)
-    md_text = re.sub(r'\|', ' ', md_text)
+    # Remove table rows
+    md_text = re.sub(r'^\s*\|.*\|\s*$', '', md_text, flags=re.MULTILINE)
+    # Remove table separator lines
     md_text = re.sub(r'^[-:\s|]+$', '', md_text, flags=re.MULTILINE)
 
+    # Split on blank lines
     raw = re.split(r'\n\s*\n', md_text)
+
     paragraphs = []
-    for p in raw:
-        p = re.sub(r'\n+', ' ', p)
-        p = re.sub(r'\s+', ' ', p).strip()
-        # Remove control characters that break JSON serialization
-        # (U+0000-U+001F except \t, \n, \r which were already handled)
-        p = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]', '', p)
-        if len(p) >= 10:
-            paragraphs.append(p)
-    return paragraphs
+    title = None
+    for block in raw:
+        block = re.sub(r'\n+', ' ', block)
+        block = re.sub(r'\s+', ' ', block).strip()
+        block = re.sub(r'^#{1,6}\s+', '', block)
+        block = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]', '', block)
+
+        if len(block) >= MIN_PARAGRAPH_LEN:
+            paragraphs.append(block)
+
+    # Extract title from first short paragraph
+    if paragraphs and len(paragraphs[0]) <= 120:
+        title = paragraphs[0]
+        # Don't remove from paragraphs — user wants it kept in article
+
+    return paragraphs, title
+
 
 
 class MinerUAPIError(Exception):
@@ -157,7 +232,11 @@ class OCREngine:
 
         # ── Step 1: Request pre-signed upload URL ──
         batch_url = f"{base_url}/api/v4/file-urls/batch"
-        batch_payload = {"files": [{"name": file_name}]}
+        batch_payload = {
+            "files": [{"name": file_name}],
+            "model_version": "vlm",  # 使用 VLM 视觉语言模型（推荐）
+            "language": "en",        # 文档语言：英文
+        }
 
         resp = await self.client.post(
             batch_url, headers=self._auth_headers(token), json=batch_payload
@@ -189,31 +268,37 @@ class OCREngine:
             )
 
         # ── Step 3: Poll batch results for parsing completion ──
-        md_content = await self._poll_batch(batch_id, token, base_url)
+        full_md, content_list = await self._poll_batch(batch_id, token, base_url)
 
-        # ── Step 4: Convert markdown to paragraphs ──
-        paragraphs = _markdown_to_paragraphs(md_content)
+        # ── Step 4: Parse using content_list.json (with type labels) or fallback to markdown ──
+        if content_list:
+            paragraphs, title = _content_list_to_paragraphs(content_list)
+        else:
+            full_md = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]', '', full_md)
+            paragraphs, title = _markdown_to_paragraphs(full_md)
 
-        title, source = _extract_title_and_source(paragraphs)
-        if title:
-            paragraphs = paragraphs[1:]
-
+        source = None
         full_text = " ".join(paragraphs)
+        for pattern in SOURCE_PATTERNS:
+            if re.search(pattern, full_text, re.IGNORECASE):
+                source = pattern
+                break
+
+        word_count = sum(len(p.split()) for p in paragraphs)
 
         return ParsedDocument(
             title=title,
             source=source,
             paragraphs=paragraphs,
-            word_count=len(full_text.split()),
+            word_count=word_count,
         )
 
-    async def _poll_batch(self, batch_id: str, token: str, base_url: str) -> str:
+    async def _poll_batch(
+        self, batch_id: str, token: str, base_url: str
+    ) -> tuple[str, list[dict] | None]:
         """Poll the batch extract-results endpoint until done, then download.
 
-        Uses GET /api/v4/extract-results/batch/{batch_id}
-        Response: {"code": 0, "data": {"extract_result": [{...}]}}
-
-        Returns the extracted markdown text.
+        Returns (full_md_text, content_list_or_none).
         """
         headers = self._auth_headers(token)
         url = f"{base_url}/api/v4/extract-results/batch/{batch_id}"
@@ -226,15 +311,12 @@ class OCREngine:
             resp = await self.client.get(url, headers=headers)
             data = self._check_response(resp, "polling batch status")
 
-            # Unwrap data envelope
             inner = data.get("data", data)
             results = inner.get("extract_result", [])
 
             if not results:
-                # No results yet, continue polling
                 continue
 
-            # Single file upload → first (and only) result
             result = results[0]
             state = result.get("state", "")
 
@@ -250,36 +332,53 @@ class OCREngine:
                 err = result.get("err_msg", "Unknown error")
                 raise MinerUAPIError(f"MinerU parsing failed: {err}")
 
-            # else: pending / running / converting / waiting-file — continue polling
-
         raise MinerUAPIError(
             f"MinerU parsing timed out after {POLL_TIMEOUT}s"
         )
 
-    async def _download_and_extract(self, zip_url: str) -> str:
-        """Download the result zip and extract full.md content."""
+    async def _download_and_extract(
+        self, zip_url: str
+    ) -> tuple[str, list[dict] | None]:
+        """Download the result zip and extract full.md + content_list.json.
+
+        Returns (full_markdown_text, content_list_or_none).
+        """
         resp = await self.client.get(zip_url)
         resp.raise_for_status()
 
         with zipfile.ZipFile(io.BytesIO(resp.content)) as zf:
-            # Find full.md (may be at root or in a subdirectory)
+            all_names = zf.namelist()
+
+            # ── Find full.md ──
             md_name = None
-            for name in zf.namelist():
-                if name.endswith("full.md") or name.endswith(".md"):
-                    # Prefer full.md over other .md files
-                    if name.endswith("full.md"):
-                        md_name = name
-                        break
-                    if md_name is None:
-                        md_name = name
+            for name in all_names:
+                if name.endswith("full.md"):
+                    md_name = name
+                    break
+                if name.endswith(".md") and md_name is None:
+                    md_name = name
 
             if md_name is None:
-                files = zf.namelist()
                 raise MinerUAPIError(
-                    f"No markdown file found in zip. Contents: {files[:10]}"
+                    f"No markdown file found in zip. Contents: {all_names[:10]}"
                 )
 
-            return zf.read(md_name).decode("utf-8")
+            full_md = zf.read(md_name).decode("utf-8")
+
+            # ── Find content_list.json ──
+            content_list = None
+            for name in all_names:
+                if name.endswith("content_list.json"):
+                    try:
+                        raw = zf.read(name).decode("utf-8")
+                        content_list = json_mod.loads(raw)
+                        if not isinstance(content_list, list):
+                            content_list = None
+                    except (json_mod.JSONDecodeError, UnicodeDecodeError):
+                        pass
+                    break
+
+            return full_md, content_list
 
     @staticmethod
     def _check_response(resp: httpx.Response, context: str) -> dict:

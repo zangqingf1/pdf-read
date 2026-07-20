@@ -1,5 +1,5 @@
 import { useNavigate } from 'react-router-dom';
-import { Button, Space, Typography, Tag } from 'antd';
+import { Button, Space, Typography } from 'antd';
 import { ArrowLeftOutlined } from '@ant-design/icons';
 import { useDocumentStore } from '../../stores/documentStore';
 
@@ -25,7 +25,7 @@ export default function DocumentHeader() {
             <Title level={4} className="!mb-0">
               {title || 'Untitled'}
             </Title>
-            {source && <Tag color="blue">{source}</Tag>}
+{/* source tag removed */}
           </Space>
         </div>
       </Space>

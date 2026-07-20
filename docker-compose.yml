@@ -6,29 +6,29 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
-    ports:
-      - "3000:80"
     depends_on:
       - backend
     restart: unless-stopped
+    # 端口不对外暴露，仅通过 nginx 反向代理访问
 
   # ========== Backend API ==========
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    ports:
-      - "8000:8000"
     environment:
-      - DATABASE_URL=postgresql://user:pass@db:5432/pdfreader
+      - DATABASE_URL=postgresql+asyncpg://user:${DB_PASSWORD:-pdfreader_pass}@db:5432/pdfreader
+      - DATABASE_URL_SYNC=postgresql://user:${DB_PASSWORD:-pdfreader_pass}@db:5432/pdfreader
       - REDIS_URL=redis://redis:6379/0
       - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
       - DEEPSEEK_BASE_URL=${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
-      - DEEPSEEK_MODEL=${DEEPSEEK_MODEL:-deepseek-chat}
+      - DEEPSEEK_MODEL=${DEEPSEEK_MODEL:-deepseek-v4-flash}
+      - MINERU_API_TOKEN=${MINERU_API_TOKEN}
+      - MINERU_API_BASE=${MINERU_API_BASE:-https://mineru.net}
       - PADDLEOCR_MODEL_PATH=/models/paddleocr
-      - SECRET_KEY=${SECRET_KEY:-dev-secret}
-      - ENVIRONMENT=${ENVIRONMENT:-development}
-      - DEBUG=${DEBUG:-true}
+      - SECRET_KEY=${SECRET_KEY:-change-me-in-production}
+      - ENVIRONMENT=${ENVIRONMENT:-production}
+      - DEBUG=${DEBUG:-false}
       - MAX_UPLOAD_SIZE_MB=${MAX_UPLOAD_SIZE_MB:-50}
       - UPLOAD_DIR=/app/uploads
     volumes:
@@ -48,11 +48,13 @@ services:
       dockerfile: Dockerfile
     command: celery -A app.tasks.celery_app worker -l info -c 2
     environment:
-      - DATABASE_URL=postgresql://user:pass@db:5432/pdfreader
+      - DATABASE_URL=postgresql+asyncpg://user:${DB_PASSWORD:-pdfreader_pass}@db:5432/pdfreader
       - REDIS_URL=redis://redis:6379/0
       - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
       - DEEPSEEK_BASE_URL=${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
-      - DEEPSEEK_MODEL=${DEEPSEEK_MODEL:-deepseek-chat}
+      - DEEPSEEK_MODEL=${DEEPSEEK_MODEL:-deepseek-v4-flash}
+      - MINERU_API_TOKEN=${MINERU_API_TOKEN}
+      - MINERU_API_BASE=${MINERU_API_BASE:-https://mineru.net}
       - PADDLEOCR_MODEL_PATH=/models/paddleocr
       - UPLOAD_DIR=/app/uploads
     volumes:
@@ -71,11 +73,9 @@ services:
     environment:
       POSTGRES_DB: pdfreader
       POSTGRES_USER: user
-      POSTGRES_PASSWORD: pass
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-pdfreader_pass}
     volumes:
       - pgdata:/var/lib/postgresql/data
-    ports:
-      - "5432:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U user -d pdfreader"]
       interval: 5s
@@ -86,8 +86,6 @@ services:
   # ========== Redis ==========
   redis:
     image: redis:7-alpine
-    ports:
-      - "6379:6379"
     volumes:
       - redisdata:/data
     restart: unless-stopped
@@ -97,7 +95,6 @@ services:
     image: nginx:alpine
     ports:
       - "80:80"
-      - "443:443"
     volumes:
       - ./nginx.conf:/etc/nginx/nginx.conf:ro
     depends_on:

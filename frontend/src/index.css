@@ -11,10 +11,10 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* Word token hover effect */
+/* Word token hover/selection/analysis states */
 .word-token {
   cursor: pointer;
-  transition: background-color 0.15s ease;
+  transition: background-color 0.15s ease, box-shadow 0.15s ease;
   border-radius: 3px;
   padding: 0 1px;
 }
@@ -23,31 +23,96 @@ body {
   background-color: #bfdbfe;
 }
 
-.word-token.complex-sentence {
-  border-bottom: 2px dashed #f59e0b;
+.word-token-selected {
+  background-color: #bae0ff;
+  box-shadow: 0 0 0 1px #69b1ff;
+}
+
+.word-token-has-analysis {
+  border-bottom: 1.5px dashed #52c41a;
+  background-color: #f6ffed;
+}
+
+/* Sentence selectable hover/selection/analysis states */
+.sentence-selectable {
   cursor: pointer;
+  transition: background-color 0.15s ease, box-shadow 0.15s ease;
+  border-radius: 4px;
+  padding: 1px 3px;
+  margin: 0 1px;
+  display: inline;
 }
 
-/* Grammar tree node styles */
-.grammar-tree-node {
-  cursor: pointer;
-  transition: all 0.2s ease;
+.sentence-selectable:hover {
+  background-color: #f0f0f0;
 }
 
-.grammar-tree-node:hover {
-  filter: brightness(0.9);
+.sentence-selected {
+  background-color: #dbeafe;
+  box-shadow: 0 0 0 1.5px #3b82f6;
 }
 
-/* Reading progress */
-.reading-progress-bar {
-  transition: width 0.3s ease;
+.sentence-has-analysis {
+  border-bottom: 2px dashed #722ed1;
+  background-color: #f9f0ff;
 }
 
-/* Cloze card animation */
-.cloze-card {
-  transition: transform 0.3s ease, opacity 0.3s ease;
+/* Sentence structure colored block display */
+.sentence-structure-block {
+  display: inline-block;
+  border-radius: 4px;
+  border: 1.5px solid;
+  padding: 1px 4px;
+  margin: 0 1px 2px 1px;
+  position: relative;
 }
 
-.cloze-card.flipping {
-  transform: rotateY(90deg);
+.sentence-structure-text {
+  font-size: 13px;
+  font-weight: 500;
+  color: #333;
+}
+
+.sentence-structure-label {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 600;
+  margin-left: 2px;
+  opacity: 0.8;
+}
+
+/* Sentence panel tabs — fill available space with per-tab scrolling */
+.sentence-panel-tabs {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.sentence-panel-tabs .ant-tabs-nav {
+  flex-shrink: 0;
+}
+
+.sentence-panel-tabs .ant-tabs-content-holder {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.sentence-panel-tabs .ant-tabs-content {
+  height: 100%;
+}
+
+.sentence-panel-tabs .ant-tabs-tabpane {
+  height: 100%;
+  overflow: hidden;
+}
+
+/* Paragraph flash when scrolled to from word panel */
+.paragraph-flash {
+  animation: paragraph-flash-anim 1.5s ease-out;
+}
+
+@keyframes paragraph-flash-anim {
+  0% { background-color: #fffbe6; }
+  100% { background-color: transparent; }
 }

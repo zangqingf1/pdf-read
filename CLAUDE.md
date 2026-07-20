@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 项目概述
 
-PDF 外刊阅读工具 — 上传英文 PDF，自动提取正文内容，支持 AI 翻译、单词解析和长难句语法分析。
+PDF 外刊阅读工具 — 上传英文 PDF，自动提取正文内容，AI 段落翻译 + 单词解析，纯净阅读体验。
 
 ## 开发命令
 
@@ -18,118 +18,153 @@ uvicorn app.main:app --reload --port 8000 # 启动开发服务器 (SQLite 模式
 cd frontend
 npm install --legacy-peer-deps            # 安装依赖
 npm run dev                               # 启动 Vite 开发服务器 (端口 5173)
-npm run build                             # 生产构建
 
 # Docker Compose 全栈启动
-cp .env.example .env                      # 编辑 .env 填入 DeepSeek API Key
+cp .env.example .env                      # 编辑 .env 填入 MinerU Token + DeepSeek Key
 docker-compose up -d                      # 前端 :80, API :8000, /docs Swagger UI
-
-# 性能测试
-cd backend && python test_word_timing.py  # 单词解析 API 耗时测试 (1/5/7 词)
-cd frontend && node bench_store.mjs       # 前端 store 更新微基准
 ```
 
-## 架构核心
+## 架构
 
 ### 后端分层 (FastAPI + SQLAlchemy)
 
 ```
-api/v1/        → 路由层 (pdf.py PDF解析, translate.py AI翻译+单词解析+句子分析)
-services/      → 业务逻辑层 (pdf_service.py PDF解析编排, ocr_engine.py OCR引擎, ai_service.py DeepSeek API)
-models/        → SQLAlchemy ORM 模型 (Document, Paragraph, User)
-schemas/       → Pydantic 请求/响应模型 (pdf.py, translate.py)
-tasks/         → Celery 异步任务 (celery_app 在导入失败时为 None，自动降级为 BackgroundTasks)
-config.py      → pydantic-settings 配置管理，从 .env 读取所有环境变量
-database.py    → SQLAlchemy async engine + session factory (SQLite/PostgreSQL 自适应)
+api/v1/pdf.py       → 路由层 (PDF上传、状态查询、结果获取、已存解析附带)
+api/v1/translate.py → 路由层 (段落翻译，调用 DeepSeek AI)
+api/v1/words.py     → 路由层 (单词解析/查询/删除，调用 DeepSeek AI)
+services/           → 业务逻辑层 (pdf_service.py PDF解析编排, ocr_engine.py OCR引擎, ai_service.py AI翻译+单词解析)
+models/             → SQLAlchemy ORM 模型 (Document, Paragraph, WordAnalysis, User)
+schemas/            → Pydantic 请求/响应模型 (pdf.py, translate.py, words.py)
+tasks/              → Celery 异步任务 (可选，自动降级为 BackgroundTasks)
+config.py           → pydantic-settings 配置管理，从 .env 读取所有环境变量
+database.py         → SQLAlchemy async engine + session factory (SQLite/PostgreSQL 自适应)
 ```
 
 **关键设计决策：**
-- 数据库默认使用 SQLite (`sqlite+aiosqlite:///./pdfreader.db`)，Docker 环境切换 PostgreSQL。所有模型使用 `sqlalchemy.Uuid` 保证跨数据库兼容。
-- Celery 为可选依赖。`tasks/celery_app.py` 中 `celery_app` 在导入失败时为 `None`。`tasks/pdf_tasks.py` 提供 `parse_pdf_sync()` 降级函数。API 层 `pdf.py` 检测 `parse_pdf_task is not None` 决定走 Celery 还是 `BackgroundTasks`。
-- PDF 解析引擎使用 **MinerU Cloud API** (https://mineru.net)。PDF 上传后通过预签名 URL 上传到 MinerU → 轮询解析状态 → 下载 zip 提取 Markdown → 清理并分段。需要配置 `MINERU_API_TOKEN`（可在 .env 或前端页面配置）。注意：PRD 原计划用 PaddleOCR 本地部署，实际选择了 MinerU Cloud API。
-- 所有 AI 调用走 DeepSeek API (OpenAI 兼容协议)，模型默认为 `deepseek-v4-flash`（`DEEPSEEK_MODEL` 配置项）。`AIService` 使用 httpx (不是 openai SDK)，手动构造 `POST /v1/chat/completions` 请求。封装了 3 次重试 (指数退避 2^attempt 秒)、JSON 响应提取 (`_extract_json` 处理 markdown 代码块包裹)、`temperature=0.3` 确定性输出。
-- `database.py` 的 `get_db` 依赖注入自动 commit/rollback：正常返回时 commit，异常时 rollback。开发环境 `init_db()` 用 `Base.metadata.create_all` 自动建表。
+- 数据库默认使用 SQLite (`sqlite+aiosqlite:///./pdfreader.db`)，Docker 环境切换 PostgreSQL。
+- Celery 为可选依赖，导入失败时自动降级为 `BackgroundTasks`。
+- PDF 解析引擎使用 **MinerU Cloud API** (https://mineru.net)。流程：POST 获取预签名上传 URL → PUT PDF 字节 → 轮询解析状态 → 下载 zip 提取 `content_list.json` + `full.md`。使用 VLM 模型版本 (`model_version: "vlm"`)。
+- OCR 引擎优先使用 `content_list.json` 的 block type 标签过滤页眉/页脚/页码（`EXCLUDED_BLOCK_TYPES`），仅在 content_list 不可用时回退到 markdown 解析。
+- AI 翻译和单词解析均使用 **DeepSeek API** (`deepseek-v4-flash`)。
+- `database.py` 的 `get_db` 依赖注入自动 commit/rollback。
+- pydantic-settings `Config.extra = "ignore"` 确保旧 `.env` 配置项不会导致启动失败。
 
 ### API 端点
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| POST | `/api/v1/pdf/upload` | 上传 PDF 文件 (multipart/form-data) |
-| GET | `/api/v1/pdf/status/{task_id}` | 查询解析状态 (轮询用) |
-| GET | `/api/v1/pdf/result/{task_id}` | 获取解析结果 (段落文本+已有翻译) |
-| GET | `/api/v1/pdf/documents` | 列出已处理文档 (分页) |
-| POST | `/api/v1/translate/translate` | AI 批量翻译段落，可选 document_id 持久化 |
-| POST | `/api/v1/translate/explain-word` | AI 单词解析 (多词+语境，单次 API 调用) |
-| POST | `/api/v1/translate/analyze-sentence` | AI 长难句语法分析 (句子结构+语法讲解+词汇+翻译) |
+| POST | `/api/v1/pdf/upload` | 上传 PDF 文件 (multipart/form-data, 可选 `mineru_token`) |
+| GET | `/api/v1/pdf/status/{task_id}` | 查询解析状态 (轮询用, 2s 间隔) |
+| GET | `/api/v1/pdf/result/{task_id}` | 获取解析结果 (段落文本 + 已存翻译 + 已存单词解析) |
+| GET | `/api/v1/pdf/documents` | 列出已处理文档 (分页, 最新在前) |
+| POST | `/api/v1/translate` | 翻译段落列表，可选 `document_id` 持久化翻译到 DB |
+| POST | `/api/v1/words/analyze` | 解析选中单词，调用 AI 批量分析，结果持久化到 DB (upsert) |
+| GET | `/api/v1/words/list/{document_id}` | 获取文档已存单词解析列表 |
+| DELETE | `/api/v1/words/{analysis_id}` | 删除单条单词解析 |
 | GET | `/health` | 健康检查 |
-
-**API 响应格式：** 所有 API 由 FastAPI 直接返回 Pydantic 模型（不包装）。错误通过 HTTPException 抛出，前端 Axios 拦截器统一处理 `response.data.detail`。
-
-**翻译批处理：** `translate_paragraphs` 自动按 `CHUNK_SIZE = 15` 分批调用 `translate_batch`，避免 token 超限。
-
-**单词解析 `max_tokens`：** `max(1024, min(500 * len(words), 8192))` — 按词数线性增长，1 词 ~1024 tokens，7 词 ~3500 tokens。
-
-### 前端分层 (React + Zustand)
-
-```
-pages/       → HomePage (上传入口+最近文档), ReaderPage (阅读器主界面)
-components/  → home/ (PDFUploader, RecentDocuments)
-                reader/ (DocumentHeader, ArticleView, ParagraphBlock,
-                         AnalysisPanel, WordExplainPanel, SentenceAnalysisPanel, SentenceAnalyzer)
-                common/ (ApiKeyModal)
-stores/      → documentStore (文档数据+翻译), readerStore (单词选中+解析缓存+句子分析)
-services/    → api.ts (Axios 实例+拦截器), pdfApi.ts, translateApi.ts
-```
-
-**关键设计决策：**
-- 阅读流程：`PDFUploader` 拖拽上传 → 轮询 `GET /pdf/status` (2s 间隔) → 完成后显示「开始阅读」→ 跳转 `ReaderPage` → 自动调用 AI 翻译 (如已配 API Key) → `ArticleView` 渲染段落
-- `ReaderPage` 加载文档后自动检测 `paragraphs` 是否有 `text_zh`：如已有翻译则跳过；否则自动调用 `POST /translate/translate` 并 `setTranslations` 到 store 中。
-- 右侧分析面板使用 **Ant Design Tabs** 切换两个子面板 (`AnalysisPanel`)：
-  - **单词解析 tab** (`WordExplainPanel`)：单词 tokenize → 点击选中 → 批量解析
-  - **句子分析 tab** (`SentenceAnalysisPanel`)：选中句子文本 → AI 语法分析
-  - 当用户选中句子时自动切换到句子 tab
-- 单词点击交互：`ParagraphBlock` 将每个段落 tokenize 为可点击单词 → 点击触发 `readerStore.toggleWord` → 右侧 `WordExplainPanel` 显示已选词列表 → 点击「解析」调用 `POST /translate/explain-word` → 结果缓存到 `explanationCache` (normalized key → structured explanation)。
-- **单词批量解析：** 前端 `explainWordsInBatches` 将单词按 `BATCH_SIZE = 5` 分组，用 `Promise.all` 并发请求所有批次。每批完成后立即通过 `onBatchDone` 回调增量合并结果，用户无需等待所有单词完成。1 批 = 1 次 API 调用，7 个词 = 2 批并发 (5+2)。
-- 句子分析交互：在 `ArticleView` 中选中文本 → `SentenceAnalyzer` 弹出浮动工具栏 → 点击「分析」→ 调用 `POST /translate/analyze-sentence` → 结果缓存到 `sentenceAnalysisCache` → `SentenceAnalysisPanel` 展示句子结构、语法讲解、关键词汇、中文翻译。
-- `readerStore` 中单词以 normalized canonical key 存储（去标点、小写），`selectedDisplay` 保留原始显示形式。句子以 canonicalized key (`sentence.trim().toLowerCase()`) 缓存分析结果。
-- DeepSeek API Key 存储在浏览器 `localStorage`，`ApiKeyModal` 管理读写。前端每次 API 调用时从 localStorage 读取并以 `api_key` 参数传递，不经过后端存储。
-- Vite 开发服务器 `/api` 代理到 `localhost:8000`，前端 `axios.create({ baseURL: '/api/v1' })` 无需配置完整 URL。
-- 前端 `tailwind.config.js` 设置 `preflight: false` 避免覆盖 Ant Design 默认样式。
-
-### 数据流
-
-| 功能 | 触发 | 数据流 |
-|------|------|--------|
-| PDF 导入 | `PDFUploader` 拖拽 | POST /pdf/upload → BackgroundTasks/Celery 解析 → 轮询 /pdf/status → GET /pdf/result |
-| AI 翻译 | ReaderPage 加载后自动 | POST /translate/translate → 翻译结果存 documentStore.translations + 可选持久化到 DB |
-| 单词解析 | 点击单词 + 右侧面板按钮 | POST /translate/explain-word → 结果写 readerStore.explanationCache |
-| 句子分析 | 选中文本 + 浮动工具栏按钮 | POST /translate/analyze-sentence → 结果写 readerStore.sentenceAnalysisCache |
-| 文档阅读 | 点击「开始阅读」 | ReaderPage → DocumentHeader + ArticleView (ParagraphBlock 逐段渲染 + 翻译对照) + AnalysisPanel (WordExplainPanel / SentenceAnalysisPanel tabs) |
 
 ### 数据模型
 
-- **Document**: UUID 主键，`parse_status` (pending→processing→completed/failed)，`paragraphs` relationship (cascade delete)
-- **Paragraph**: `(document_id, index)` 联合唯一索引，`text_en` (原文) + `text_zh` (翻译，AI 翻译后可持久化) + `summary` (预留)
-- **User**: 预留表，目前未使用
+- **Document**: UUID 主键，`parse_status` (pending→processing→completed/failed)，`file_path`, `original_text`, `title`, `source`, `word_count`, `paragraph_count`。Relationships: `paragraphs`, `word_analyses` (均 cascade delete)。
+- **Paragraph**: `(document_id, index)` 联合唯一索引，`text_en` (原文) + `text_zh` (AI 翻译) + `summary` (预留)。
+- **WordAnalysis**: `(document_id, paragraph_index, word)` 联合唯一索引。存储单词解析结果：`phonetic`, `original_sentence`, `original_sentence_zh`, `part_of_speech`, `definition`, `definition_zh`, `example_sentences` (JSON 数组), `example_sentences_zh` (JSON 数组)。解析后持久化，打开文档时自动恢复。
+- **User**: 预留表，目前未使用。
 
-### 已实现 vs 规划中
+### AI 服务 (`ai_service.py`)
 
-| 功能 | 状态 | 说明 |
-|------|------|------|
-| F01 PDF 导入解析 | ✅ 已实现 | 使用 MinerU Cloud API |
-| F02 单词解析 | ✅ 已实现 | AI 深度解析（非 PRD 规划的本地 ECDICT 查词） |
-| F03 长难句拆解 | ⚠️ 部分实现 | 句子语法分析已实现 (`analyze-sentence`)，但无 spaCy 初筛和 D3.js 语法树可视化 |
-| F04 词汇深度教学 | ✅ 已实现 | 融合在 `explain-word` 中（音标/释义/例句/词组/语境句子） |
+`AIService` 封装 DeepSeek Chat Completions API，三个公共方法：
+
+- `translate(text, prev_text?, next_text?)`: 单段翻译，支持滑动窗口上下文（前后段落）解决歧义。
+- `translate_batch(paragraphs)`: 批量翻译，`asyncio.Semaphore(10)` 并发，每段独立 API 调用，按 index 排序恢复顺序。
+- `analyze_words(entries)`: 批量单词解析。按 paragraph_index 分组，每批最多 `WORDS_BATCH_SIZE`(默认5) 个单词，`Semaphore(10)` 并发，`response_format: {"type": "json_object"}` 确保结构化输出。Prompt 返回单词+音标+词性+英文释义+中文释义+例句(2-3句)+原文句+翻译。
+
+所有方法内置指数退避重试（3 次），超时 60s/连接 10s。单段/单批失败不阻塞其他。单例 `ai_service` 实例供路由使用，也支持按请求传入独立 API key。
+
+### 单词解析功能
+
+**后端流程：**
+1. 前端传入 `POST /words/analyze` — `entries[]` 每组包含 `paragraph_index`, `words[]`, `sentence`, `sentence_translation?`
+2. 后端 `_extract_sentence()` 从段落文本中按句号拆分，找到包含目标单词的那句话作为上下文
+3. 调用 `ai_service.analyze_words()` → 扁平化为 per-word entries，去重，按段落分组批处理
+4. 结果通过 `_persist_analyses()` upsert 写入 `word_analyses` 表（同 doc+para+word 则更新）
+5. `GET /pdf/result/{id}` 附带 `word_analyses` 字段，前端加载时自动恢复已存解析
+
+**前端流程：**
+1. `ParagraphBlock` 自定义 ReactMarkdown `components.p` 渲染器，递归处理子节点将文本词 token 化
+2. 点击词 token → `toggleWordSelection(paragraphIndex, word)` → 蓝色高亮
+3. 已解析过的词显示绿色虚线 + 浅绿底（`.word-token-has-analysis`）
+4. 底部浮动操作栏：「已选 N 个词」「解析」「清除」
+5. 解析时增量发送（仅新词），结果写入 `wordAnalyses` store
+6. `WordPanel` 右侧面板：词+音标始终显示，英文释义/原句/例句始终可见，中文翻译点击展开（按钮在右侧）
+7. 点击单词卡片 → 原文滚动到对应段落并高亮闪烁
+8. 可拖拽分隔条调整左右栏宽度
+9. 单个单词删除 → `DELETE /words/{id}` + store 移除
+
+### OCR 引擎 (`ocr_engine.py`)
+
+解析流程使用 MinerU batch file-upload API：
+1. `POST /api/v4/file-urls/batch` → 获取预签名上传 URL + `batch_id`
+2. `PUT` PDF 字节到预签名 URL（**不设置 Content-Type 头**，按 API 规范）
+3. `GET /api/v4/extract-results/batch/{batch_id}` → 轮询直到 `state == "done"`（3s 间隔，5 分钟超时）
+4. 下载 `full_zip_url` → 提取 `content_list.json`（首选）或 `full.md`（回退）
+
+`_content_list_to_paragraphs()` 根据 block type 标签过滤：
+- **排除**: `header`, `footer`, `page_number`
+- **保留**: `text`, `title`, `list`（合并 items）, `table`（保留 HTML）, `code`, `equation`
+- 从第一个 `title` 或 `text_level >= 1` 的 block 提取文档标题
+
+`_check_response()` 统一处理 MinerU API 的两种错误格式：`code != 0` 和 `msgCode` 字符串。
+
+### 前端分层 (React + Zustand + Ant Design)
+
+```
+pages/       → HomePage (上传入口+最近文档), ReaderPage (阅读器 + 翻译 + 单词解析编排)
+components/  → home/ (PDFUploader, RecentDocuments)
+                reader/ (DocumentHeader, ArticleView, ParagraphBlock, WordPanel)
+                common/ (ApiKeyModal — MinerU Token + DeepSeek Key 双密钥配置)
+stores/      → documentStore (文档+翻译+单词解析), readerStore (字体大小偏好)
+services/    → api.ts (Axios 实例), pdfApi.ts, translateApi.ts, wordAnalysisApi.ts
+```
+
+**关键设计决策：**
+- 阅读流程：`PDFUploader` 拖拽上传 → 轮询 `GET /pdf/status` (2s 间隔) → 完成后跳转 `ReaderPage` → 自动触发翻译 + 恢复已存单词解析 → `ArticleView` 渲染段落
+- 翻译流程：`ReaderPage` 检测 `paragraphs` 加载完成 → 调用 `POST /translate` 传入所有未翻译段落 → `updateTranslations` 按 index 写回 store → `ParagraphBlock` 显示可折叠译文
+- 翻译持久化：`translate` 请求可带 `document_id`，后端自动保存到 `Paragraph.text_zh`。再次打开时自动恢复。
+- 单词解析持久化：`word_analyses` 表存储，打开文档时 `GET /pdf/result` 附带返回，前端 `setDocument` 恢复。
+- 两种 API Key 均存储在浏览器 `localStorage`，`ApiKeyModal` 统一管理 MinerU Token + DeepSeek Key 的读写。
+- Vite 开发服务器 `/api` 代理到 `localhost:8000`（见 `vite.config.ts`），前端 `axios.create({ baseURL: '/api/v1' })` 无需配置完整 URL。
+- 前端 `tailwind.config.js` 设置 `preflight: false` 避免覆盖 Ant Design 默认样式，使用 `@tailwindcss/typography` 插件。
+- 段落渲染使用 `react-markdown` + `remark-gfm`（支持 GitHub Flavored Markdown）。单词 token 通过自定义 `components.p` 渲染器注入。
+- 字体大小通过 `readerStore` 持久化到 `localStorage`（14-28px，步长 2px）。
+
+### 状态管理 (Zustand)
+
+**documentStore**: 文档+翻译+单词解析的综合 store
+- 文档数据：`documentId`, `title`, `source`, `paragraphs`, `wordCount`, `paragraphCount`
+- 翻译：`translations: Record<number, string>` (paragraph index → zh), `isTranslating`, `translationError`
+- 单词选中：`selectedWords: Record<string, boolean>` (key 格式 `"paragraphIndex:word"`)
+- 单词解析：`wordAnalyses: Record<string, WordAnalysisResult>`, `isAnalyzing`, `analysisError`
+- `setDocument()` 恢复翻译和已存单词解析；`reset()` 清空所有状态
+
+**readerStore**: 仅字体大小偏好，通过 `zustand/middleware/persist` 持久化到 `localStorage`。
+
+### 自定义 CSS
+
+- `.word-token` — 单词可点击 token，hover 蓝色底
+- `.word-token-selected` — 选中状态，蓝色底 + 边框光晕
+- `.word-token-has-analysis` — 已有解析标记，绿色虚线底 + 浅绿背景
+- `.paragraph-flash` / `@keyframes paragraph-flash-anim` — 点击单词卡片后段落黄色闪烁 1.5s
 
 ## 注意事项
 
-- PDF 解析使用 MinerU Cloud API 进行高精度识别。MinerU 提供版面分析、正文提取、页眉页脚过滤等功能。
-- `AIService` 提供三个核心方法：`translate_batch()` 批量翻译、`explain_words()` 多词解析、`analyze_sentence()` 句子语法分析。全部支持 3 次重试 + 指数退避。
-- `pdf_service.py` 的 `filter_non_content` 和 `reconstruct_paragraphs` 目前是 passthrough — 实际逻辑在 `OCREngine._markdown_to_paragraphs` 中。
+- PDF 解析使用 MinerU Cloud API VLM 模型进行高精度版面分析，自动过滤页眉页脚页码。
+- `pdf_service.py` 的 `filter_non_content` 和 `reconstruct_paragraphs` 目前是 passthrough — 实际过滤逻辑在 `OCREngine._content_list_to_paragraphs()` 中。
 - `parse_document()` 中的 `ocr.parse_pdf()` 是 async 方法，必须使用 `await` 调用。
-- Celery task 定义在 `pdf_tasks.py`，仅在 `celery_app is not None` 时动态定义 `parse_pdf_task`，无 `@celery_app.task` 装饰器。
-- 前端 tokenize 正则 `([a-zA-Z0-9À-ɏ'’‘’\-]+)` 匹配带 Unicode 字母和撇号的英文单词。
-- AI 服务使用 httpx.AsyncClient（不是 openai SDK），client 通过 `@property` 延迟初始化，首次调用时创建。
-- `analysis_panel.py` 中的 `AnalysisPanel` 使用 Ant Design `Tabs` 组件在单词解析和句子分析之间切换，切换逻辑由 `readerStore.selectedSentence` 变化触发。
-- 句子选中通过浏览器 `Selection API` 实现：`SentenceAnalyzer` 监听 `mouseup` 事件检测文本选区，展示浮动工具栏。
-- 性能测试脚本 `test_word_timing.py` 和 `bench_store.mjs` 是手动添加的测试工具，不在正式构建流程中。`test_word_timing.py` 会创建 httpx client 并直接调用 DeepSeek API，需要有效的 `.env` 配置。
+- Celery task 定义在 `pdf_tasks.py`，仅在 `celery_app is not None` 时动态定义 `parse_pdf_task`。
+- 翻译/单词解析 API 端点均接受可选的 `api_key` 参数，允许前端传入用户自己的 DeepSeek key 覆盖服务器默认值。
+- `POST /translate` 和 `POST /words/analyze` 返回状态码 401/402/429/504 分别对应 API Key 无效、余额不足、限流、超时，前端根据状态码显示对应中文错误提示。
+- 翻译保存和单词解析保存失败不阻断响应（异常被静默捕获）。
+- 单词解析时后端会自动从段落文本中提取包含目标单词的一句话（按句号拆分），而非发送整段，避免 AI 过长输出。
+- 单词解析后端去重：同一段内相同单词合并为一个请求。
+- `WordAnalysis` 表使用 `(document_id, paragraph_index, word)` 联合唯一约束，重复解析自动覆盖更新。
+- `.word-token` 覆盖了 `strong`/`em` 内部文本，`processChildren` 递归处理确保 markdown 格式内的单词也可点击。
