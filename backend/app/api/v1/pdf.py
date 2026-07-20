@@ -65,17 +65,18 @@ async def upload_pdf(
             await bg_db.commit()
 
     task_id = str(document.id)
+    use_celery = False
     try:
         from app.tasks.pdf_tasks import parse_pdf_task
         if parse_pdf_task is not None:
             parse_pdf_task.delay(
                 task_id=task_id, file_path=document.file_path, mineru_token=mineru_token
             )
-        else:
-            background_tasks.add_task(
-                _parse_in_background, document.id, document.file_path, mineru_token
-            )
-    except ImportError:
+            use_celery = True
+    except Exception:
+        pass  # Celery/Redis unavailable → fall back to BackgroundTasks
+
+    if not use_celery:
         background_tasks.add_task(
             _parse_in_background, document.id, document.file_path, mineru_token
         )
