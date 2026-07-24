@@ -5,6 +5,7 @@ Follows TECH_DESING.md section 3.2 — F01 PDF import and text extraction.
 
 import os
 import uuid
+import logging
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -16,6 +17,9 @@ from app.config import settings
 from app.models.document import Document
 from app.models.paragraph import Paragraph
 from app.services.ocr_engine import OCREngine, ParsedDocument, ocr_engine
+from app.services.page_utils import count_pdf_pages
+
+logger = logging.getLogger(__name__)
 
 
 class PDFService:
@@ -73,6 +77,13 @@ class PDFService:
         with open(file_path, "wb") as f:
             f.write(content)
 
+        # Count pages using pypdf (fast local read)
+        page_count = None
+        try:
+            page_count = count_pdf_pages(file_path)
+        except Exception as e:
+            logger.warning("Could not count PDF pages: %s", e)
+
         # Create document record
         safe_filename = file.filename or "untitled.pdf"
         document = Document(
@@ -81,6 +92,8 @@ class PDFService:
             file_path=file_path,
             original_text="",  # Will be filled after parsing
             parse_status="pending",
+            page_count=page_count,
+            created_at=datetime.now(),  # Use local time, not SQLite UTC default
         )
         db.add(document)
         await db.flush()
@@ -112,7 +125,9 @@ class PDFService:
         try:
             # Run OCR via MinerU Cloud API
             parsed: ParsedDocument = await self.ocr.parse_pdf(
-                document.file_path, api_token=mineru_token
+                document.file_path,
+                api_token=mineru_token,
+                selected_pages=document.selected_pages,
             )
 
             # Update document metadata
@@ -121,14 +136,18 @@ class PDFService:
             document.original_text = "\n\n".join(parsed.paragraphs)
             document.paragraph_count = len(parsed.paragraphs)
             document.word_count = parsed.word_count
+            document.page_count = document.page_count or parsed.total_pages
             document.parse_status = "completed"
 
-            # Create paragraph records
+            # Create paragraph records with page numbers
+            page_nums = parsed.paragraph_page_numbers
             for idx, text in enumerate(parsed.paragraphs):
+                page_num = page_nums[idx] if idx < len(page_nums) else None
                 paragraph = Paragraph(
                     document_id=document.id,
                     index=idx,
                     text_en=text,
+                    page_number=page_num,
                 )
                 db.add(paragraph)
 

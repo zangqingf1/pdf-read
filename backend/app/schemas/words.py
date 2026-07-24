@@ -32,8 +32,10 @@ class WordAnalysisResult(BaseModel):
     part_of_speech: str = ""
     definition: str = ""
     definition_zh: str = ""
-    example_sentences: list[str] = Field(default_factory=list)
-    example_sentences_zh: list[str] = Field(default_factory=list)
+    cognates: list[dict] = Field(default_factory=list)
+    synonyms_antonyms: dict = Field(default_factory=lambda: {"synonyms": [], "antonyms": []})
+    base_form: str = ""
+    plural_form: str = ""
 
 
 class WordAnalysisResponse(BaseModel):

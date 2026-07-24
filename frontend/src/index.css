@@ -1,40 +1,199 @@
+@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;1,400&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-/* Global styles */
-body {
-  margin: 0;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
-    'Helvetica Neue', Arial, 'Noto Sans', sans-serif;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+/* ── Design-system CSS custom properties ── */
+:root {
+  --canvas: #faf9f5;
+  --canvas-soft: #f5f0e8;
+  --surface-card: #efe9de;
+  --surface-cream-strong: #e8e0d2;
+  --surface-dark: #181715;
+  --surface-dark-elevated: #252320;
+  --surface-dark-soft: #1f1e1b;
+
+  --primary: #cc785c;
+  --primary-active: #a9583e;
+  --primary-disabled: #e6dfd8;
+
+  --ink: #141413;
+  --body: #3d3d3a;
+  --body-strong: #252523;
+  --muted: #6c6a64;
+  --muted-soft: #8e8b82;
+
+  --hairline: #e6dfd8;
+  --hairline-soft: #ebe6df;
+
+  --on-primary: #ffffff;
+  --on-dark: #faf9f5;
+  --on-dark-soft: #a09d96;
+
+  --accent-teal: #5db8a6;
+  --accent-amber: #e8a55a;
+  --success: #5db872;
+  --warning: #d4a017;
+  --error: #c64545;
+
+  --font-display: 'Cormorant Garamond', Garamond, 'Times New Roman', serif;
+  --font-reading: Georgia, 'Times New Roman', serif;
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-chinese: 'PingFang SC', 'Noto Sans SC', 'Microsoft YaHei', 'Hiragino Sans GB', sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
+
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-pill: 9999px;
 }
 
-/* Word token hover/selection/analysis states */
+/* ── Global reset overrides ── */
+@layer base {
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  body {
+    @apply bg-canvas text-body font-sans;
+    margin: 0;
+    min-height: 100vh;
+  }
+
+  /* Visible keyboard focus ring */
+  :focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+    border-radius: var(--radius-sm);
+  }
+
+  /* Reduced motion preference */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+/* ── Scrollbar styling ── */
+@layer base {
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--hairline);
+    border-radius: var(--radius-pill);
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--muted-soft);
+  }
+}
+
+/* ── Typography utility classes ── */
+@layer components {
+  .text-display-xl {
+    font-family: var(--font-display);
+    font-size: 64px;
+    font-weight: 400;
+    line-height: 1.05;
+    letter-spacing: -1.5px;
+  }
+  .text-display-lg {
+    font-family: var(--font-display);
+    font-size: 48px;
+    font-weight: 400;
+    line-height: 1.1;
+    letter-spacing: -1px;
+  }
+  .text-display-md {
+    font-family: var(--font-display);
+    font-size: 36px;
+    font-weight: 400;
+    line-height: 1.15;
+    letter-spacing: -0.5px;
+  }
+  .text-display-sm {
+    font-family: var(--font-display);
+    font-size: 28px;
+    font-weight: 400;
+    line-height: 1.2;
+    letter-spacing: -0.3px;
+  }
+  .text-reading {
+    font-family: var(--font-reading);
+    font-size: 18px;
+    font-weight: 400;
+    line-height: 1.75;
+    color: var(--ink);
+  }
+  .text-chinese {
+    font-family: var(--font-chinese);
+    line-height: 1.8;
+  }
+}
+
+/* ── Prose overrides for reading area ── */
+@layer components {
+  .prose-reading {
+    @apply max-w-none;
+    font-family: var(--font-reading);
+    font-size: 18px;
+    line-height: 1.75;
+    color: var(--ink);
+  }
+  .prose-reading p {
+    margin-bottom: 0.75em;
+  }
+  .prose-reading strong {
+    font-weight: 600;
+    color: var(--body-strong);
+  }
+  .prose-reading em {
+    font-style: italic;
+  }
+  .prose-reading code {
+    font-family: var(--font-mono);
+    font-size: 0.875em;
+    background: var(--surface-card);
+    padding: 0.125em 0.375em;
+    border-radius: var(--radius-xs);
+  }
+}
+
+/* ── Word token states ── */
 .word-token {
   cursor: pointer;
   transition: background-color 0.15s ease, box-shadow 0.15s ease;
   border-radius: 3px;
   padding: 0 1px;
 }
-
 .word-token:hover {
-  background-color: #bfdbfe;
+  background-color: #e3ecf7;
 }
-
 .word-token-selected {
-  background-color: #bae0ff;
-  box-shadow: 0 0 0 1px #69b1ff;
+  background-color: #dce6f2;
+  box-shadow: 0 0 0 1.5px #7a9ec4;
 }
-
 .word-token-has-analysis {
-  border-bottom: 1.5px dashed #52c41a;
-  background-color: #f6ffed;
+  border-bottom: 2px solid var(--success);
+  background-color: rgba(93, 184, 114, 0.18);
+  border-radius: 3px;
+  padding: 1px 2px;
 }
 
-/* Sentence selectable hover/selection/analysis states */
-.sentence-selectable {
+/* ── Sentence token states ── */
+.sentence-token {
   cursor: pointer;
   transition: background-color 0.15s ease, box-shadow 0.15s ease;
   border-radius: 4px;
@@ -42,22 +201,56 @@ body {
   margin: 0 1px;
   display: inline;
 }
-
-.sentence-selectable:hover {
-  background-color: #f0f0f0;
+.sentence-token:hover {
+  background-color: var(--canvas-soft);
+}
+.sentence-token-selected {
+  background-color: #fdf0eb;
+  box-shadow: 0 0 0 1.5px var(--primary);
+}
+.sentence-token-has-analysis {
+  border-bottom: 2px dashed var(--primary);
+  background-color: #fdf3ef;
 }
 
-.sentence-selected {
-  background-color: #dbeafe;
-  box-shadow: 0 0 0 1.5px #3b82f6;
+/* ── Paragraph block ── */
+.paragraph-block {
+  scroll-margin-top: 24px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--hairline-soft);
+  transition: background-color 0.3s ease;
+}
+.paragraph-block:last-child {
+  border-bottom: none;
 }
 
-.sentence-has-analysis {
-  border-bottom: 2px dashed #722ed1;
-  background-color: #f9f0ff;
+/* ── Paragraph flash animation ── */
+.paragraph-flash {
+  animation: paragraph-flash-anim 1.5s ease-out;
+}
+@keyframes paragraph-flash-anim {
+  0% { background-color: var(--surface-card); }
+  100% { background-color: transparent; }
 }
 
-/* Sentence structure colored block display */
+/* ── Word/Sentence card flash ── */
+.word-card-flash {
+  animation: card-flash-anim 1.5s ease-out;
+}
+.sentence-card-flash {
+  animation: card-flash-anim 1.5s ease-out;
+}
+@keyframes card-flash-anim {
+  0% { box-shadow: 0 0 0 3px var(--primary); background-color: #fdf3ef; }
+  100% { box-shadow: 0 0 0 0 transparent; background-color: transparent; }
+}
+
+/* ── Study panel: make Tailwind text sizes relative to container ── */
+.study-panel-content .text-xs { font-size: 0.75em; }
+.study-panel-content .text-sm { font-size: 0.875em; }
+.study-panel-content .text-base { font-size: 1em; }
+
+/* ── Sentence structure blocks ── */
 .sentence-structure-block {
   display: inline-block;
   border-radius: 4px;
@@ -66,53 +259,97 @@ body {
   margin: 0 1px 2px 1px;
   position: relative;
 }
-
 .sentence-structure-text {
-  font-size: 13px;
+  font-size: 0.93em;
   font-weight: 500;
   color: #333;
 }
-
 .sentence-structure-label {
   display: inline-block;
-  font-size: 10px;
+  font-size: 0.71em;
   font-weight: 600;
   margin-left: 2px;
   opacity: 0.8;
 }
 
-/* Sentence panel tabs — fill available space with per-tab scrolling */
-.sentence-panel-tabs {
-  display: flex;
-  flex-direction: column;
+/* ── Translation reveal ── */
+.translation-reveal {
   overflow: hidden;
+  transition: max-height 0.3s ease, opacity 0.3s ease, margin 0.3s ease;
+}
+.translation-reveal-hidden {
+  max-height: 0;
+  opacity: 0;
+  margin-top: 0;
+  margin-bottom: 0;
+}
+.translation-reveal-visible {
+  max-height: 2000px;
+  opacity: 1;
 }
 
-.sentence-panel-tabs .ant-tabs-nav {
+/* ── Drag handle for resizable panels ── */
+.resize-handle {
+  cursor: col-resize;
+  width: 5px;
   flex-shrink: 0;
+  background: var(--hairline-soft);
+  transition: background-color 0.2s ease;
+  user-select: none;
+}
+.resize-handle:hover,
+.resize-handle:active {
+  background: var(--primary);
 }
 
-.sentence-panel-tabs .ant-tabs-content-holder {
-  flex: 1;
-  min-height: 0;
-  overflow: hidden;
+/* ── Drag handle for paragraph reordering ── */
+.drag-handle {
+  cursor: grab;
+  color: var(--muted-soft);
+  transition: color 0.2s;
+  user-select: none;
+}
+.drag-handle:hover {
+  color: var(--primary);
+}
+.drag-handle:active {
+  cursor: grabbing;
 }
 
-.sentence-panel-tabs .ant-tabs-content {
-  height: 100%;
+/* ── Upload zone drag states ── */
+.upload-zone {
+  transition: border-color 0.2s ease, background-color 0.2s ease, box-shadow 0.2s ease;
+}
+.upload-zone-dragover {
+  border-color: var(--primary) !important;
+  background-color: #fdf3ef !important;
+  box-shadow: 0 0 0 3px rgba(204, 120, 92, 0.12);
 }
 
-.sentence-panel-tabs .ant-tabs-tabpane {
-  height: 100%;
-  overflow: hidden;
+/* ── Page selector grid scrollbar ── */
+.page-selector-grid::-webkit-scrollbar {
+  width: 8px;
+}
+.page-selector-grid::-webkit-scrollbar-track {
+  background: var(--canvas);
+  border-radius: var(--radius-pill);
+}
+.page-selector-grid::-webkit-scrollbar-thumb {
+  background: var(--muted-soft);
+  border-radius: var(--radius-pill);
+}
+.page-selector-grid::-webkit-scrollbar-thumb:hover {
+  background: var(--muted);
 }
 
-/* Paragraph flash when scrolled to from word panel */
-.paragraph-flash {
-  animation: paragraph-flash-anim 1.5s ease-out;
+/* ── Skeleton loading ── */
+.skeleton {
+  background: linear-gradient(90deg, var(--surface-card) 25%, var(--canvas-soft) 50%, var(--surface-card) 75%);
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.5s ease-in-out infinite;
+  border-radius: var(--radius-sm);
 }
-
-@keyframes paragraph-flash-anim {
-  0% { background-color: #fffbe6; }
-  100% { background-color: transparent; }
+@keyframes skeleton-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
 }

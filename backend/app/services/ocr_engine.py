@@ -38,6 +38,7 @@ class ParsedDocument:
     raw_blocks: list[TextBlock] = field(default_factory=list)
     total_pages: int = 0
     word_count: int = 0
+    paragraph_page_numbers: list[int] = field(default_factory=list)
 
 
 SOURCE_PATTERNS = [
@@ -56,22 +57,44 @@ MIN_PARAGRAPH_LEN = 15
 EXCLUDED_BLOCK_TYPES = {"header", "footer", "page_number"}
 
 
-def _content_list_to_paragraphs(content_list: list[dict]) -> tuple[list[str], str | None]:
+def _content_list_to_paragraphs(
+    content_list: list[dict], selected_pages: list[int] | None = None
+) -> tuple[list[str], list[int], str | None]:
     """Convert MinerU content_list.json blocks to clean paragraphs.
 
     Uses block type labels to:
     - Filter out headers, footers, page numbers
+    - Optionally filter to only selected pages
     - Keep titles/headings in the article (not removed)
     - Extract the first top-level title as document title
 
-    Returns (paragraphs, title).
+    Args:
+        content_list: List of content blocks from MinerU.
+        selected_pages: If provided, only keep blocks whose page_idx+1
+            is in this set. None means keep all pages.
+
+    Returns (paragraphs, page_numbers, title).
+        page_numbers[i] is the 1-based page number for paragraphs[i].
     """
     paragraphs: list[str] = []
+    page_numbers: list[int] = []
     title: str | None = None
+    selected_set = set(selected_pages) if selected_pages else None
 
     for block in content_list:
         btype = block.get("type", "")
-        # Skip junk blocks
+
+        # Read page number from MinerU (0-based page_idx → 1-based)
+        page_idx = block.get("page_idx", -1)
+        if isinstance(page_idx, (int, float)) and page_idx >= 0:
+            page_num = int(page_idx) + 1
+        else:
+            page_num = 0  # Unknown page
+
+        # Filter by selected pages
+        if selected_set is not None and page_num not in selected_set:
+            continue
+        # Skip junk blocks (also skip page_number type blocks)
         if btype in EXCLUDED_BLOCK_TYPES:
             continue
 
@@ -95,8 +118,10 @@ def _content_list_to_paragraphs(content_list: list[dict]) -> tuple[list[str], st
             html = block.get("table_body") or ""
             if html:
                 paragraphs.append(html)
+                page_numbers.append(page_num)
             elif text:
                 paragraphs.append(text)
+                page_numbers.append(page_num)
             continue
 
         # Handle code blocks
@@ -104,12 +129,14 @@ def _content_list_to_paragraphs(content_list: list[dict]) -> tuple[list[str], st
             code = block.get("code_body") or text
             if code.strip():
                 paragraphs.append(code)
+                page_numbers.append(page_num)
             continue
 
         # Handle equations
         if btype == "equation":
             if text.strip():
                 paragraphs.append(f"[公式] {text}")
+                page_numbers.append(page_num)
             continue
 
         # --- text / title blocks ---
@@ -120,12 +147,27 @@ def _content_list_to_paragraphs(content_list: list[dict]) -> tuple[list[str], st
             title = text
 
         paragraphs.append(text)
+        page_numbers.append(page_num)
 
-    return paragraphs, title
+    return paragraphs, page_numbers, title
 
 
-def _markdown_to_paragraphs(md_text: str) -> tuple[list[str], str | None]:
-    """Fallback: convert markdown to paragraphs (used when content_list.json unavailable)."""
+def _markdown_to_paragraphs(
+    md_text: str, selected_pages: list[int] | None = None
+) -> tuple[list[str], list[int], str | None]:
+    """Fallback: convert markdown to paragraphs (used when content_list.json unavailable).
+
+    Note: Markdown does not carry page information, so page_numbers is always
+    empty and selected_pages filtering is not possible in this path.
+    """
+    # If user requested specific pages but we're in markdown fallback, warn
+    if selected_pages:
+        import logging
+        logging.getLogger(__name__).warning(
+            "Page selection requested but content_list.json unavailable — "
+            "markdown fallback cannot filter by page. All pages will be included."
+        )
+
     # Remove code blocks
     md_text = re.sub(r'```[\s\S]*?```', '', md_text)
     # Remove inline code
@@ -160,7 +202,7 @@ def _markdown_to_paragraphs(md_text: str) -> tuple[list[str], str | None]:
         title = paragraphs[0]
         # Don't remove from paragraphs — user wants it kept in article
 
-    return paragraphs, title
+    return paragraphs, [], title
 
 
 
@@ -199,12 +241,16 @@ class OCREngine:
             "Content-Type": "application/json",
         }
 
-    async def parse_pdf(self, pdf_path: str, api_token: str = "") -> ParsedDocument:
+    async def parse_pdf(
+        self, pdf_path: str, api_token: str = "", selected_pages: list[int] | None = None
+    ) -> ParsedDocument:
         """Parse a PDF file using MinerU Cloud API (batch file upload flow).
 
         Args:
             pdf_path: Local path to the PDF file.
             api_token: MinerU API token (overrides settings.MINERU_API_TOKEN).
+            selected_pages: Optional list of 1-based page numbers to include.
+                If None, all pages are included.
 
         Returns:
             ParsedDocument with structured content.
@@ -226,9 +272,34 @@ class OCREngine:
         base_url = settings.MINERU_API_BASE.rstrip("/")
         file_name = os.path.basename(pdf_path)
 
-        # Read PDF bytes
-        with open(pdf_path, "rb") as f:
-            pdf_bytes = f.read()
+        # ── Extract selected pages locally before uploading ──
+        # Saves MinerU time/credits: only the requested pages are uploaded.
+        orig_selected_pages = selected_pages
+        temp_pdf_path = None
+        if selected_pages:
+            from app.services.page_utils import extract_pdf_pages
+            import logging as _logging
+            _log = _logging.getLogger(__name__)
+            temp_pdf_path = extract_pdf_pages(pdf_path, selected_pages)
+            _log.info(
+                "Page selection: %d pages extracted → uploading subset to MinerU",
+                len(selected_pages),
+            )
+            upload_path = temp_pdf_path
+            # Already physically extracted — pass None so content_list filter
+            # doesn't double-filter (it would filter correctly, but this way
+            # the markdown fallback also benefits).
+            selected_pages = None
+        else:
+            upload_path = pdf_path
+
+        # Read PDF bytes (from extracted temp file or original)
+        try:
+            with open(upload_path, "rb") as f:
+                pdf_bytes = f.read()
+        finally:
+            if temp_pdf_path and os.path.exists(temp_pdf_path):
+                os.unlink(temp_pdf_path)
 
         # ── Step 1: Request pre-signed upload URL ──
         batch_url = f"{base_url}/api/v4/file-urls/batch"
@@ -272,10 +343,16 @@ class OCREngine:
 
         # ── Step 4: Parse using content_list.json (with type labels) or fallback to markdown ──
         if content_list:
-            paragraphs, title = _content_list_to_paragraphs(content_list)
+            paragraphs, page_numbers, title = _content_list_to_paragraphs(
+                content_list, selected_pages
+            )
+            total_pages = max(page_numbers) if page_numbers else 0
         else:
             full_md = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]', '', full_md)
-            paragraphs, title = _markdown_to_paragraphs(full_md)
+            paragraphs, page_numbers, title = _markdown_to_paragraphs(
+                full_md, selected_pages
+            )
+            total_pages = 0
 
         source = None
         full_text = " ".join(paragraphs)
@@ -284,6 +361,17 @@ class OCREngine:
                 source = pattern
                 break
 
+        # ── Remap page numbers back to original document pages ──
+        # After local extraction, MinerU sees pages 1,2,3... so its
+        # page_idx values need mapping back to the user's selected pages.
+        if orig_selected_pages and page_numbers:
+            page_numbers = [
+                orig_selected_pages[pn - 1]
+                if 1 <= pn <= len(orig_selected_pages)
+                else pn
+                for pn in page_numbers
+            ]
+
         word_count = sum(len(p.split()) for p in paragraphs)
 
         return ParsedDocument(
@@ -291,6 +379,8 @@ class OCREngine:
             source=source,
             paragraphs=paragraphs,
             word_count=word_count,
+            total_pages=total_pages,
+            paragraph_page_numbers=page_numbers,
         )
 
     async def _poll_batch(

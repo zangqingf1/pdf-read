@@ -58,6 +58,7 @@ async def translate_paragraphs(
             re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]", "", p)
             for p in request.paragraphs
         ]
+
         # translate_batch handles chunking + parallel processing internally
         translations = await ai.translate_batch(paragraphs)
 

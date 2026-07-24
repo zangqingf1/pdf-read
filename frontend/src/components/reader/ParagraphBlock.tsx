@@ -1,13 +1,10 @@
 import React, { useState, useCallback, useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Typography } from 'antd';
-import { EyeOutlined, EyeInvisibleOutlined, LoadingOutlined } from '@ant-design/icons';
 import type { ParagraphResult } from '../../services/pdfApi';
-import { useReaderStore } from '../../stores/readerStore';
+import { useReaderStore, FONT_FAMILIES, LINE_HEIGHTS } from '../../stores/readerStore';
 import { useDocumentStore } from '../../stores/documentStore';
-
-const { Text } = Typography;
+import { triggerScrollToAnalysis } from './StudyPanel';
 
 interface ParagraphBlockProps {
   paragraph: ParagraphResult;
@@ -15,16 +12,15 @@ interface ParagraphBlockProps {
   isTranslating?: boolean;
 }
 
-/** Split text into sentences, preserving leading whitespace. */
+/** Split text into sentences. */
 function splitSentences(text: string): { text: string; index: number }[] {
-  // Split on .!? followed by whitespace + capital letter / quote
-  const parts = text.split(/(?<=[.!?])\s+(?=[A-Z"'])/g);
+  const parts = text.split(/(?<=[.!?]["']?)\s+(?=[A-Z"'])/g);
   return parts
     .map((s, i) => ({ text: s.trim(), index: i }))
-    .filter(s => s.text.length > 0);
+    .filter((s) => s.text.length > 0);
 }
 
-/** A single clickable word token with selection & analysis state. */
+/** A clickable word token. */
 function WordToken({
   text,
   word,
@@ -42,9 +38,13 @@ function WordToken({
   const handleClick = useCallback(
     (e: React.MouseEvent) => {
       e.stopPropagation();
-      toggleWordSelection(paragraphIndex, word.toLowerCase());
+      if (hasAnalysis) {
+        triggerScrollToAnalysis(key, 'words');
+      } else {
+        toggleWordSelection(paragraphIndex, word.toLowerCase());
+      }
     },
-    [paragraphIndex, word, toggleWordSelection]
+    [paragraphIndex, word, toggleWordSelection, hasAnalysis, key]
   );
 
   return (
@@ -57,7 +57,7 @@ function WordToken({
   );
 }
 
-/** Render a plain text string with clickable word tokens. */
+/** Render plain text with clickable word tokens. */
 function renderTokenizedText(text: string, paragraphIndex: number): React.ReactNode {
   const parts = text.split(/(\s+)/g);
   return parts.map((part, i) => {
@@ -65,16 +65,14 @@ function renderTokenizedText(text: string, paragraphIndex: number): React.ReactN
     if (/[a-zA-Z]/.test(part)) {
       const word = part.replace(/[^a-zA-Z'-]/g, '');
       if (word.length > 0) {
-        return (
-          <WordToken key={i} text={part} word={word} paragraphIndex={paragraphIndex} />
-        );
+        return <WordToken key={i} text={part} word={word} paragraphIndex={paragraphIndex} />;
       }
     }
     return part;
   });
 }
 
-/** Recursively process React children, replacing text nodes with clickable word tokens. */
+/** Recursively process React children for word tokens. */
 function processChildren(children: React.ReactNode, paragraphIndex: number): React.ReactNode {
   return React.Children.map(children, (child) => {
     if (typeof child === 'string') {
@@ -93,7 +91,7 @@ function processChildren(children: React.ReactNode, paragraphIndex: number): Rea
   });
 }
 
-/** A single clickable sentence with selection & analysis state. */
+/** A clickable sentence with selection/analysis states. */
 function SentenceToken({
   sentence,
   paragraphIndex,
@@ -113,12 +111,15 @@ function SentenceToken({
   const handleClick = useCallback(
     (e: React.MouseEvent) => {
       e.stopPropagation();
-      toggleSentenceSelection(paragraphIndex, sentence.index, sentence.text);
+      if (hasAnalysis) {
+        triggerScrollToAnalysis(key, 'sentences');
+      } else {
+        toggleSentenceSelection(paragraphIndex, sentence.index, sentence.text);
+      }
     },
-    [paragraphIndex, sentence, toggleSentenceSelection]
+    [paragraphIndex, sentence, toggleSentenceSelection, hasAnalysis, key]
   );
 
-  // Word-token-enabled markdown components for this sentence
   const components = useMemo(
     () => ({
       p: ({ children, ...props }: any) => (
@@ -130,7 +131,7 @@ function SentenceToken({
 
   return (
     <span
-      className={`sentence-selectable ${isSelected ? 'sentence-selected' : ''} ${hasAnalysis && !isSelected ? 'sentence-has-analysis' : ''}`}
+      className={`sentence-token ${isSelected ? 'sentence-token-selected' : ''} ${hasAnalysis && !isSelected ? 'sentence-token-has-analysis' : ''}`}
       onClick={handleClick}
       data-paragraph-index={paragraphIndex}
       data-sentence-index={sentence.index}
@@ -147,20 +148,22 @@ export default function ParagraphBlock({
   translation,
   isTranslating,
 }: ParagraphBlockProps) {
-  const { fontSize } = useReaderStore();
+  const { fontSize, fontFamily, lineHeight } = useReaderStore();
   const [showTranslation, setShowTranslation] = useState(false);
 
-  // Split the paragraph into sentences for sentence-level selection
+  const fontFamilyValue = FONT_FAMILIES.find(f => f.key === fontFamily)?.value ?? FONT_FAMILIES[0].value;
+  const lineHeightValue = LINE_HEIGHTS.find(l => l.key === lineHeight)?.value ?? LINE_HEIGHTS[0].value;
+
   const sentences = useMemo(() => splitSentences(paragraph.text), [paragraph.text]);
 
   return (
     <div
-      className="paragraph-block prose max-w-none text-gray-900 font-serif [&_p]:mb-0"
-      style={{ fontSize: `${fontSize}px` }}
+      className="paragraph-block prose max-w-none"
+      style={{ fontSize: `${fontSize}px`, fontFamily: fontFamilyValue, lineHeight: lineHeightValue }}
       data-paragraph-index={paragraph.index}
     >
-      {/* Sentence-level rendering with clickable sentences */}
-      <p>
+      {/* Sentence-level rendering */}
+      <p className="text-ink !mb-0">
         {sentences.map((sentence) => (
           <SentenceToken
             key={sentence.index}
@@ -172,27 +175,41 @@ export default function ParagraphBlock({
 
       {/* Translation section */}
       {translation ? (
-        <div className="not-prose" style={{ fontSize: `${fontSize - 4}px`, marginTop: 4 }}>
-          <span
+        <div className="not-prose mt-1" style={{ fontSize: `${Math.max(fontSize - 4, 12)}px` }}>
+          <button
             onClick={() => setShowTranslation(!showTranslation)}
-            className="inline-flex items-center gap-1 cursor-pointer select-none"
-            style={{ color: '#9ca3af' }}
+            className="inline-flex items-center gap-1.5 cursor-pointer select-none text-muted hover:text-ink transition-colors text-xs font-sans"
           >
-            {showTranslation ? <EyeInvisibleOutlined /> : <EyeOutlined />}
+            <svg
+              width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"
+              className={showTranslation ? '' : 'opacity-60'}
+            >
+              {showTranslation ? (
+                <path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19M14.12 14.12a3 3 0 11-4.24-4.24" />
+              ) : (
+                <>
+                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                  <circle cx="12" cy="12" r="3" />
+                </>
+              )}
+            </svg>
             {showTranslation ? '隐藏翻译' : '查看翻译'}
-          </span>
+          </button>
           {showTranslation && (
-            <div className="mt-1 p-3 bg-blue-50 rounded-md text-gray-600 border-l-2 border-blue-300">
-              {translation}
+            <div className="mt-2 p-3.5 bg-surface-card rounded-md text-body border-l-2 border-primary">
+              <span className="font-chinese leading-relaxed">{translation}</span>
             </div>
           )}
         </div>
       ) : isTranslating ? (
-        <div className="mt-1 not-prose">
-          <Text type="secondary" className="text-xs">
-            <LoadingOutlined className="mr-1" />
+        <div className="mt-1 not-prose text-xs text-muted-soft font-sans">
+          <span className="inline-flex items-center gap-1">
+            <svg className="animate-spin" width="12" height="12" viewBox="0 0 24 24" fill="none">
+              <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" opacity="0.25" />
+              <path d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" fill="currentColor" opacity="0.75" />
+            </svg>
             翻译中...
-          </Text>
+          </span>
         </div>
       ) : null}
     </div>

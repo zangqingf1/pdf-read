@@ -7,6 +7,7 @@ from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
+from app.models.prompt_template import PromptTemplate
 from app.models.sentence_analysis import SentenceAnalysis
 from app.schemas.sentences import (
     SentenceAnalysisRequest,
@@ -17,6 +18,20 @@ from app.schemas.sentences import (
 from app.services.ai_service import AIService, ai_service
 
 router = APIRouter()
+
+
+async def _get_prompt_overrides(
+    db: AsyncSession, name: str
+) -> tuple[str | None, str | None]:
+    """Fetch custom prompt overrides from DB."""
+    stmt = select(PromptTemplate).where(PromptTemplate.name == name)
+    result = await db.execute(stmt)
+    row = result.scalars().first()
+    if row is None:
+        return (None, None)
+    system = row.system_prompt if row.system_prompt else None
+    user = row.user_prompt if row.user_prompt else None
+    return (system, user)
 
 
 async def _persist_analyses(
@@ -120,7 +135,12 @@ async def analyze_sentences(
             })
 
         # Call AI service
-        raw_results = await ai.analyze_sentences(entries)
+        system_override, user_override = await _get_prompt_overrides(db, "analyze_sentences")
+        raw_results = await ai.analyze_sentences(
+            entries,
+            system_prompt_override=system_override,
+            user_prompt_override=user_override,
+        )
 
         # Build result list
         analyses: list[SentenceAnalysisResult] = []

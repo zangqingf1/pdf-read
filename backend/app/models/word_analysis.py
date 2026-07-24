@@ -28,8 +28,10 @@ class WordAnalysis(Base):
     part_of_speech: Mapped[str] = mapped_column(String(50), default="")
     definition: Mapped[str] = mapped_column(Text, default="")
     definition_zh: Mapped[str] = mapped_column(Text, default="")
-    example_sentences: Mapped[str] = mapped_column(Text, default="[]")
-    example_sentences_zh: Mapped[str] = mapped_column(Text, default="[]")
+    cognates: Mapped[str] = mapped_column(Text, default="[]")
+    synonyms_antonyms: Mapped[str] = mapped_column(Text, default='{"synonyms": [], "antonyms": []}')
+    base_form: Mapped[str] = mapped_column(Text, default="")
+    plural_form: Mapped[str] = mapped_column(Text, default="")
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now()

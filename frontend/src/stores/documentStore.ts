@@ -11,6 +11,8 @@ interface DocumentState {
   paragraphs: ParagraphResult[];
   wordCount: number;
   paragraphCount: number;
+  pageCount: number | null;
+  selectedPages: number[] | null;
   isLoading: boolean;
 
   // Translation state
@@ -32,6 +34,10 @@ interface DocumentState {
   sentenceAnalyses: Record<string, SentenceAnalysisResult>; // same key pattern
   isAnalyzingSentences: boolean;
   sentenceAnalysisError: string | null;
+
+  // Reverse navigation: highlight a specific analysis card in the panel
+  highlightedAnalysisKey: string | null;
+  highlightedAnalysisTab: 'words' | 'sentences' | null;
 
   // Actions
   setDocument: (data: PDFResultResponse) => void;
@@ -58,6 +64,9 @@ interface DocumentState {
   clearSentenceAnalyses: () => void;
   setAnalyzingSentences: (analyzing: boolean) => void;
   setSentenceAnalysisError: (error: string | null) => void;
+
+  // Reverse navigation
+  setHighlightedAnalysis: (key: string | null, tab: 'words' | 'sentences' | null) => void;
 }
 
 export const useDocumentStore = create<DocumentState>((set) => ({
@@ -67,6 +76,8 @@ export const useDocumentStore = create<DocumentState>((set) => ({
   paragraphs: [],
   wordCount: 0,
   paragraphCount: 0,
+  pageCount: null,
+  selectedPages: null,
   isLoading: false,
 
   translations: {},
@@ -82,6 +93,9 @@ export const useDocumentStore = create<DocumentState>((set) => ({
   sentenceAnalyses: {},
   isAnalyzingSentences: false,
   sentenceAnalysisError: null,
+
+  highlightedAnalysisKey: null,
+  highlightedAnalysisTab: null,
 
   setDocument: (data) => {
     set((state) => {
@@ -105,8 +119,10 @@ export const useDocumentStore = create<DocumentState>((set) => ({
             part_of_speech: wa.part_of_speech,
             definition: wa.definition,
             definition_zh: wa.definition_zh,
-            example_sentences: wa.example_sentences,
-            example_sentences_zh: wa.example_sentences_zh,
+            cognates: wa.cognates,
+            synonyms_antonyms: wa.synonyms_antonyms,
+            base_form: wa.base_form,
+            plural_form: wa.plural_form,
           };
         }
       }
@@ -127,6 +143,8 @@ export const useDocumentStore = create<DocumentState>((set) => ({
         paragraphs: data.paragraphs,
         wordCount: data.word_count,
         paragraphCount: data.paragraph_count,
+        pageCount: data.page_count ?? null,
+        selectedPages: data.selected_pages ?? null,
         translations,
         wordAnalyses,
         sentenceAnalyses,
@@ -145,6 +163,8 @@ export const useDocumentStore = create<DocumentState>((set) => ({
       paragraphs: [],
       wordCount: 0,
       paragraphCount: 0,
+      pageCount: null,
+      selectedPages: null,
       isLoading: false,
       translations: {},
       isTranslating: false,
@@ -157,6 +177,8 @@ export const useDocumentStore = create<DocumentState>((set) => ({
       sentenceAnalyses: {},
       isAnalyzingSentences: false,
       sentenceAnalysisError: null,
+      highlightedAnalysisKey: null,
+      highlightedAnalysisTab: null,
     }),
 
   updateTranslations: (items) =>
@@ -251,4 +273,8 @@ export const useDocumentStore = create<DocumentState>((set) => ({
   setAnalyzingSentences: (analyzing) => set({ isAnalyzingSentences: analyzing }),
 
   setSentenceAnalysisError: (error) => set({ sentenceAnalysisError: error }),
+
+  // ── Reverse navigation ──────────────────────────────────────
+
+  setHighlightedAnalysis: (key, tab) => set({ highlightedAnalysisKey: key, highlightedAnalysisTab: tab }),
 }));

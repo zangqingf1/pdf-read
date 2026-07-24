@@ -15,8 +15,13 @@ export interface WordAnalysisResult {
   part_of_speech: string;
   definition: string;
   definition_zh: string;
-  example_sentences: string[];
-  example_sentences_zh: string[];
+  cognates: Array<{ word: string; part_of_speech: string }>;
+  synonyms_antonyms: {
+    synonyms: Array<{ word: string; part_of_speech: string }>;
+    antonyms: Array<{ word: string; part_of_speech: string }>;
+  };
+  base_form: string;
+  plural_form: string;
 }
 
 export interface WordAnalysisRequest {

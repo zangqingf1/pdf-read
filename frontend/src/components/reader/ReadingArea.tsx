@@ -1,0 +1,121 @@
+import { useState } from 'react';
+import { useDocumentStore } from '../../stores/documentStore';
+import ParagraphBlock from './ParagraphBlock';
+import { useReaderStore, FONT_SIZE_MIN, FONT_SIZE_MAX } from '../../stores/readerStore';
+import TypographyDrawer from './TypographyDrawer';
+
+export default function ReadingArea() {
+  const {
+    title,
+    paragraphs,
+    wordCount,
+    paragraphCount,
+    pageCount,
+    selectedPages,
+    translations,
+    isTranslating,
+  } = useDocumentStore();
+  const { fontSize, increaseFontSize, decreaseFontSize } = useReaderStore();
+  const [drawerOpen, setDrawerOpen] = useState(false);
+
+  const translatedCount = Object.keys(translations).length;
+  const total = paragraphCount || paragraphs.length;
+
+  return (
+    <div>
+      {/* ── Document header ── */}
+      <div className="mb-10 pb-6 border-b border-hairline">
+        <h2 className="text-display-md font-display text-ink mb-2">
+          {title || 'Untitled Document'}
+        </h2>
+        <div className="flex items-center justify-between flex-wrap gap-3">
+          <div className="flex items-center gap-4 text-sm text-muted">
+            <span className="flex items-center gap-1.5">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
+                <path d="M16 2v4h4M14 2v6h6" />
+              </svg>
+              {total} 段落
+            </span>
+            <span className="flex items-center gap-1.5">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                <circle cx="11" cy="11" r="8" />
+                <path d="M21 21l-4.35-4.35" />
+              </svg>
+              {wordCount?.toLocaleString() || '—'} 词
+            </span>
+            {selectedPages && selectedPages.length > 0 && (
+              <span>
+                页面 {selectedPages.sort((a, b) => a - b).join(', ')}
+              </span>
+            )}
+            {(!selectedPages || selectedPages.length === 0) && pageCount && (
+              <span>{pageCount} 页</span>
+            )}
+            {isTranslating && (
+              <span className="flex items-center gap-1.5 text-primary">
+                <svg className="animate-spin" width="14" height="14" viewBox="0 0 24 24" fill="none">
+                  <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" opacity="0.25" />
+                  <path d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" fill="currentColor" opacity="0.75" />
+                </svg>
+                翻译中 ({translatedCount}/{total})
+              </span>
+            )}
+            {!isTranslating && translatedCount > 0 && translatedCount < total && (
+              <span>已翻译 {translatedCount}/{total} 段</span>
+            )}
+          </div>
+
+          {/* Font size & typography controls */}
+          <div className="flex items-center gap-1 text-sm text-muted">
+            <button
+              onClick={decreaseFontSize}
+              disabled={fontSize <= FONT_SIZE_MIN}
+              className="w-8 h-8 flex items-center justify-center rounded-md hover:bg-surface-card disabled:opacity-30 transition-colors"
+              title="缩小字体"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M5 12h14" />
+              </svg>
+            </button>
+            <span className="min-w-[36px] text-center text-xs">{fontSize}px</span>
+            <button
+              onClick={increaseFontSize}
+              disabled={fontSize >= FONT_SIZE_MAX}
+              className="w-8 h-8 flex items-center justify-center rounded-md hover:bg-surface-card disabled:opacity-30 transition-colors"
+              title="放大字体"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M12 5v14M5 12h14" />
+              </svg>
+            </button>
+            <div className="w-px h-5 bg-hairline mx-0.5" />
+            <button
+              onClick={() => setDrawerOpen(true)}
+              className="w-8 h-8 flex items-center justify-center rounded-md hover:bg-surface-card transition-colors"
+              title="排版设置"
+            >
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                <circle cx="12" cy="12" r="3" />
+                <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z" />
+              </svg>
+            </button>
+          </div>
+          <TypographyDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)} />
+        </div>
+      </div>
+
+      {/* ── Paragraphs ── */}
+      <div>
+        {paragraphs.map((para, idx) => (
+          <ParagraphBlock
+            key={idx}
+            paragraph={para}
+            translation={translations[para.index]}
+            isTranslating={isTranslating}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}

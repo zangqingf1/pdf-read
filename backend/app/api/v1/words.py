@@ -38,7 +38,7 @@ def _extract_sentence(text: str, word: str) -> str:
 
     word_lower = word.lower()
     HEADING_RE = re.compile(r'^#{1,6}\s+', re.MULTILINE)
-    SENTENCE_SPLIT = re.compile(r'(?<=[.!?])\s+')
+    SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+|(?<=[.!?][\"'])\s+")
 
     # ── Stage 1: split into blocks by paragraph / heading breaks ──
     blocks = re.split(r'\n{2,}', text)
@@ -128,18 +128,20 @@ async def _persist_analyses(
             existing.part_of_speech = entry.get("part_of_speech", "")
             existing.definition = entry.get("definition", "")
             existing.definition_zh = entry.get("definition_zh", "")
-            examples = entry.get("example_sentences", [])
-            examples_zh = entry.get("example_sentences_zh", [])
-            existing.example_sentences = (
-                json.dumps(examples, ensure_ascii=False) if examples else "[]"
+            cognates = entry.get("cognates", [])
+            syn_ant = entry.get("synonyms_antonyms", {"synonyms": [], "antonyms": []})
+            existing.cognates = (
+                json.dumps(cognates, ensure_ascii=False) if cognates else "[]"
             )
-            existing.example_sentences_zh = (
-                json.dumps(examples_zh, ensure_ascii=False) if examples_zh else "[]"
+            existing.synonyms_antonyms = (
+                json.dumps(syn_ant, ensure_ascii=False) if syn_ant else '{"synonyms": [], "antonyms": []}'
             )
+            existing.base_form = entry.get("base_form", "")
+            existing.plural_form = entry.get("plural_form", "")
         else:
             # Create new record
-            examples = entry.get("example_sentences", [])
-            examples_zh = entry.get("example_sentences_zh", [])
+            cognates = entry.get("cognates", [])
+            syn_ant = entry.get("synonyms_antonyms", {"synonyms": [], "antonyms": []})
             new_analysis = WordAnalysis(
                 document_id=document_id,
                 paragraph_index=para_index,
@@ -148,8 +150,10 @@ async def _persist_analyses(
                 part_of_speech=entry.get("part_of_speech", ""),
                 definition=entry.get("definition", ""),
                 definition_zh=entry.get("definition_zh", ""),
-                example_sentences=json.dumps(examples, ensure_ascii=False) if examples else "[]",
-                example_sentences_zh=json.dumps(examples_zh, ensure_ascii=False) if examples_zh else "[]",
+                cognates=json.dumps(cognates, ensure_ascii=False) if cognates else "[]",
+                synonyms_antonyms=json.dumps(syn_ant, ensure_ascii=False) if syn_ant else '{"synonyms": [], "antonyms": []}',
+                base_form=entry.get("base_form", ""),
+                plural_form=entry.get("plural_form", ""),
             )
             db.add(new_analysis)
 
@@ -213,8 +217,10 @@ async def analyze_words(
                 part_of_speech=r.get("part_of_speech", ""),
                 definition=r.get("definition", ""),
                 definition_zh=r.get("definition_zh", ""),
-                example_sentences=r.get("example_sentences", []),
-                example_sentences_zh=r.get("example_sentences_zh", []),
+                cognates=r.get("cognates", []),
+                synonyms_antonyms=r.get("synonyms_antonyms", {"synonyms": [], "antonyms": []}),
+                base_form=r.get("base_form", ""),
+                plural_form=r.get("plural_form", ""),
             ))
 
         # Persist to DB
@@ -277,13 +283,13 @@ async def get_word_analyses(
     analyses = []
     for wa in records:
         try:
-            examples = json.loads(wa.example_sentences) if wa.example_sentences else []
+            cognates = json.loads(wa.cognates) if wa.cognates else []
         except (json.JSONDecodeError, TypeError):
-            examples = []
+            cognates = []
         try:
-            examples_zh = json.loads(wa.example_sentences_zh) if wa.example_sentences_zh else []
+            syn_ant = json.loads(wa.synonyms_antonyms) if wa.synonyms_antonyms else {"synonyms": [], "antonyms": []}
         except (json.JSONDecodeError, TypeError):
-            examples_zh = []
+            syn_ant = {"synonyms": [], "antonyms": []}
 
         analyses.append(WordAnalysisResult(
             id=str(wa.id),
@@ -293,8 +299,10 @@ async def get_word_analyses(
             part_of_speech=wa.part_of_speech or "",
             definition=wa.definition or "",
             definition_zh=wa.definition_zh or "",
-            example_sentences=examples,
-            example_sentences_zh=examples_zh,
+            cognates=cognates,
+            synonyms_antonyms=syn_ant,
+            base_form=wa.base_form or "",
+            plural_form=wa.plural_form or "",
         ))
 
     return WordAnalysisResponse(analyses=analyses)

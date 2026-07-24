@@ -2,10 +2,82 @@
 
 import asyncio
 import json
+import logging
+import re
 
 import httpx
 
 from app.config import settings
+from app.services.prompt_defaults import DEFAULT_PROMPTS, PLACEHOLDERS
+
+logger = logging.getLogger(__name__)
+
+
+class _SafeDict(dict):
+    """A dict that returns the key itself wrapped in braces for missing keys.
+
+    Used with ``str.format_map()`` so that unknown placeholders like ``{foo}``
+    remain as literal text instead of raising ``KeyError``.
+    """
+
+    def __missing__(self, key: str) -> str:
+        return "{" + key + "}"
+
+
+def _is_fatal_error(exc: Exception) -> bool:
+    """Check whether an exception should fail the entire batch.
+
+    Auth / config errors affect *every* item, so they must propagate to the
+    API endpoint so the frontend can show an actionable error (e.g. "API Key
+    无效").  Per-item errors (timeout, rate-limit, malformed response) only
+    fail that one item and return an empty placeholder.
+    """
+    if isinstance(exc, httpx.HTTPStatusError):
+        status = exc.response.status_code
+        return status in (401, 403)
+    # ValueError is raised for missing API key — a config error, not transient
+    if isinstance(exc, ValueError):
+        return True
+    return False
+
+
+def _resolve_prompt(
+    template_type: str,
+    format_kwargs: dict[str, str],
+    system_override: str | None = None,
+    user_override: str | None = None,
+) -> list[dict[str, str]]:
+    """Build the messages list for a chat completion request.
+
+    Returns a list of message dicts.  When a system prompt is present (either
+    from overrides or defaults), a ``{"role": "system"}`` message is prepended.
+
+    Uses ``str.format_map()`` with a ``_SafeDict`` so that unknown placeholders
+    are left as-is instead of crashing.  A warning is logged when placeholders
+    referenced in the template are not present in *format_kwargs*.
+    """
+    defaults = DEFAULT_PROMPTS[template_type]
+    system_prompt = system_override if system_override is not None else defaults["system_prompt"]
+    user_template = user_override if user_override is not None else defaults["user_prompt"]
+
+    # Warn about placeholders in template that are not in format_kwargs
+    expected = set(PLACEHOLDERS.get(template_type, []))
+    actual = set(re.findall(r"\{(\w+)\}", user_template))
+    missing = actual - expected
+    if missing:
+        logger.warning(
+            "Prompt template '%s' has unknown placeholder(s): %s. "
+            "They will be left as literal text.",
+            template_type, ", ".join("{" + p + "}" for p in missing),
+        )
+
+    formatted_user = user_template.format_map(_SafeDict(format_kwargs))
+
+    messages: list[dict[str, str]] = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append({"role": "user", "content": formatted_user})
+    return messages
 
 
 class AIService:
@@ -31,41 +103,44 @@ class AIService:
         return self._client
 
     async def translate(
-        self, text: str, prev_text: str | None = None, next_text: str | None = None
+        self,
+        text: str,
+        prev_text: str | None = None,
+        next_text: str | None = None,
+        *,
+        system_prompt_override: str | None = None,
+        user_prompt_override: str | None = None,
     ) -> str:
         """Translate an English paragraph to Chinese, with optional context.
 
         When prev_text/next_text are provided, they are included in the prompt
         as surrounding context so the AI can resolve ambiguities (e.g. "bank" →
         "银行" in finance context vs "河岸" in nature context).
+
+        Set ``system_prompt_override`` / ``user_prompt_override`` to use a
+        custom prompt template instead of the built-in default.
         """
         if not self.api_key or not self.api_key.strip():
             raise ValueError(
                 "DeepSeek API Key 未配置。请在 .env 中设置或在页面右上角配置。"
             )
 
-        if prev_text or next_text:
-            # Sliding window context translation
-            prompt_parts = ["你是一个专业的英文翻译。请结合上下文语境翻译以下段落。"]
-            if prev_text:
-                prompt_parts.append(f"上文（仅供参考）：\n{prev_text}")
-            prompt_parts.append(f"--- 需要翻译的段落 ---\n{text}")
-            if next_text:
-                prompt_parts.append(f"下文（仅供参考）：\n{next_text}")
-            prompt_parts.append("只返回翻译结果，不要添加任何解释。")
-            prompt = "\n\n".join(prompt_parts)
-        else:
-            prompt = (
-                "你是一个专业的英文翻译。请将以下英文段落翻译成流畅、地道的中文。"
-                "保持原文的段落结构和语气风格。只返回翻译结果，不要添加任何解释。\n\n"
-                f"原文：\n{text}"
-            )
+        messages = _resolve_prompt(
+            "translate",
+            {
+                "text": text,
+                "prev_text": prev_text or "",
+                "next_text": next_text or "",
+            },
+            system_override=system_prompt_override,
+            user_override=user_prompt_override,
+        )
 
         # Use a high floor for max_tokens — reasoning models (deepseek-v4-flash)
         # consume tokens for internal reasoning, so we need ample headroom.
         payload = {
             "model": self.model,
-            "messages": [{"role": "user", "content": prompt}],
+            "messages": messages,
             "temperature": 0.3,
             "max_tokens": max(1024, min(len(text) * 4, 4096)),
         }
@@ -89,6 +164,8 @@ class AIService:
                 return data["choices"][0]["message"]["content"].strip()
 
             except (httpx.HTTPError, httpx.TimeoutException) as e:
+                if _is_fatal_error(e):
+                    raise  # Auth / config errors never recover with retries
                 if attempt < 2:
                     await asyncio.sleep(2 ** attempt)
                 else:
@@ -101,7 +178,13 @@ class AIService:
 
         raise RuntimeError("AI service call failed")
 
-    async def translate_batch(self, paragraphs: list[str]) -> list[str]:
+    async def translate_batch(
+        self,
+        paragraphs: list[str],
+        *,
+        system_prompt_override: str | None = None,
+        user_prompt_override: str | None = None,
+    ) -> list[str]:
         """Translate paragraphs one-by-one with high concurrency.
 
         Each paragraph gets its own API call — eliminates ordering issues
@@ -127,10 +210,17 @@ class AIService:
                         else None
                     )
                     result = await self.translate(
-                        text, prev_text=prev_text, next_text=next_text
+                        text,
+                        prev_text=prev_text,
+                        next_text=next_text,
+                        system_prompt_override=system_prompt_override,
+                        user_prompt_override=user_prompt_override,
                     )
                     return (index, result)
-                except Exception:
+                except Exception as e:
+                    if _is_fatal_error(e):
+                        raise  # Auth / config error → fail the whole batch
+                    logger.exception("Translation failed for paragraph %d", index)
                     return (index, "")
 
         # Launch all translations concurrently (order preserved by index)
@@ -141,7 +231,13 @@ class AIService:
         results.sort(key=lambda x: x[0])
         return [text for _, text in results]
 
-    async def analyze_words(self, entries: list[dict]) -> list[dict]:
+    async def analyze_words(
+        self,
+        entries: list[dict],
+        *,
+        system_prompt_override: str | None = None,
+        user_prompt_override: str | None = None,
+    ) -> list[dict]:
         """Analyze vocabulary words with DeepSeek AI — parallel batch processing.
 
         entries: [
@@ -176,27 +272,21 @@ class AIService:
         ) -> list[dict]:
             async with semaphore:
                 words_list = ", ".join(words_batch)
-                prompt = f"""你是一个专业的英语词汇分析师。请为以下每个单词提供详细的分析，以 JSON 数组格式返回。
 
-上下文句子："{sentence}"
-上下文翻译："{sentence_translation or '无'}"
-
-需要分析的单词：{words_list}
-
-返回格式要求 — 必须返回严格的 JSON 数组，每个元素包含以下字段：
-- "word": 原单词
-- "phonetic": IPA 音标，例如 "/ˈɡræv.ə.ti/"
-- "part_of_speech": 词性缩写 (n./v./adj./adv./prep./conj./pron./art./det.)
-- "definition": 简单的英文释义（不超过 30 词）
-- "definition_zh": 中文释义
-- "example_sentences": 2~3 个自然的英语例句，字符串数组
-- "example_sentences_zh": 对应的中文翻译，字符串数组（与英文例句一一对应）
-
-只返回 JSON 数组，不要添加任何其他文字。"""
+                messages = _resolve_prompt(
+                    "analyze_words",
+                    {
+                        "words_list": words_list,
+                        "sentence": sentence,
+                        "sentence_translation": sentence_translation or "无",
+                    },
+                    system_override=system_prompt_override,
+                    user_override=user_prompt_override,
+                )
 
                 payload = {
                     "model": self.model,
-                    "messages": [{"role": "user", "content": prompt}],
+                    "messages": messages,
                     "temperature": 0.3,
                     "max_tokens": max(1024, min(len(words_batch) * 1500, 8192)),
                     "response_format": {"type": "json_object"},
@@ -235,26 +325,45 @@ class AIService:
                         # Normalize fields
                         for r in results:
                             r["paragraph_index"] = para_index
-                            if "example_sentences" not in r or not isinstance(
-                                r.get("example_sentences"), list
+                            # cognates: ensure list of {word, part_of_speech, meaning_zh}
+                            if "cognates" not in r or not isinstance(
+                                r.get("cognates"), list
                             ):
-                                r["example_sentences"] = []
-                            if "example_sentences_zh" not in r or not isinstance(
-                                r.get("example_sentences_zh"), list
-                            ):
-                                r["example_sentences_zh"] = []
+                                r["cognates"] = []
+                            # synonyms_antonyms: ensure dict with synonyms/antonyms arrays
+                            sa = r.get("synonyms_antonyms")
+                            if not isinstance(sa, dict):
+                                r["synonyms_antonyms"] = {"synonyms": [], "antonyms": []}
+                            else:
+                                if "synonyms" not in sa or not isinstance(
+                                    sa["synonyms"], list
+                                ):
+                                    sa["synonyms"] = []
+                                if "antonyms" not in sa or not isinstance(
+                                    sa["antonyms"], list
+                                ):
+                                    sa["antonyms"] = []
+                            # base_form / plural_form: ensure strings
+                            if not isinstance(r.get("base_form"), str):
+                                r["base_form"] = ""
+                            if not isinstance(r.get("plural_form"), str):
+                                r["plural_form"] = ""
 
                         return results
 
                     except (httpx.HTTPError, httpx.TimeoutException) as e:
-                        if attempt < 2:
+                        if attempt < 2 and not _is_fatal_error(e):
                             await asyncio.sleep(2 ** attempt)
                         else:
+                            if _is_fatal_error(e):
+                                raise  # Auth / config error → fail the whole batch
+                            logger.exception("Word analysis HTTP/timeout error")
                             return []
-                    except (json.JSONDecodeError, KeyError, TypeError):
+                    except (json.JSONDecodeError, KeyError, TypeError) as e:
                         if attempt < 2:
                             await asyncio.sleep(2 ** attempt)
                         else:
+                            logger.exception("Word analysis JSON/decode error")
                             return []
 
                 return []
@@ -298,7 +407,13 @@ class AIService:
 
         return all_results
 
-    async def analyze_sentences(self, entries: list[dict]) -> list[dict]:
+    async def analyze_sentences(
+        self,
+        entries: list[dict],
+        *,
+        system_prompt_override: str | None = None,
+        user_prompt_override: str | None = None,
+    ) -> list[dict]:
         """Analyze sentence structure with DeepSeek AI — parallel batch processing.
 
         entries: [
@@ -326,45 +441,19 @@ class AIService:
                 sentence_text = entry["sentence_text"]
                 sentence_translation = entry.get("sentence_translation", "")
 
-                prompt = f"""你是一个资深的英语考研教师。请将以下句子按以下要求拆解，分成不同部分，以 JSON 格式返回。
-
-要求：
-
-- 主干：概括全句核心框架（主谓宾/主系表/祈使句等）。如果一个句子由并列连词（and/but/or等）连接多个分句，请分别标出各个分句的主干。
-- 修饰成分，包含但不限于：
-  · 介词短语（说明修饰对象和功能，如作定语、作状语、作表语等）
-  · 定语从句（标注先行词和引导词 that/which/who/whom/whose/when/where/why）
-  · 状语从句（标注引导词和从句类型，如时间/原因/条件/让步/目的/结果/方式/比较）
-  · 宾语从句（标注引导词 that/whether/if/what/who/which/when/where/why/how）
-  · 主语从句（标注引导词和从句在句中的位置）
-  · 表语从句（标注引导词）
-  · 同位语 / 同位语从句（说明与哪个名词构成同位关系，若有引导词请标出）
-  · 非谓语动词（to do / doing / done，说明其逻辑主语和所作成分：定语/状语/补语/主语/宾语等）
-  · 插入语（标注其功能，如表示评价、补充说明、逻辑衔接等）
-  · 连接词 / 引导词（如 and, but, or, that, which, when, if, because, although 等，说明其连接的内容）
-
-  需要分析的句子："{sentence_text}"
-  段落翻译参考："{sentence_translation or '无'}"
-
-  返回格式要求 — 必须返回严格的 JSON 对象，包含以下字段：
-
-  - "sentence_structure": 数组，每个元素包含：
-    - "text": 该部分的原文片段
-    - "label": 句子部分标签（如：主干，定语从句、状语从句、同位语、插入语、宾语从句、主语从句、连接词等）
-    - "explanation": 该成分在原句中的具体内容，功能说明（说明它修饰谁、作何成分、表达什么含义等）
-  - "idiomatic_translation": 整句的地道中文翻译（不是逐字直译，而是符合中文表达习惯的自然翻译）
-
-  注意事项：
-  1. sentence_structure 数组中的元素应按原文出现顺序排列，便于学生对照原文阅读。
-  2. 每个修饰成分的 explanation 应明确指出其修饰对象（修饰哪个词/短语/从句）。
-  3. 引导词应单独列为一个元素（label 为"连接词"或"引导词"），或合并在对应的从句元素中标注，保持清晰。
-  4. 如果句子含有多个并列分句，每个分句的主干分别列出。
-
-  只返回 JSON 对象，不要添加任何其他文字。"""
+                messages = _resolve_prompt(
+                    "analyze_sentences",
+                    {
+                        "sentence_text": sentence_text,
+                        "sentence_translation": sentence_translation or "无",
+                    },
+                    system_override=system_prompt_override,
+                    user_override=user_prompt_override,
+                )
 
                 payload = {
                     "model": self.model,
-                    "messages": [{"role": "user", "content": prompt}],
+                    "messages": messages,
                     "temperature": 0.3,
                     "max_tokens": max(1024, min(len(sentence_text) * 2000, 8192)),
                     "response_format": {"type": "json_object"},
@@ -411,14 +500,18 @@ class AIService:
                         return result
 
                     except (httpx.HTTPError, httpx.TimeoutException) as e:
-                        if attempt < 2:
+                        if attempt < 2 and not _is_fatal_error(e):
                             await asyncio.sleep(2 ** attempt)
                         else:
+                            if _is_fatal_error(e):
+                                raise  # Auth / config error → fail the whole batch
+                            logger.exception("Sentence analysis HTTP/timeout error")
                             return None
-                    except (json.JSONDecodeError, KeyError, TypeError):
+                    except (json.JSONDecodeError, KeyError, TypeError) as e:
                         if attempt < 2:
                             await asyncio.sleep(2 ** attempt)
                         else:
+                            logger.exception("Sentence analysis JSON/decode error")
                             return None
 
                 return None

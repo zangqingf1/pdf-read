@@ -1,14 +1,17 @@
 """F01: PDF upload and text extraction API routes."""
 
 import json
+import os
 import uuid
 from typing import Optional
 
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Depends, BackgroundTasks
+from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db, async_session_factory
+from app.models.paragraph import Paragraph
 from app.models.sentence_analysis import SentenceAnalysis
 from app.models.word_analysis import WordAnalysis
 from app.schemas.pdf import (
@@ -19,10 +22,30 @@ from app.schemas.pdf import (
     WordAnalysisItem,
     DocumentListResponse,
     DocumentListItem,
+    SelectPagesRequest,
+    SelectPagesResponse,
+    UpdateParagraphItem,
+    UpdateParagraphsRequest,
+    UpdateParagraphsResponse,
+    DeleteParagraphResponse,
+    MergeParagraphsRequest,
+    MergeParagraphsResponse,
+    ReorderParagraphsRequest,
+    ReorderParagraphsResponse,
 )
 from app.services.pdf_service import pdf_service
 
 router = APIRouter()
+
+
+async def _parse_in_background(doc_id: uuid.UUID, file_path: str, token: str):
+    """Background task: parse a PDF document in a separate DB session."""
+    async with async_session_factory() as bg_db:
+        try:
+            await pdf_service.parse_document(doc_id, bg_db, mineru_token=token)
+        except Exception:
+            pass  # parse_document already marks status as 'failed'
+        await bg_db.commit()
 
 
 @router.post("/upload", response_model=PDFUploadResponse)
@@ -56,20 +79,24 @@ async def upload_pdf(
 
     task_id = str(document.id)
 
-    # Fire-and-forget background parsing (standalone deployment without Celery worker)
-    async def _parse_in_background(doc_id: uuid.UUID, file_path: str, token: str):
-        async with async_session_factory() as bg_db:
-            try:
-                await pdf_service.parse_document(doc_id, bg_db, mineru_token=token)
-            except Exception:
-                pass  # parse_document already marks status as 'failed'
-            await bg_db.commit()
+    # If page count is available, always let user select pages first
+    if document.page_count is not None and document.page_count >= 1:
+        document.parse_status = "awaiting_selection"
+        await db.commit()
+        return PDFUploadResponse(
+            task_id=task_id,
+            status="awaiting_selection",
+            page_count=document.page_count,
+        )
 
+    # Unknown page count: parse immediately (legacy behavior)
     background_tasks.add_task(
         _parse_in_background, document.id, document.file_path, mineru_token
     )
 
-    return PDFUploadResponse(task_id=task_id, status="processing")
+    return PDFUploadResponse(
+        task_id=task_id, status="processing", page_count=document.page_count
+    )
 
 
 @router.get("/status/{task_id}", response_model=PDFStatusResponse)
@@ -95,6 +122,8 @@ async def get_parse_status(
         status=document.parse_status,
         progress=100 if document.parse_status == "completed" else 50,
         error=document.error_message if document.parse_status == "failed" else None,
+        page_count=document.page_count,
+        selected_pages=document.selected_pages,
     )
 
 
@@ -119,13 +148,20 @@ async def get_parse_result(
         raise HTTPException(status_code=422, detail="PDF parsing failed")
 
     if document.parse_status != "completed":
+        if document.parse_status == "failed":
+            raise HTTPException(status_code=422, detail="PDF parsing failed")
         raise HTTPException(
             status_code=425,
             detail=f"Parsing not complete. Current status: {document.parse_status}",
         )
 
     paragraphs = [
-        ParagraphResult(index=p.index, text=p.text_en, text_zh=p.text_zh)
+        ParagraphResult(
+            index=p.index,
+            text=p.text_en,
+            text_zh=p.text_zh,
+            page_number=p.page_number,
+        )
         for p in sorted(document.paragraphs, key=lambda p: p.index)
     ]
 
@@ -141,13 +177,13 @@ async def get_parse_result(
     word_analyses = []
     for wa in wa_records:
         try:
-            examples = json.loads(wa.example_sentences) if wa.example_sentences else []
+            cognates = json.loads(wa.cognates) if wa.cognates else []
         except (json.JSONDecodeError, TypeError):
-            examples = []
+            cognates = []
         try:
-            examples_zh = json.loads(wa.example_sentences_zh) if wa.example_sentences_zh else []
+            syn_ant = json.loads(wa.synonyms_antonyms) if wa.synonyms_antonyms else {"synonyms": [], "antonyms": []}
         except (json.JSONDecodeError, TypeError):
-            examples_zh = []
+            syn_ant = {"synonyms": [], "antonyms": []}
         word_analyses.append(
             WordAnalysisItem(
                 id=str(wa.id),
@@ -157,8 +193,10 @@ async def get_parse_result(
                 part_of_speech=wa.part_of_speech or "",
                 definition=wa.definition or "",
                 definition_zh=wa.definition_zh or "",
-                example_sentences=examples,
-                example_sentences_zh=examples_zh,
+                cognates=cognates,
+                synonyms_antonyms=syn_ant,
+                base_form=wa.base_form or "",
+                plural_form=wa.plural_form or "",
             )
         )
 
@@ -195,6 +233,387 @@ async def get_parse_result(
         paragraph_count=document.paragraph_count or 0,
         word_analyses=word_analyses,
         sentence_analyses=sentence_analyses,
+        page_count=document.page_count,
+        selected_pages=document.selected_pages,
+    )
+
+
+@router.get("/file/{task_id}")
+async def get_pdf_file(
+    task_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Serve the original PDF file for client-side preview rendering.
+
+    Used by the PageSelector component to render page thumbnails
+    via react-pdf (PDF.js).
+    """
+    document = await pdf_service.get_document(uuid.UUID(task_id), db)
+
+    if document is None:
+        raise HTTPException(status_code=404, detail=f"Document {task_id} not found")
+
+    file_path = document.file_path
+    if not file_path or not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="PDF file not found on disk")
+
+    return FileResponse(file_path, media_type="application/pdf")
+
+
+@router.put("/documents/{task_id}/paragraphs", response_model=UpdateParagraphsResponse)
+async def update_paragraphs(
+    task_id: str,
+    body: UpdateParagraphsRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Batch update paragraph text for a document.
+
+    Used by the review/edit page to persist user corrections to OCR text.
+    If English text changes, the Chinese translation is cleared so it will
+    be re-translated when the user enters the reader.
+
+    Args:
+        task_id: Document UUID.
+        body: List of {index, text_en} pairs to update.
+    """
+    document = await pdf_service.get_document(uuid.UUID(task_id), db)
+
+    if document is None:
+        raise HTTPException(status_code=404, detail=f"Document {task_id} not found")
+
+    if document.parse_status != "completed":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot edit paragraphs for a document with status '{document.parse_status}'",
+        )
+
+    # Build a lookup of existing paragraphs by index
+    para_map = {p.index: p for p in document.paragraphs}
+
+    updated_count = 0
+    for item in body.paragraphs:
+        para = para_map.get(item.index)
+        if para is None:
+            continue  # Skip non-existent indices silently
+
+        if para.text_en != item.text_en:
+            para.text_en = item.text_en
+            para.text_zh = None  # Invalidate stale translation
+            updated_count += 1
+
+    if updated_count > 0:
+        # Recalculate document-level aggregates
+        all_paragraphs = sorted(document.paragraphs, key=lambda p: p.index)
+        document.original_text = "\n\n".join(p.text_en for p in all_paragraphs)
+        document.word_count = sum(
+            len(p.text_en.split()) for p in all_paragraphs
+        )
+
+    await db.commit()
+
+    return UpdateParagraphsResponse(
+        document_id=task_id,
+        updated_count=updated_count,
+    )
+
+
+@router.delete(
+    "/documents/{task_id}/paragraphs/{paragraph_index}",
+    response_model=DeleteParagraphResponse,
+)
+async def delete_paragraph(
+    task_id: str,
+    paragraph_index: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete a single paragraph from a document.
+
+    Removes the paragraph at the given index and re-indexes all
+    subsequent paragraphs to keep indices contiguous.
+    """
+    document = await pdf_service.get_document(uuid.UUID(task_id), db)
+
+    if document is None:
+        raise HTTPException(status_code=404, detail=f"Document {task_id} not found")
+
+    if document.parse_status != "completed":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot edit paragraphs for a document with status '{document.parse_status}'",
+        )
+
+    # Find the paragraph by index
+    target = next(
+        (p for p in document.paragraphs if p.index == paragraph_index), None
+    )
+    if target is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Paragraph index {paragraph_index} not found in document",
+        )
+
+    # Delete the paragraph
+    await db.delete(target)
+    await db.flush()
+
+    # Re-index subsequent paragraphs with a single raw SQL UPDATE.
+    # This avoids SQLAlchemy executemany batching order issues that
+    # can cause temporary UNIQUE (document_id, index) conflicts.
+    from sqlalchemy import update as sa_update
+
+    await db.execute(
+        sa_update(Paragraph)
+        .where(
+            Paragraph.document_id == document.id,
+            Paragraph.index > paragraph_index,
+        )
+        .values(index=Paragraph.index - 1)
+    )
+    await db.flush()
+
+    # Expire the collection so the next access re-loads fresh indices
+    await db.refresh(document, attribute_names=["paragraphs"])
+
+    # Recalculate document aggregates
+    all_paragraphs = sorted(document.paragraphs, key=lambda p: p.index)
+    document.original_text = "\n\n".join(p.text_en for p in all_paragraphs)
+    document.word_count = sum(len(p.text_en.split()) for p in all_paragraphs)
+    document.paragraph_count = len(all_paragraphs)
+
+    await db.commit()
+
+    return DeleteParagraphResponse(
+        document_id=task_id,
+        deleted_index=paragraph_index,
+        message=f"已删除段落 {paragraph_index + 1}",
+    )
+
+
+@router.post(
+    "/documents/{task_id}/paragraphs/merge",
+    response_model=MergeParagraphsResponse,
+)
+async def merge_paragraphs(
+    task_id: str,
+    body: MergeParagraphsRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Merge two adjacent paragraphs into one.
+
+    Appends the text of paragraph index_b to paragraph index_a,
+    then deletes paragraph index_b and re-indexes subsequent paragraphs.
+    """
+    document = await pdf_service.get_document(uuid.UUID(task_id), db)
+
+    if document is None:
+        raise HTTPException(status_code=404, detail=f"Document {task_id} not found")
+
+    if document.parse_status != "completed":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot edit paragraphs for a document with status '{document.parse_status}'",
+        )
+
+    # Validate indices
+    if abs(body.index_b - body.index_a) != 1:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Paragraphs must be adjacent. Got index {body.index_a} and {body.index_b}.",
+        )
+
+    para_a = next(
+        (p for p in document.paragraphs if p.index == body.index_a), None
+    )
+    para_b = next(
+        (p for p in document.paragraphs if p.index == body.index_b), None
+    )
+
+    if para_a is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Paragraph index {body.index_a} not found",
+        )
+    if para_b is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Paragraph index {body.index_b} not found",
+        )
+
+    # Merge: keep para_a, append para_b text, delete para_b
+    para_a.text_en = para_a.text_en.rstrip() + " " + para_b.text_en.lstrip()
+    para_a.text_zh = None  # Invalidate stale translation
+
+    await db.delete(para_b)
+    await db.flush()
+
+    # Re-index subsequent paragraphs with a single raw SQL UPDATE.
+    # This avoids SQLAlchemy executemany batching order issues that
+    # can cause temporary UNIQUE (document_id, index) conflicts.
+    from sqlalchemy import update as sa_update
+
+    await db.execute(
+        sa_update(Paragraph)
+        .where(
+            Paragraph.document_id == document.id,
+            Paragraph.index > body.index_b,
+        )
+        .values(index=Paragraph.index - 1)
+    )
+    await db.flush()
+
+    # Expire the collection so the next access re-loads fresh indices
+    await db.refresh(document, attribute_names=["paragraphs"])
+
+    # Recalculate document aggregates
+    all_paragraphs = sorted(document.paragraphs, key=lambda p: p.index)
+    document.original_text = "\n\n".join(p.text_en for p in all_paragraphs)
+    document.word_count = sum(len(p.text_en.split()) for p in all_paragraphs)
+    document.paragraph_count = len(all_paragraphs)
+
+    await db.commit()
+
+    return MergeParagraphsResponse(
+        document_id=task_id,
+        merged_index=min(body.index_a, body.index_b),
+        message=f"已将段落 {body.index_b + 1} 合并到段落 {body.index_a + 1}",
+    )
+
+
+@router.put(
+    "/documents/{task_id}/paragraphs/reorder",
+    response_model=ReorderParagraphsResponse,
+)
+async def reorder_paragraphs(
+    task_id: str,
+    body: ReorderParagraphsRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Reorder paragraphs by specifying the new index order.
+
+    Accepts a list of indices in the desired new order. All paragraphs
+    will be reassigned with contiguous indices starting from 0.
+    Cross-page moves update page_number based on neighbors.
+    Unlike updateParagraphs, this does NOT invalidate translations.
+    """
+    document = await pdf_service.get_document(uuid.UUID(task_id), db)
+
+    if document is None:
+        raise HTTPException(status_code=404, detail=f"Document {task_id} not found")
+
+    if document.parse_status != "completed":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot reorder paragraphs for a document with status '{document.parse_status}'",
+        )
+
+    # Validate: must include all existing indices exactly once
+    existing_indices = {p.index for p in document.paragraphs}
+    requested_indices = set(body.ordered_indices)
+
+    if requested_indices != existing_indices:
+        raise HTTPException(
+            status_code=400,
+            detail="ordered_indices must contain all existing paragraph indices exactly once",
+        )
+
+    para_map = {p.index: p for p in document.paragraphs}
+
+    # Phase 1: assign temporary negative indices to avoid UNIQUE constraint
+    # conflicts during reorder (no two paragraphs share the same index at
+    # any moment).
+    for i, old_idx in enumerate(body.ordered_indices):
+        para = para_map[old_idx]
+        para.index = -(i + 1)  # temporary unique value: -1, -2, -3, ...
+
+    await db.flush()
+
+    # Phase 2: assign final contiguous indices and propagate page_number
+    for new_idx, old_idx in enumerate(body.ordered_indices):
+        para = para_map[old_idx]
+        para.index = new_idx
+
+        # Adopt page_number from the previous paragraph in the new order
+        if new_idx > 0:
+            prev_para = para_map[body.ordered_indices[new_idx - 1]]
+            if prev_para.page_number is not None:
+                para.page_number = prev_para.page_number
+
+    await db.flush()
+
+    # Recalculate document aggregates
+    all_paragraphs = sorted(document.paragraphs, key=lambda p: p.index)
+    document.original_text = "\n\n".join(p.text_en for p in all_paragraphs)
+    document.word_count = sum(len(p.text_en.split()) for p in all_paragraphs)
+    document.paragraph_count = len(all_paragraphs)
+
+    await db.commit()
+
+    return ReorderParagraphsResponse(
+        document_id=task_id,
+        message=f"已重新排序 {len(body.ordered_indices)} 个段落",
+    )
+
+
+@router.post("/select-pages", response_model=SelectPagesResponse)
+async def select_pages(
+    background_tasks: BackgroundTasks,
+    body: SelectPagesRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Select which pages to include and start parsing.
+
+    Validates page selection (range and max 10), stores it on the
+    Document record, then triggers background parsing.
+    """
+    document = await pdf_service.get_document(uuid.UUID(body.task_id), db)
+
+    if document is None:
+        raise HTTPException(status_code=404, detail=f"Document {body.task_id} not found")
+
+    if document.parse_status != "awaiting_selection":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot select pages when status is '{document.parse_status}'",
+        )
+
+    # Validate page range (only if specific pages selected)
+    if body.selected_pages is not None and len(body.selected_pages) > 0:
+        if document.page_count is None:
+            raise HTTPException(status_code=400, detail="Page count unknown for this document")
+
+        max_page = document.page_count
+        for p in body.selected_pages:
+            if p < 1 or p > max_page:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Page {p} is out of range (1–{max_page})",
+                )
+
+        if len(body.selected_pages) > 10:
+            raise HTTPException(status_code=400, detail="Maximum 10 pages allowed")
+
+        selected_count = len(body.selected_pages)
+        msg = f"开始解析 {selected_count} 个页面，可能需要几分钟"
+    else:
+        # Parse all pages (no filtering)
+        body.selected_pages = None
+        msg = "开始解析全部页面，可能需要几分钟"
+
+    # Store selected pages and start parsing
+    document.selected_pages = body.selected_pages
+    document.parse_status = "processing"
+    await db.commit()
+
+    # Start background parsing with user's MinerU token
+    background_tasks.add_task(
+        _parse_in_background, document.id, document.file_path, body.mineru_token or ""
+    )
+
+    return SelectPagesResponse(
+        task_id=body.task_id,
+        status="processing",
+        selected_pages=body.selected_pages or [],
+        message=msg,
     )
 
 
@@ -225,3 +644,90 @@ async def list_documents(
     ]
 
     return DocumentListResponse(documents=items, total=total)
+
+
+@router.delete("/documents/{task_id}")
+async def delete_document(
+    task_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete a document and its PDF file from disk.
+
+    Works for documents in any status (completed, failed, stuck, etc.).
+    """
+    import os as _os
+
+    document = await pdf_service.get_document(uuid.UUID(task_id), db)
+
+    if document is None:
+        raise HTTPException(status_code=404, detail=f"Document {task_id} not found")
+
+    # Remove PDF file from disk
+    if document.file_path and _os.path.exists(document.file_path):
+        try:
+            _os.remove(document.file_path)
+        except OSError:
+            pass  # Best-effort cleanup
+
+    # Delete from database (cascades to paragraphs, word_analyses, etc.)
+    await db.delete(document)
+    await db.commit()
+
+    return {"detail": "Document deleted successfully"}
+
+
+@router.post("/retry/{task_id}", response_model=PDFUploadResponse)
+async def retry_document(
+    background_tasks: BackgroundTasks,
+    task_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Retry a failed or stuck document.
+
+    - 'failed' documents: reset status and restart parsing.
+    - 'awaiting_selection' documents: just return page_count so the
+      frontend can re-enter the page selection flow.
+    """
+    document = await pdf_service.get_document(uuid.UUID(task_id), db)
+
+    if document is None:
+        raise HTTPException(status_code=404, detail=f"Document {task_id} not found")
+
+    if document.parse_status == "awaiting_selection":
+        # Already in selection state — just return info for frontend to resume
+        return PDFUploadResponse(
+            task_id=task_id,
+            status="awaiting_selection",
+            page_count=document.page_count,
+        )
+
+    if document.parse_status in ("failed", "processing"):
+        # Reset to selection state if page count known, otherwise parse immediately
+        if document.page_count is not None and document.page_count >= 1:
+            document.parse_status = "awaiting_selection"
+            await db.commit()
+            return PDFUploadResponse(
+                task_id=task_id,
+                status="awaiting_selection",
+                page_count=document.page_count,
+            )
+        else:
+            document.parse_status = "processing"
+            document.error_message = None
+            await db.commit()
+            background_tasks.add_task(
+                _parse_in_background, document.id, document.file_path, ""
+            )
+            return PDFUploadResponse(
+                task_id=task_id, status="processing", page_count=document.page_count
+            )
+
+    if document.parse_status == "completed":
+        raise HTTPException(
+            status_code=400, detail="Document is already completed"
+        )
+
+    raise HTTPException(
+        status_code=400,
+        detail=f"Cannot retry document with status '{document.parse_status}'",
+    )

@@ -22,6 +22,7 @@ class Paragraph(Base):
     text_en: Mapped[str] = mapped_column(Text, nullable=False)
     text_zh: Mapped[str | None] = mapped_column(Text)
     summary: Mapped[str | None] = mapped_column(Text)
+    page_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now()
