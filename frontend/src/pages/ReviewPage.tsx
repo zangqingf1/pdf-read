@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
+import { generateUUID } from '../utils/uuid';
 import { useParams, useNavigate } from 'react-router-dom';
 import { getPDFResult, updateParagraphs, deleteParagraph, mergeParagraphs, reorderParagraphs } from '../services/pdfApi';
 import { useSplitPane } from '../hooks/useSplitPane';
@@ -72,7 +73,7 @@ export default function ReviewPage() {
         setSelectedPages(result.selected_pages ?? null);
 
         const paras: ParagraphData[] = result.paragraphs.map((p) => ({
-          cid: crypto.randomUUID(),
+          cid: generateUUID(),
           index: p.index,
           text_en: p.text,
           page_number: p.page_number ?? null,

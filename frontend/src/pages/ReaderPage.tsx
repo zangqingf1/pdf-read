@@ -243,7 +243,10 @@ export default function ReaderPage() {
   useEffect(() => {
     if (paragraphs.length === 0 || isTranslating) return;
     const apiKey = getProviderApiKey(selectedProvider);
-    if (!apiKey) return;
+    if (!apiKey) {
+      setShowApiKeyModal(true);
+      return;
+    }
 
     const untranslated = paragraphs.filter((p) => !translations[p.index]);
     if (untranslated.length === 0) return;

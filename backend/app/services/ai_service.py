@@ -651,7 +651,17 @@ class AIService:
 
                     except (httpx.HTTPError, httpx.TimeoutException) as e:
                         if _is_fatal_error(e):
-                            raise
+                            err_msg = str(e)
+                            if "401" in err_msg or "Unauthorized" in err_msg:
+                                err_msg = "AI API Key 无效或未配置，请点击右上角🔑图标设置。"
+                            await queue.put({
+                                "type": "batch",
+                                "batch_id": batch_id,
+                                "results": [{"__error__": err_msg}],
+                                "words": words_batch,
+                                "para_index": para_index,
+                            })
+                            return
                         if attempt < 2:
                             await asyncio.sleep(2 ** attempt)
                             accumulated = ""
@@ -956,7 +966,16 @@ class AIService:
 
                     except (httpx.HTTPError, httpx.TimeoutException) as e:
                         if _is_fatal_error(e):
-                            raise
+                            err_msg = str(e)
+                            if "401" in err_msg or "Unauthorized" in err_msg:
+                                err_msg = "AI API Key 无效或未配置，请点击右上角🔑图标设置。"
+                            await queue.put({
+                                "type": "batch",
+                                "results": [{"__error__": err_msg}],
+                                "para_index": entry["paragraph_index"],
+                                "sentence_index": entry["sentence_index"],
+                            })
+                            return
                         if attempt < 2:
                             await asyncio.sleep(2 ** attempt)
                             accumulated = ""
