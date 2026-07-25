@@ -1,6 +1,7 @@
 """Word analysis API routes — AI-powered vocabulary lookup."""
 
 import json
+import logging
 import re
 import uuid
 
@@ -22,6 +23,7 @@ from app.schemas.words import (
 from app.services.ai_service import create_ai_service
 
 router = APIRouter()
+_logger = logging.getLogger(__name__)
 
 
 async def _verify_document_ownership(
@@ -255,7 +257,7 @@ async def analyze_words(
             try:
                 await _persist_analyses(request.document_id, raw_results, db)
             except Exception:
-                pass  # Persistence failure is non-fatal
+                _logger.exception("Failed to persist word analyses for document %s", request.document_id)
 
         return WordAnalysisResponse(analyses=analyses)
 
@@ -393,7 +395,7 @@ async def analyze_words_stream(
                 try:
                     await _persist_analyses(request.document_id, all_raw, db)
                 except Exception:
-                    pass
+                    _logger.exception("Failed to persist stream word analyses for document %s", request.document_id)
 
             yield f"data: {json.dumps({'type': 'done'})}\n\n"
 

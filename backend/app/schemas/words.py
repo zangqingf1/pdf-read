@@ -21,7 +21,7 @@ class WordAnalysisRequest(BaseModel):
 
     entries: list[WordEntry] = Field(..., min_length=1)
     api_key: str | None = Field(default=None)
-    document_id: str = Field(..., description="Document ID for persisting results")
+    document_id: str = Field(..., min_length=1, description="Document ID for persisting results")
     provider: Literal["deepseek"] | None = Field(
         default=None, description="AI provider: deepseek"
     )

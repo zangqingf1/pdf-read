@@ -95,6 +95,11 @@ class AIService:
     ):
         self.api_key = api_key or ""
         self.base_url = base_url or settings.DEEPSEEK_BASE_URL
+        # Normalize: ensure base_url ends with /v1 for backward compat
+        # Old .env files may have "https://api.deepseek.com" without /v1
+        if self.base_url and "api.deepseek.com" in self.base_url and not self.base_url.rstrip("/").endswith("/v1"):
+            self.base_url = self.base_url.rstrip("/") + "/v1"
+            logger.info("Normalized DEEPSEEK_BASE_URL to %s", self.base_url)
         self.model = model or settings.DEEPSEEK_MODEL
         self._client: httpx.AsyncClient | None = None
 
@@ -335,6 +340,29 @@ class AIService:
         # Ensure all tasks are done
         await asyncio.gather(*tasks, return_exceptions=True)
 
+    @staticmethod
+    def _normalize_word_result(r: dict, para_index: int) -> None:
+        """Normalize fields in a single word analysis result (mutates dict in place)."""
+        r["paragraph_index"] = para_index
+        if "collocations" not in r or not isinstance(r.get("collocations"), list):
+            r["collocations"] = []
+        if not isinstance(r.get("example_sentence"), str):
+            r["example_sentence"] = ""
+        if "cognates" not in r or not isinstance(r.get("cognates"), list):
+            r["cognates"] = []
+        sa = r.get("synonyms_antonyms")
+        if not isinstance(sa, dict):
+            r["synonyms_antonyms"] = {"synonyms": [], "antonyms": []}
+        else:
+            if "synonyms" not in sa or not isinstance(sa["synonyms"], list):
+                sa["synonyms"] = []
+            if "antonyms" not in sa or not isinstance(sa["antonyms"], list):
+                sa["antonyms"] = []
+        if not isinstance(r.get("base_form"), str):
+            r["base_form"] = ""
+        if not isinstance(r.get("plural_form"), str):
+            r["plural_form"] = ""
+
     async def analyze_words(
         self,
         entries: list[dict],
@@ -362,7 +390,6 @@ class AIService:
             )
 
         # Group entries by paragraph_index to share sentence context
-        from itertools import groupby
 
         batch_size = getattr(settings, "WORDS_BATCH_SIZE", 8)
         concurrency = getattr(settings, "AI_CONCURRENCY", 15)
@@ -428,38 +455,7 @@ class AIService:
 
                         # Normalize fields
                         for r in results:
-                            r["paragraph_index"] = para_index
-                            # collocations: ensure list of strings
-                            if "collocations" not in r or not isinstance(
-                                r.get("collocations"), list
-                            ):
-                                r["collocations"] = []
-                            # example_sentence: ensure string
-                            if not isinstance(r.get("example_sentence"), str):
-                                r["example_sentence"] = ""
-                            # cognates: ensure list of {word, part_of_speech, meaning_zh}
-                            if "cognates" not in r or not isinstance(
-                                r.get("cognates"), list
-                            ):
-                                r["cognates"] = []
-                            # synonyms_antonyms: ensure dict with synonyms/antonyms arrays
-                            sa = r.get("synonyms_antonyms")
-                            if not isinstance(sa, dict):
-                                r["synonyms_antonyms"] = {"synonyms": [], "antonyms": []}
-                            else:
-                                if "synonyms" not in sa or not isinstance(
-                                    sa["synonyms"], list
-                                ):
-                                    sa["synonyms"] = []
-                                if "antonyms" not in sa or not isinstance(
-                                    sa["antonyms"], list
-                                ):
-                                    sa["antonyms"] = []
-                            # base_form / plural_form: ensure strings
-                            if not isinstance(r.get("base_form"), str):
-                                r["base_form"] = ""
-                            if not isinstance(r.get("plural_form"), str):
-                                r["plural_form"] = ""
+                            self._normalize_word_result(r, para_index)
 
                         return results
 
@@ -471,7 +467,7 @@ class AIService:
                                 raise  # Auth / config error → fail the whole batch
                             logger.exception("Word analysis HTTP/timeout error")
                             return []
-                    except (json.JSONDecodeError, KeyError, TypeError) as e:
+                    except (json.JSONDecodeError, KeyError, TypeError):
                         if attempt < 2:
                             await asyncio.sleep(2 ** attempt)
                         else:
@@ -551,27 +547,9 @@ class AIService:
         semaphore = asyncio.Semaphore(concurrency)
 
         def _normalize_results(results: list[dict], para_index: int) -> list[dict]:
-            """Normalize fields in parsed results (same logic as the non-stream path)."""
+            """Normalize fields in parsed results (delegates to shared static method)."""
             for r in results:
-                r["paragraph_index"] = para_index
-                if "collocations" not in r or not isinstance(r.get("collocations"), list):
-                    r["collocations"] = []
-                if not isinstance(r.get("example_sentence"), str):
-                    r["example_sentence"] = ""
-                if "cognates" not in r or not isinstance(r.get("cognates"), list):
-                    r["cognates"] = []
-                sa = r.get("synonyms_antonyms")
-                if not isinstance(sa, dict):
-                    r["synonyms_antonyms"] = {"synonyms": [], "antonyms": []}
-                else:
-                    if "synonyms" not in sa or not isinstance(sa["synonyms"], list):
-                        sa["synonyms"] = []
-                    if "antonyms" not in sa or not isinstance(sa["antonyms"], list):
-                        sa["antonyms"] = []
-                if not isinstance(r.get("base_form"), str):
-                    r["base_form"] = ""
-                if not isinstance(r.get("plural_form"), str):
-                    r["plural_form"] = ""
+                self._normalize_word_result(r, para_index)
             return results
 
         async def _stream_batch(
@@ -689,7 +667,7 @@ class AIService:
                                 "para_index": para_index,
                             })
                             return
-                    except (json.JSONDecodeError, KeyError, TypeError) as e:
+                    except (json.JSONDecodeError, KeyError, TypeError):
                         if attempt < 2:
                             await asyncio.sleep(2 ** attempt)
                             accumulated = ""
@@ -860,7 +838,7 @@ class AIService:
                                 raise
                             logger.exception("Sentence analysis HTTP/timeout error")
                             return None
-                    except (json.JSONDecodeError, KeyError, TypeError) as e:
+                    except (json.JSONDecodeError, KeyError, TypeError):
                         if attempt < 2:
                             await asyncio.sleep(2 ** attempt)
                         else:
@@ -994,7 +972,7 @@ class AIService:
                                 "sentence_index": entry["sentence_index"],
                             })
                             return
-                    except (json.JSONDecodeError, KeyError, TypeError) as e:
+                    except (json.JSONDecodeError, KeyError, TypeError):
                         if attempt < 2:
                             await asyncio.sleep(2 ** attempt)
                             accumulated = ""
@@ -1054,13 +1032,21 @@ def create_ai_service(
 ) -> AIService:
     """Create an AIService configured for DeepSeek.
 
+    NOTE: Currently only DeepSeek is supported. The ``provider`` parameter
+    and request-schema ``Literal["deepseek"]`` fields exist as extension
+    points for future multi-provider support (e.g. OpenAI, Anthropic).
+    When a new provider is added, this factory will dispatch to the
+    appropriate service class.
+
     Args:
-        provider: Ignored (kept for backward compatibility).
+        provider: AI provider name (currently only "deepseek" is valid).
         api_key: Optional user-provided API key (overrides server config).
 
     Returns:
         AIService instance.
     """
+    if not api_key:
+        logger.warning("create_ai_service called without api_key — AI calls will fail")
     return AIService(
         api_key=api_key or "",
         base_url=settings.DEEPSEEK_BASE_URL,
@@ -1068,4 +1054,6 @@ def create_ai_service(
     )
 
 
+# Module-level singleton for backward compatibility.
+# Prefer create_ai_service() in new code so the API key is explicit.
 ai_service = AIService()

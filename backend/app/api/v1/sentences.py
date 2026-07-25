@@ -1,6 +1,7 @@
 """Sentence analysis API routes — AI-powered sentence 精讲 (detailed analysis)."""
 
 import json
+import logging
 import uuid
 
 from fastapi import APIRouter, HTTPException, Depends
@@ -22,6 +23,7 @@ from app.schemas.sentences import (
 from app.services.ai_service import create_ai_service
 
 router = APIRouter()
+_logger = logging.getLogger(__name__)
 
 
 async def _verify_document_ownership(
@@ -197,7 +199,7 @@ async def analyze_sentences(
             try:
                 await _persist_analyses(request.document_id, raw_results, db)
             except Exception:
-                pass  # Persistence failure is non-fatal
+                _logger.exception("Failed to persist sentence analyses for document %s", request.document_id)
 
         return SentenceAnalysisResponse(analyses=analyses)
 
@@ -318,7 +320,7 @@ async def analyze_sentences_stream(
                 try:
                     await _persist_analyses(request.document_id, all_raw, db)
                 except Exception:
-                    pass
+                    _logger.exception("Failed to persist stream sentence analyses for document %s", request.document_id)
 
             yield f"data: {json.dumps({'type': 'done'})}\n\n"
 

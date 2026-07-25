@@ -1,6 +1,5 @@
 """Pydantic schemas for PDF upload and parsing (F01)."""
 
-import uuid
 from datetime import datetime
 from typing import Optional
 
@@ -137,3 +136,7 @@ class BatchDeleteResponse(BaseModel):
     deleted_count: int
     failed_ids: list[str] = Field(default_factory=list)
     message: str
+
+
+class RetryDocumentRequest(BaseModel):
+    mineru_token: str = ""  # User's MinerU token (from frontend localStorage)

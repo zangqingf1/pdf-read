@@ -1,9 +1,9 @@
 """F01: PDF upload and text extraction API routes."""
 
 import json
+import logging
 import os
 import uuid
-from typing import Optional
 
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Depends, BackgroundTasks
 from fastapi.responses import FileResponse
@@ -29,7 +29,7 @@ from app.schemas.pdf import (
     DocumentListItem,
     SelectPagesRequest,
     SelectPagesResponse,
-    UpdateParagraphItem,
+    RetryDocumentRequest,
     UpdateParagraphsRequest,
     UpdateParagraphsResponse,
     DeleteParagraphResponse,
@@ -59,13 +59,16 @@ async def _get_owned_document(
     return document
 
 
+_logger = logging.getLogger(__name__)
+
+
 async def _parse_in_background(doc_id: uuid.UUID, file_path: str, token: str):
     """Background task: parse a PDF document in a separate DB session."""
     async with async_session_factory() as bg_db:
         try:
             await pdf_service.parse_document(doc_id, bg_db, mineru_token=token)
         except Exception:
-            pass  # parse_document already marks status as 'failed'
+            _logger.exception("Background parse failed for document %s", doc_id)
         await bg_db.commit()
 
 
@@ -771,6 +774,7 @@ async def delete_document(
 async def retry_document(
     background_tasks: BackgroundTasks,
     task_id: str,
+    body: RetryDocumentRequest,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -805,7 +809,7 @@ async def retry_document(
             document.error_message = None
             await db.commit()
             background_tasks.add_task(
-                _parse_in_background, document.id, document.file_path, ""
+                _parse_in_background, document.id, document.file_path, body.mineru_token
             )
             return PDFUploadResponse(
                 task_id=task_id, status="processing", page_count=document.page_count

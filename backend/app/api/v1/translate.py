@@ -1,6 +1,7 @@
 """Paragraph translation API routes."""
 
 import json
+import logging
 import re
 import uuid
 
@@ -18,6 +19,7 @@ from app.schemas.translate import TranslateRequest, TranslateResponse
 from app.services.ai_service import create_ai_service
 
 router = APIRouter()
+_logger = logging.getLogger(__name__)
 
 
 async def _verify_document_ownership(
@@ -86,7 +88,7 @@ async def translate_paragraphs(
             try:
                 await _save_translations(request.document_id, translations, db)
             except Exception:
-                pass  # Save failure is non-fatal
+                _logger.exception("Failed to persist translations for document %s", request.document_id)
 
         return TranslateResponse(translations=translations)
     except ValueError as e:
@@ -169,7 +171,7 @@ async def translate_stream(
                     ]
                     await _save_translations(request.document_id, ordered, db)
                 except Exception:
-                    pass
+                    _logger.exception("Failed to persist stream translations for document %s", request.document_id)
 
             yield f"data: {json.dumps({'type': 'done'})}\n\n"
 

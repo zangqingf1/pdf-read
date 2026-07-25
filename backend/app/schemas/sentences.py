@@ -15,7 +15,7 @@ class SentenceEntry(BaseModel):
 class SentenceAnalysisRequest(BaseModel):
     entries: list[SentenceEntry] = Field(min_length=1)
     api_key: str | None = None
-    document_id: str
+    document_id: str = Field(..., min_length=1, description="Document ID for persisting results")
     provider: Literal["deepseek"] | None = Field(
         default=None, description="AI provider: deepseek"
     )

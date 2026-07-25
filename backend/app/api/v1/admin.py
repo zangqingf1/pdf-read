@@ -4,7 +4,7 @@ import os as _os
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -92,15 +92,22 @@ async def list_users(
         )
     ).scalars().all()
 
-    # Batch-fetch document counts for each user
-    user_items: list[AdminUserItem] = []
-    for user in users:
-        doc_count = (
-            await db.execute(
-                select(func.count(Document.id)).where(Document.user_id == user.id)
-            )
-        ).scalar() or 0
-        user_items.append(AdminUserItem.from_user(user, doc_count))
+    # Batch-fetch document counts with a single query (avoid N+1)
+    user_ids = [u.id for u in users]
+    doc_counts: dict[uuid.UUID, int] = {}
+    if user_ids:
+        counts_q = (
+            select(Document.user_id, func.count(Document.id).label("cnt"))
+            .where(Document.user_id.in_(user_ids))
+            .group_by(Document.user_id)
+        )
+        rows = (await db.execute(counts_q)).all()
+        doc_counts = {row.user_id: row.cnt for row in rows}
+
+    user_items: list[AdminUserItem] = [
+        AdminUserItem.from_user(u, doc_counts.get(u.id, 0))
+        for u in users
+    ]
 
     return AdminUserListResponse(users=user_items, total=total)
 
