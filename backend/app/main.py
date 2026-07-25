@@ -7,10 +7,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import update
 
 from app.config import settings
-from app.database import init_db, close_db, async_session_factory
+from app.database import init_db, run_migrations, close_db, async_session_factory
 from app.models import *  # noqa: F401,F403 — ensure all models are registered
 from app.models.document import Document
 from app.api.v1 import api_v1_router
+from app.auth.router import router as auth_router
 
 
 @asynccontextmanager
@@ -18,6 +19,8 @@ async def lifespan(app: FastAPI):
     """Application lifespan: startup and shutdown events."""
     # Startup: always create tables on startup (create_all is idempotent)
     await init_db()
+    # Apply any missing column migrations (no-op if already applied)
+    await run_migrations()
 
     # Recover orphaned documents left in transient states by a server restart.
     # BackgroundTasks are in-memory and die with the process, so any document
@@ -47,15 +50,11 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS middleware
+# CORS middleware — origins configurable via CORS_ORIGINS env var
+origins = [o.strip() for o in settings.CORS_ORIGINS.split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://localhost:3000",
-        "http://localhost",
-        "http://127.0.0.1",
-    ],
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -63,6 +62,7 @@ app.add_middleware(
 
 # API routes
 app.include_router(api_v1_router)
+app.include_router(auth_router, prefix="/api/v1/auth", tags=["Auth"])
 
 
 @app.get("/health", tags=["Health"])

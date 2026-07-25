@@ -25,55 +25,59 @@ DEFAULT_PROMPTS: dict[str, dict[str, str]] = {
         ),
     },
     "analyze_words": {
-        "system_prompt": "",
+        "system_prompt": (
+            "你是一名专业词典编纂者和语料库语言学家。"
+            "你的任务是分析英语单词在其实际语境中的用法，"
+            "以《牛津高阶学习者词典》的风格生成词条。"
+            "始终将每个分析字段（释义、词性、同义词）扎根于特定上下文含义 —— "
+            "不要罗列该词的所有可能含义。"
+        ),
         "user_prompt": (
-            "你是一个专业的词典撰写专家，你能根据上下文分析单词。请参考牛津词典的风格为以下每个单词提供详细的分析，以 JSON 数组格式返回。\n\n"
-            '上下文句子："{sentence}"\n\n'
-            "需要分析的单词：{words_list}\n\n"
-            "返回格式要求 — 必须返回严格的 JSON 数组，每个元素包含以下字段：\n"
-            '- "word": 原单词\n'
-            '- "phonetic": IPA 音标，例如 "BrE /ɪnˈseɪn/  NAmE /ɪnˈseɪn/"、"BrE /ˈθrɪlə(r)/  NAmE /ˈθrɪlər/"\n'
-            '- "part_of_speech": 词性缩写 (n./v./adj./adv./prep./conj./pron./art./det.等)\n'
-            '- "definition": 牛津词典风格的英文释义，例如：" very stupid, crazy or dangerous"、"a book, play or film with an exciting story, especially one about crime or SPYING"\n'
-            '- "definition_zh": 中文释义\n'
-            '- "cognates": 同根词列表，不包含现在分词及过去式等变形，每个元素包含 "word"（同根词）和 "part_of_speech"（词性缩写）。例如对于 "create"，同根词包括 [{{"word": "creation", "part_of_speech": "n."}}, {{"word": "creative", "part_of_speech": "adj."}}]。没有则返回 []\n'
-            '- "synonyms_antonyms": 返回常见的近义词与反义词对象，包含 "synonyms" 和 "antonyms" 两个数组，每个元素包含 "word"（单词）和"part_of_speech"（词性缩写）。例如 {{"synonyms": [{{"word": "joyful", "part_of_speech": "adj."}}]}}。没有则返回 []\n'
-            '- "base_form": 原形。若该单词是变形（过去式、过去分词、比较级、最高级、复数等），返回其原形。例如 "went"→"go"、"better"→"good"、"phenomena"→"phenomenon"。若单词已是原形则返回空字符串 ""\n'
-            '- "plural_form": 特殊复数形式。若该单词是名词且有特殊复数变化（如 phenomenon→phenomena、criterion→criteria），返回其复数形式。若该单词本身已是复数形式或为规则变化则返回空字符串 ""\n\n'
-            "只返回 JSON 数组，不要添加任何其他文字。"
+            "请分析以下英语单词在给定句子中的用法。"
+            "返回严格的 JSON 数组 —— 每个单词一个对象。\n\n"
+            '上下文句子："{sentence}"\n'
+            '上下文翻译："{sentence_translation}"\n'
+            "待分析单词：{words_list}\n\n"
+            "每个单词返回以下字段：\n\n"
+            '- "word"：单词原样\n'
+            '- "phonetic"：IPA 音标，格式为 "BrE /.../  NAmE /.../"\n'
+            '- "part_of_speech"：词性缩写（n./v./adj./adv./prep./conj./pron./art./det./num./int.）\n'
+            '- "definition"：牛津风格的英文释义，必须针对当前上下文。\n'
+            '- "definition_zh"：简洁自然的中文释义，与英文释义对应\n'
+            '- "cognates"（可选）：同根词数组，每项含 {{"word", "part_of_speech"}}（不含屈折变化如 -ing/-ed/-s/-er/-est）。'
+            '仅在有同根词时才包含此字段\n'
+            '- "synonyms_antonyms"（可选）：含 "synonyms" 和 "antonyms" 数组的对象，每项 {{"word", "part_of_speech"}}。'
+            '仅在有同义/反义词时才包含\n'
+            '- "base_form"（可选）：仅屈折变化词需要，返回原形（went→go, better→good, phenomena→phenomenon）。已是原形则不包含此字段\n'
+            '- "plural_form"（可选）：仅特殊不规则名词需要（phenomenon→phenomena, criterion→criteria）。规则变化或非名词则不包含此字段\n\n'
+            "关键规则：\n"
+            "1. 所有含义判断必须基于上下文句子 —— 不要生成通用词典词条\n"
+            "2. 只返回 JSON 数组，不要加 markdown 代码块标记或任何注释\n"
+            "3. 对于拼写相同但上下文含义不同的单词，分别处理\n"
+            "4. 所有字符串值必须使用双引号，正确转义\n"
+            "5. 可选字段（cognates, synonyms_antonyms, base_form, plural_form）只有存在内容时才包含，无内容时完全不输出该字段"
         ),
     },
     "analyze_sentences": {
-        "system_prompt": "",
+        "system_prompt": (
+            "你是一名英语教学专家，擅长对英文句子进行精讲分析。"
+            "你的讲解深入浅出，既适合英语学习者理解，也能让进阶读者有所收获。"
+        ),
         "user_prompt": (
-            "你是一个资深的英语考研教师。请将以下句子按以下要求拆解，分成不同部分，以 JSON 格式返回。\n\n"
-            "要求：\n\n"
-            "- 主干：概括全句核心框架（主谓宾/主系表/祈使句等）。如果一个句子由并列连词（and/but/or等）连接多个分句，请分别标出各个分句的主干。\n"
-            "- 修饰成分，包含但不限于：\n"
-            "  · 介词短语（说明修饰对象和功能，如作定语、作状语、作表语等）\n"
-            "  · 定语从句（标注先行词和引导词 that/which/who/whom/whose/when/where/why）\n"
-            "  · 状语从句（标注引导词和从句类型，如时间/原因/条件/让步/目的/结果/方式/比较）\n"
-            "  · 宾语从句（标注引导词 that/whether/if/what/who/which/when/where/why/how）\n"
-            "  · 主语从句（标注引导词和从句在句中的位置）\n"
-            "  · 表语从句（标注引导词）\n"
-            "  · 同位语 / 同位语从句（说明与哪个名词构成同位关系，若有引导词请标出）\n"
-            "  · 非谓语动词（to do / doing / done，说明其逻辑主语和所作成分：定语/状语/补语/主语/宾语等）\n"
-            "  · 插入语（标注其功能，如表示评价、补充说明、逻辑衔接等）\n"
-            "  · 连接词 / 引导词（如 and, but, or, that, which, when, if, because, although 等，说明其连接的内容）\n\n"
-            '  需要分析的句子："{sentence_text}"\n'
-            '  段落翻译参考："{sentence_translation}"\n\n'
-            "  返回格式要求 — 必须返回严格的 JSON 对象，包含以下字段：\n\n"
-            '  - "sentence_structure": 数组，每个元素包含：\n'
-            '    - "text": 该部分的原文片段\n'
-            '    - "label": 句子部分标签（如：主干，定语从句、状语从句、同位语、插入语、宾语从句、主语从句、连接词等）\n'
-            '    - "explanation": 该成分在原句中的具体内容，功能说明（说明它修饰谁、作何成分、表达什么含义等）\n'
-            '  - "idiomatic_translation": 整句的地道中文翻译（不是逐字直译，而是符合中文表达习惯的自然翻译）\n\n'
-            "  注意事项：\n"
-            "  1. sentence_structure 数组中的元素应按原文出现顺序排列，便于学生对照原文阅读。\n"
-            "  2. 每个修饰成分的 explanation 应明确指出其修饰对象（修饰哪个词/短语/从句）。\n"
-            "  3. 引导词应单独列为一个元素（label 为\"连接词\"或\"引导词\"），或合并在对应的从句元素中标注，保持清晰。\n"
-            "  4. 如果句子含有多个并列分句，每个分句的主干分别列出。\n\n"
-            "  只返回 JSON 对象，不要添加任何其他文字。"
+            "请对以下英语句子进行精讲，按以下四个部分输出：\n\n"
+            "句子：\n"
+            "{sentence_text}\n\n"
+            "所在段落的翻译（供参考）：\n"
+            "{sentence_translation}\n\n"
+            "**原文**：直接引用待解析的英文句子。\n\n"
+            "**主干**：用简洁的中文概括句子的核心主谓宾/主系表结构，忽略修饰成分。\n\n"
+            "**讲解**：分点说明关键语言点，包括：\n"
+            "- 重点词汇或短语（如固定搭配、习语）的含义与用法；\n"
+            "- 特殊语法结构（如倒装、省略、从句、否定并列等）及其功能；\n"
+            "- 翻译技巧（如语序调整、增译减译、词性转换等）；\n"
+            "- 如有必要，可补充修辞或语境效果。\n\n"
+            "**译文**：给出流畅自然的中文翻译，确保语义准确、符合中文表达习惯。\n\n"
+            "直接输出以上四部分内容，不要加任何前缀说明或总结。"
         ),
     },
 }
@@ -84,7 +88,7 @@ DEFAULT_PROMPTS: dict[str, dict[str, str]] = {
 PLACEHOLDERS: dict[str, list[str]] = {
     "translate": ["text", "prev_text", "next_text"],
     "analyze_words": ["words_list", "sentence", "sentence_translation"],
-    "analyze_sentences": ["sentence_text", "sentence_translation"],
+    "analyze_sentences": ["sentence_text", "sentence_translation", "sentences_text", "translations_text"],
 }
 
 # ── Template display names (for UI) ──────────────────────────────────────

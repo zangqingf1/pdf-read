@@ -10,11 +10,16 @@ from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth.deps import get_current_user
 from app.database import get_db, async_session_factory
+from app.models.document import Document
 from app.models.paragraph import Paragraph
 from app.models.sentence_analysis import SentenceAnalysis
+from app.models.user import User
 from app.models.word_analysis import WordAnalysis
 from app.schemas.pdf import (
+    BatchDeleteRequest,
+    BatchDeleteResponse,
     PDFUploadResponse,
     PDFStatusResponse,
     PDFResultResponse,
@@ -38,6 +43,22 @@ from app.services.pdf_service import pdf_service
 router = APIRouter()
 
 
+async def _get_owned_document(
+    task_id: str, user: User, db: AsyncSession
+) -> Document:
+    """Fetch a document by ID, verifying it belongs to the current user.
+
+    Returns the document or raises 404 (not found / not owned).
+    Using 404 instead of 403 to avoid leaking document existence info.
+    """
+    document = await pdf_service.get_document(
+        uuid.UUID(task_id), db, user_id=user.id
+    )
+    if document is None:
+        raise HTTPException(status_code=404, detail=f"Document {task_id} not found")
+    return document
+
+
 async def _parse_in_background(doc_id: uuid.UUID, file_path: str, token: str):
     """Background task: parse a PDF document in a separate DB session."""
     async with async_session_factory() as bg_db:
@@ -54,6 +75,7 @@ async def upload_pdf(
     file: UploadFile = File(...),
     mineru_token: str = Form(""),
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     """Upload a PDF file for parsing.
 
@@ -72,7 +94,9 @@ async def upload_pdf(
 
     # Create document record and save file
     try:
-        document = await pdf_service.upload_and_save(file, db)
+        document = await pdf_service.upload_and_save(
+            file, db, user_id=current_user.id
+        )
         await db.commit()
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -103,6 +127,7 @@ async def upload_pdf(
 async def get_parse_status(
     task_id: str,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     """Get the current status of a PDF parsing task.
 
@@ -112,10 +137,7 @@ async def get_parse_status(
     Args:
         task_id: The task_id returned from POST /upload.
     """
-    document = await pdf_service.get_document(uuid.UUID(task_id), db)
-
-    if document is None:
-        raise HTTPException(status_code=404, detail=f"Document {task_id} not found")
+    document = await _get_owned_document(task_id, current_user, db)
 
     return PDFStatusResponse(
         task_id=task_id,
@@ -131,6 +153,7 @@ async def get_parse_status(
 async def get_parse_result(
     task_id: str,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     """Get the parsed content of a completed document.
 
@@ -139,17 +162,12 @@ async def get_parse_result(
     Args:
         task_id: The task_id returned from POST /upload.
     """
-    document = await pdf_service.get_document(uuid.UUID(task_id), db)
-
-    if document is None:
-        raise HTTPException(status_code=404, detail=f"Document {task_id} not found")
+    document = await _get_owned_document(task_id, current_user, db)
 
     if document.parse_status == "failed":
         raise HTTPException(status_code=422, detail="PDF parsing failed")
 
     if document.parse_status != "completed":
-        if document.parse_status == "failed":
-            raise HTTPException(status_code=422, detail="PDF parsing failed")
         raise HTTPException(
             status_code=425,
             detail=f"Parsing not complete. Current status: {document.parse_status}",
@@ -177,6 +195,10 @@ async def get_parse_result(
     word_analyses = []
     for wa in wa_records:
         try:
+            collocations = json.loads(wa.collocations) if wa.collocations else []
+        except (json.JSONDecodeError, TypeError):
+            collocations = []
+        try:
             cognates = json.loads(wa.cognates) if wa.cognates else []
         except (json.JSONDecodeError, TypeError):
             cognates = []
@@ -193,6 +215,8 @@ async def get_parse_result(
                 part_of_speech=wa.part_of_speech or "",
                 definition=wa.definition or "",
                 definition_zh=wa.definition_zh or "",
+                collocations=collocations,
+                example_sentence=wa.example_sentence or "",
                 cognates=cognates,
                 synonyms_antonyms=syn_ant,
                 base_form=wa.base_form or "",
@@ -215,13 +239,39 @@ async def get_parse_result(
             sa_data = json.loads(sa.structure_json) if sa.structure_json else {}
         except (json.JSONDecodeError, TypeError):
             sa_data = {}
+        # New format: {"content": "..."}
+        content = sa_data.get("content", "")
+        # Backward compat: reconstruct from old format
+        if not content and ("structure" in sa_data or "idiomatic_translation" in sa_data):
+            parts = []
+            structure = sa_data.get("structure", [])
+            if structure:
+                parts.append("**原文**：" + (sa.sentence_text or ""))
+                parts.append("")
+                structure_lines = []
+                for s in structure:
+                    label = s.get("label", "")
+                    text = s.get("text", "")
+                    expl = s.get("explanation", "")
+                    structure_lines.append(f"- **{label}**：{text}（{expl}）")
+                parts.append("**主干**：\n" + "\n".join(structure_lines))
+                parts.append("")
+            translation = sa_data.get("idiomatic_translation", "")
+            if translation:
+                parts.append("**译文**：" + translation)
+            gh = sa_data.get("grammar_highlights", [])
+            if gh:
+                parts.append("")
+                parts.append("**讲解**：")
+                for h in gh:
+                    parts.append(f"- {h}")
+            content = "\n".join(parts) if parts else ""
         sentence_analyses.append({
             "id": str(sa.id),
             "paragraph_index": sa.paragraph_index,
             "sentence_index": sa.sentence_index,
             "sentence_text": sa.sentence_text or "",
-            "structure": sa_data.get("structure", []),
-            "idiomatic_translation": sa_data.get("idiomatic_translation", ""),
+            "content": content,
         })
 
     return PDFResultResponse(
@@ -242,16 +292,14 @@ async def get_parse_result(
 async def get_pdf_file(
     task_id: str,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     """Serve the original PDF file for client-side preview rendering.
 
     Used by the PageSelector component to render page thumbnails
     via react-pdf (PDF.js).
     """
-    document = await pdf_service.get_document(uuid.UUID(task_id), db)
-
-    if document is None:
-        raise HTTPException(status_code=404, detail=f"Document {task_id} not found")
+    document = await _get_owned_document(task_id, current_user, db)
 
     file_path = document.file_path
     if not file_path or not os.path.exists(file_path):
@@ -265,6 +313,7 @@ async def update_paragraphs(
     task_id: str,
     body: UpdateParagraphsRequest,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     """Batch update paragraph text for a document.
 
@@ -276,10 +325,7 @@ async def update_paragraphs(
         task_id: Document UUID.
         body: List of {index, text_en} pairs to update.
     """
-    document = await pdf_service.get_document(uuid.UUID(task_id), db)
-
-    if document is None:
-        raise HTTPException(status_code=404, detail=f"Document {task_id} not found")
+    document = await _get_owned_document(task_id, current_user, db)
 
     if document.parse_status != "completed":
         raise HTTPException(
@@ -325,16 +371,14 @@ async def delete_paragraph(
     task_id: str,
     paragraph_index: int,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     """Delete a single paragraph from a document.
 
     Removes the paragraph at the given index and re-indexes all
     subsequent paragraphs to keep indices contiguous.
     """
-    document = await pdf_service.get_document(uuid.UUID(task_id), db)
-
-    if document is None:
-        raise HTTPException(status_code=404, detail=f"Document {task_id} not found")
+    document = await _get_owned_document(task_id, current_user, db)
 
     if document.parse_status != "completed":
         raise HTTPException(
@@ -397,16 +441,14 @@ async def merge_paragraphs(
     task_id: str,
     body: MergeParagraphsRequest,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     """Merge two adjacent paragraphs into one.
 
     Appends the text of paragraph index_b to paragraph index_a,
     then deletes paragraph index_b and re-indexes subsequent paragraphs.
     """
-    document = await pdf_service.get_document(uuid.UUID(task_id), db)
-
-    if document is None:
-        raise HTTPException(status_code=404, detail=f"Document {task_id} not found")
+    document = await _get_owned_document(task_id, current_user, db)
 
     if document.parse_status != "completed":
         raise HTTPException(
@@ -487,6 +529,7 @@ async def reorder_paragraphs(
     task_id: str,
     body: ReorderParagraphsRequest,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     """Reorder paragraphs by specifying the new index order.
 
@@ -495,10 +538,7 @@ async def reorder_paragraphs(
     Cross-page moves update page_number based on neighbors.
     Unlike updateParagraphs, this does NOT invalidate translations.
     """
-    document = await pdf_service.get_document(uuid.UUID(task_id), db)
-
-    if document is None:
-        raise HTTPException(status_code=404, detail=f"Document {task_id} not found")
+    document = await _get_owned_document(task_id, current_user, db)
 
     if document.parse_status != "completed":
         raise HTTPException(
@@ -559,16 +599,14 @@ async def select_pages(
     background_tasks: BackgroundTasks,
     body: SelectPagesRequest,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     """Select which pages to include and start parsing.
 
     Validates page selection (range and max 10), stores it on the
     Document record, then triggers background parsing.
     """
-    document = await pdf_service.get_document(uuid.UUID(body.task_id), db)
-
-    if document is None:
-        raise HTTPException(status_code=404, detail=f"Document {body.task_id} not found")
+    document = await _get_owned_document(body.task_id, current_user, db)
 
     if document.parse_status != "awaiting_selection":
         raise HTTPException(
@@ -622,14 +660,17 @@ async def list_documents(
     limit: int = 20,
     offset: int = 0,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
-    """List all uploaded documents, newest first.
+    """List the current user's uploaded documents, newest first.
 
     Args:
         limit: Max results per page (default 20).
         offset: Pagination offset.
     """
-    docs, total = await pdf_service.list_documents(db, limit=limit, offset=offset)
+    docs, total = await pdf_service.list_documents(
+        db, limit=limit, offset=offset, user_id=current_user.id
+    )
 
     items = [
         DocumentListItem(
@@ -646,10 +687,63 @@ async def list_documents(
     return DocumentListResponse(documents=items, total=total)
 
 
+@router.post("/documents/batch-delete", response_model=BatchDeleteResponse)
+async def batch_delete_documents(
+    body: BatchDeleteRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Delete multiple documents at once (user-scoped).
+
+    Only deletes documents owned by the current user. Invalid IDs,
+    IDs belonging to other users, and already-deleted documents
+    are silently skipped and reported in failed_ids.
+
+    Args:
+        body: {document_ids: [...]} — max 100 IDs per request.
+    """
+    import os as _os
+
+    deleted_count = 0
+    failed_ids: list[str] = []
+
+    for doc_id_str in body.document_ids:
+        try:
+            doc_uuid = uuid.UUID(doc_id_str)
+        except ValueError:
+            failed_ids.append(doc_id_str)
+            continue
+
+        document = await pdf_service.get_document(doc_uuid, db, user_id=current_user.id)
+        if document is None:
+            failed_ids.append(doc_id_str)
+            continue
+
+        # Remove PDF file from disk
+        if document.file_path and _os.path.exists(document.file_path):
+            try:
+                _os.remove(document.file_path)
+            except OSError:
+                pass
+
+        await db.delete(document)
+        deleted_count += 1
+
+    await db.commit()
+
+    return BatchDeleteResponse(
+        deleted_count=deleted_count,
+        failed_ids=failed_ids,
+        message=f"成功删除 {deleted_count} 个文档"
+        + (f"，{len(failed_ids)} 个失败" if failed_ids else ""),
+    )
+
+
 @router.delete("/documents/{task_id}")
 async def delete_document(
     task_id: str,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     """Delete a document and its PDF file from disk.
 
@@ -657,10 +751,7 @@ async def delete_document(
     """
     import os as _os
 
-    document = await pdf_service.get_document(uuid.UUID(task_id), db)
-
-    if document is None:
-        raise HTTPException(status_code=404, detail=f"Document {task_id} not found")
+    document = await _get_owned_document(task_id, current_user, db)
 
     # Remove PDF file from disk
     if document.file_path and _os.path.exists(document.file_path):
@@ -681,6 +772,7 @@ async def retry_document(
     background_tasks: BackgroundTasks,
     task_id: str,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     """Retry a failed or stuck document.
 
@@ -688,10 +780,7 @@ async def retry_document(
     - 'awaiting_selection' documents: just return page_count so the
       frontend can re-enter the page selection flow.
     """
-    document = await pdf_service.get_document(uuid.UUID(task_id), db)
-
-    if document is None:
-        raise HTTPException(status_code=404, detail=f"Document {task_id} not found")
+    document = await _get_owned_document(task_id, current_user, db)
 
     if document.parse_status == "awaiting_selection":
         # Already in selection state — just return info for frontend to resume

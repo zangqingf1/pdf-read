@@ -1,18 +1,23 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { getPDFResult, getPDFStatus } from '../services/pdfApi';
-import { translateParagraphs } from '../services/translateApi';
-import { analyzeWords as analyzeWordsApi } from '../services/wordAnalysisApi';
-import type { WordEntry } from '../services/wordAnalysisApi';
-import { analyzeSentences as analyzeSentencesApi } from '../services/sentenceAnalysisApi';
-import type { SentenceEntry } from '../services/sentenceAnalysisApi';
-import { getStoredDeepseekKey } from '../components/common/ApiKeyModal';
+import { translateParagraphsStream } from '../services/translateApi';
+import type { AIProvider } from '../services/translateApi';
+import { analyzeWordsStream } from '../services/wordAnalysisApi';
+import type { WordEntry, WordAnalysisResult } from '../services/wordAnalysisApi';
+import { analyzeSentencesStream } from '../services/sentenceAnalysisApi';
+import type { SentenceEntry, SentenceAnalysisResult } from '../services/sentenceAnalysisApi';
+import { getStoredDeepseekKey, getStoredAIProvider } from '../components/common/ApiKeyModal';
 import ApiKeyModal from '../components/common/ApiKeyModal';
 import { useDocumentStore } from '../stores/documentStore';
 import { useReaderStore, BG_COLORS } from '../stores/readerStore';
+import { useResponsiveBreakpoint } from '../hooks/useResponsiveBreakpoint';
 import ReaderHeader from '../components/reader/ReaderHeader';
 import ReadingArea from '../components/reader/ReadingArea';
 import StudyPanel from '../components/reader/StudyPanel';
+import StudySheet from '../components/reader/StudySheet';
+import FocusedAnalysisSheet from '../components/reader/FocusedAnalysisSheet';
+import { setOnOpenFocusedAnalysis } from '../components/reader/ParagraphBlock';
 import Button from '../components/ui/Button';
 import Spinner, { PageSpinner } from '../components/ui/Spinner';
 
@@ -31,19 +36,28 @@ export default function ReaderPage() {
     documentId,
     translations,
     isTranslating,
+    translationError,
     updateTranslations,
     setTranslating,
     setTranslationError,
     selectedWords,
     wordAnalyses,
     isAnalyzing,
+    analysisError,
     clearWordSelection,
     setWordAnalyses,
     setAnalyzing,
     setAnalysisError,
+    setAnalysisProgress,
+    removePendingWordAnalyses,
+    appendStreamingText,
+    clearStreamingTexts,
+    appendSentenceStreamingText,
+    clearSentenceStreamingTexts,
     selectedSentences,
     sentenceAnalyses,
     isAnalyzingSentences,
+    sentenceAnalysisError,
     clearSentenceSelection,
     setSentenceAnalyses,
     setAnalyzingSentences,
@@ -52,6 +66,17 @@ export default function ReaderPage() {
 
   const [showApiKeyModal, setShowApiKeyModal] = useState(false);
   const [translationTrigger, setTranslationTrigger] = useState(0);
+
+  // ── AI provider (global setting from ApiKeyModal) ──
+  const [selectedProvider, setSelectedProvider] = useState<AIProvider>(getStoredAIProvider);
+
+  const getProviderApiKey = useCallback((_provider: AIProvider): string => {
+    return getStoredDeepseekKey();
+  }, []);
+
+  const getProviderLabel = (_provider: AIProvider): string => {
+    return 'DeepSeek';
+  };
 
   // ── Typography preferences ──
   const { bgColor } = useReaderStore();
@@ -71,7 +96,16 @@ export default function ReaderPage() {
   const dragStartX = useRef(0);
   const dragStartWidth = useRef(0);
 
-  const hasAnalyses = Object.keys(wordAnalyses).length > 0 || Object.keys(sentenceAnalyses).length > 0;
+  const { isMobile, isTouchDevice } = useResponsiveBreakpoint();
+  const [studySheetOpen, setStudySheetOpen] = useState(false);
+  const [focusedAnalysis, setFocusedAnalysis] = useState<{ type: 'word' | 'sentence'; key: string } | null>(null);
+
+  const hasAnalyses = Object.keys(wordAnalyses).length > 0
+    || Object.keys(sentenceAnalyses).length > 0
+    || isAnalyzing
+    || isAnalyzingSentences
+    || !!analysisError
+    || !!sentenceAnalysisError;
   const selectedWordCount = Object.keys(selectedWords).length;
   const selectedSentenceCount = Object.keys(selectedSentences).length;
 
@@ -89,19 +123,37 @@ export default function ReaderPage() {
     [leftWidth]
   );
 
+  const handleDividerTouchStart = useCallback(
+    (e: React.TouchEvent) => {
+      e.preventDefault();
+      setIsDragging(true);
+      dragStartX.current = e.touches[0].clientX;
+      dragStartWidth.current = leftWidth;
+    },
+    [leftWidth]
+  );
+
   useEffect(() => {
     if (!isDragging) return;
-    const handleMouseMove = (e: MouseEvent) => {
-      const delta = e.clientX - dragStartX.current;
+    const getClientX = (e: MouseEvent | TouchEvent): number => {
+      if ('touches' in e) return e.touches[0].clientX;
+      return e.clientX;
+    };
+    const handleMove = (e: MouseEvent | TouchEvent) => {
+      const delta = getClientX(e) - dragStartX.current;
       const newWidth = Math.max(300, Math.min(window.innerWidth - 320, dragStartWidth.current + delta));
       setLeftWidth(newWidth);
     };
-    const handleMouseUp = () => setIsDragging(false);
-    document.addEventListener('mousemove', handleMouseMove);
-    document.addEventListener('mouseup', handleMouseUp);
+    const handleEnd = () => setIsDragging(false);
+    document.addEventListener('mousemove', handleMove);
+    document.addEventListener('mouseup', handleEnd);
+    document.addEventListener('touchmove', handleMove, { passive: false });
+    document.addEventListener('touchend', handleEnd);
     return () => {
-      document.removeEventListener('mousemove', handleMouseMove);
-      document.removeEventListener('mouseup', handleMouseUp);
+      document.removeEventListener('mousemove', handleMove);
+      document.removeEventListener('mouseup', handleEnd);
+      document.removeEventListener('touchmove', handleMove);
+      document.removeEventListener('touchend', handleEnd);
     };
   }, [isDragging]);
 
@@ -177,10 +229,20 @@ export default function ReaderPage() {
     };
   }, [id]);
 
-  // ── Auto-translate ──
+  // ── Register focused analysis callback (mobile) ──
+  useEffect(() => {
+    if (isMobile) {
+      setOnOpenFocusedAnalysis((type, key) => {
+        setFocusedAnalysis({ type, key });
+      });
+      return () => setOnOpenFocusedAnalysis(null);
+    }
+  }, [isMobile]);
+
+  // ── Auto-translate (streaming) ──
   useEffect(() => {
     if (paragraphs.length === 0 || isTranslating) return;
-    const apiKey = getStoredDeepseekKey();
+    const apiKey = getProviderApiKey(selectedProvider);
     if (!apiKey) return;
 
     const untranslated = paragraphs.filter((p) => !translations[p.index]);
@@ -189,31 +251,39 @@ export default function ReaderPage() {
     setTranslating(true);
     setTranslationError(null);
 
-    translateParagraphs(
-      untranslated.map((p) => p.text),
+    const abortController = new AbortController();
+    const untranslatedTexts = untranslated.map((p) => p.text);
+
+    translateParagraphsStream(
+      untranslatedTexts,
+      (batchIndex: number, translation: string) => {
+        const realIndex = untranslated[batchIndex].index;
+        updateTranslations([{ index: realIndex, text: translation }]);
+      },
       apiKey,
-      documentId || undefined
+      documentId || undefined,
+      selectedProvider,
+      abortController.signal
     )
-      .then((response) => {
-        const items = untranslated.map((p, i) => ({
-          index: p.index,
-          text: response.translations[i] || '',
-        }));
-        updateTranslations(items);
-      })
       .catch((err: any) => {
-        const detail = err?.response?.data?.detail || err?.message || '翻译失败';
-        setTranslationError(detail);
+        if (err.name !== 'AbortError') {
+          const detail = err?.message || '翻译失败';
+          setTranslationError(detail);
+        }
       })
       .finally(() => setTranslating(false));
-  }, [documentId, paragraphs.length, translationTrigger]);
 
-  // ── Analyze selected words ──
+    return () => abortController.abort();
+  }, [documentId, paragraphs.length, translationTrigger, selectedProvider]);
+
+  // ── Analyze selected words (streaming) ──
+  const analysisAbortRef = useRef<AbortController | null>(null);
+
   const handleAnalyze = useCallback(async () => {
     const selectedKeys = Object.keys(selectedWords);
     if (selectedKeys.length === 0) return;
 
-    const apiKey = getStoredDeepseekKey();
+    const apiKey = getProviderApiKey(selectedProvider);
     if (!apiKey) { setShowApiKeyModal(true); return; }
 
     const newKeys = selectedKeys.filter((key) => !wordAnalyses[key]);
@@ -239,26 +309,86 @@ export default function ReaderPage() {
       });
     }
     if (entries.length === 0) return;
+    if (!documentId) return;
+
+    // Cancel any in-flight analysis
+    analysisAbortRef.current?.abort();
+    analysisAbortRef.current = new AbortController();
 
     setAnalyzing(true);
     setAnalysisError(null);
+    clearStreamingTexts();
+
+    // Pre-populate placeholder entries so word cards appear immediately
+    const totalNew = newKeys.length;
+    const placeholders: WordAnalysisResult[] = [];
+    for (const key of newKeys) {
+      const [paraIdxStr, word] = key.split(':');
+      placeholders.push({
+        paragraph_index: parseInt(paraIdxStr, 10),
+        word,
+        phonetic: '',
+        part_of_speech: '',
+        definition: '',
+        definition_zh: '',
+        collocations: [],
+        example_sentence: '',
+        cognates: [],
+        synonyms_antonyms: { synonyms: [], antonyms: [] },
+        base_form: '',
+        plural_form: '',
+        _pending: true,
+      });
+    }
+    setWordAnalyses(placeholders);
+    setAnalysisProgress({ completed: 0, total: totalNew });
+
+    let completedCount = 0;
 
     try {
-      const response = await analyzeWordsApi(entries, documentId!, apiKey);
-      setWordAnalyses(response.analyses);
+      await analyzeWordsStream(
+        entries,
+        documentId!,
+        (batchResults) => {
+          completedCount += batchResults.length;
+          setWordAnalyses(batchResults);
+          setAnalysisProgress({ completed: completedCount, total: totalNew });
+        },
+        (chunk) => {
+          // Raw AI text arrived — append to each word in this batch
+          for (const word of chunk.words) {
+            const key = `${chunk.para_index}:${word.toLowerCase()}`;
+            appendStreamingText(key, chunk.text);
+          }
+        },
+        apiKey,
+        selectedProvider,
+        analysisAbortRef.current.signal
+      );
       clearWordSelection();
     } catch (err: any) {
-      const detail = err?.response?.data?.detail || err?.message || '单词解析失败';
-      setAnalysisError(detail);
-    } finally { setAnalyzing(false); }
-  }, [selectedWords, wordAnalyses, paragraphs, translations, documentId]);
+      if (err.name !== 'AbortError') {
+        const detail = err?.message || '单词解析失败';
+        setAnalysisError(detail);
+      }
+    } finally {
+      setAnalyzing(false);
+      setAnalysisProgress(null);
+      clearStreamingTexts();
+      // Clean up any remaining placeholder entries on abort/error
+      removePendingWordAnalyses();
+      analysisAbortRef.current = null;
+    }
+  }, [selectedWords, wordAnalyses, paragraphs, translations, documentId, selectedProvider, removePendingWordAnalyses, appendStreamingText, clearStreamingTexts]);
 
-  // ── Analyze selected sentences ──
+  // ── Analyze selected sentences (streaming) ──
+  const sentenceAbortRef = useRef<AbortController | null>(null);
+
   const handleAnalyzeSentences = useCallback(async () => {
     const selectedKeys = Object.keys(selectedSentences);
     if (selectedKeys.length === 0) return;
 
-    const apiKey = getStoredDeepseekKey();
+    const apiKey = getProviderApiKey(selectedProvider);
     if (!apiKey) { setShowApiKeyModal(true); return; }
 
     const newKeys = selectedKeys.filter((key) => !sentenceAnalyses[key]);
@@ -281,18 +411,58 @@ export default function ReaderPage() {
     if (entries.length === 0) return;
     if (!documentId) return;
 
+    // Cancel any in-flight sentence analysis
+    sentenceAbortRef.current?.abort();
+    sentenceAbortRef.current = new AbortController();
+
     setAnalyzingSentences(true);
     setSentenceAnalysisError(null);
+    clearSentenceStreamingTexts();
+
+    // Pre-populate placeholder entries so sentence cards appear immediately
+    const placeholders: SentenceAnalysisResult[] = [];
+    for (const key of newKeys) {
+      const [paraIdxStr, sentIdxStr] = key.split(':');
+      const selection = selectedSentences[key];
+      if (!selection) continue;
+      placeholders.push({
+        paragraph_index: parseInt(paraIdxStr, 10),
+        sentence_index: parseInt(sentIdxStr, 10),
+        sentence_text: selection.text,
+        content: '',
+        _pending: true,
+      });
+    }
+    setSentenceAnalyses(placeholders);
 
     try {
-      const response = await analyzeSentencesApi(entries, documentId, apiKey);
-      setSentenceAnalyses(response.analyses);
+      await analyzeSentencesStream(
+        entries,
+        documentId,
+        (batchResults) => {
+          setSentenceAnalyses(batchResults);
+        },
+        (chunk) => {
+          // Raw AI text arrived — append to the sentence's streaming display
+          const key = `${chunk.para_index}:${chunk.sentence_index}`;
+          appendSentenceStreamingText(key, chunk.text);
+        },
+        apiKey,
+        selectedProvider,
+        sentenceAbortRef.current.signal
+      );
       clearSentenceSelection();
     } catch (err: any) {
-      const detail = err?.response?.data?.detail || err?.message || '句子解析失败';
-      setSentenceAnalysisError(detail);
-    } finally { setAnalyzingSentences(false); }
-  }, [selectedSentences, sentenceAnalyses, translations, documentId]);
+      if (err.name !== 'AbortError') {
+        const detail = err?.message || '句子解析失败';
+        setSentenceAnalysisError(detail);
+      }
+    } finally {
+      setAnalyzingSentences(false);
+      clearSentenceStreamingTexts();
+      sentenceAbortRef.current = null;
+    }
+  }, [selectedSentences, sentenceAnalyses, translations, documentId, selectedProvider, appendSentenceStreamingText, clearSentenceStreamingTexts]);
 
   // ── Loading / empty states ──
   if (loading && !parseStatus) {
@@ -353,57 +523,128 @@ export default function ReaderPage() {
   }
 
   // ── Main Reader ──
-  const apiKey = getStoredDeepseekKey();
+  const apiKey = getProviderApiKey(selectedProvider);
   const hasUntranslated = paragraphs.some((p) => !translations[p.index]);
+
+  // Shared reading area content (used by both desktop and mobile paths)
+  const readingAreaContent = (
+    <>
+      {/* API key prompt */}
+      {!apiKey && hasUntranslated && (
+        <div className="mb-6 p-4 bg-canvas-soft border border-hairline rounded-lg flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" strokeWidth="1.5">
+              <circle cx="12" cy="12" r="10" />
+              <path d="M12 16v-4M12 8h.01" />
+            </svg>
+            <span className="text-sm text-body-strong">配置 {getProviderLabel(selectedProvider)} API Key 以启用段落翻译</span>
+          </div>
+          <Button variant="primary" size="sm" onClick={() => setShowApiKeyModal(true)}>
+            配置
+          </Button>
+        </div>
+      )}
+      {/* Error banners */}
+      {translationError && !isTranslating && (
+        <div className="mb-4 p-3 bg-error/10 border border-error/20 rounded-md text-sm text-error">
+          {translationError}
+        </div>
+      )}
+      {analysisError && !isAnalyzing && (
+        <div className="mb-4 p-3 bg-error/10 border border-error/20 rounded-md text-sm text-error">
+          {analysisError}
+        </div>
+      )}
+      {sentenceAnalysisError && !isAnalyzingSentences && (
+        <div className="mb-4 p-3 bg-error/10 border border-error/20 rounded-md text-sm text-error">
+          {sentenceAnalysisError}
+        </div>
+      )}
+      <ReadingArea isTouchDevice={isTouchDevice} />
+    </>
+  );
 
   return (
     <div className="h-screen flex flex-col overflow-hidden transition-colors duration-300" style={{ backgroundColor: bgColorValue }}>
       <ReaderHeader />
-      <div className="flex-1 min-h-0 flex overflow-hidden transition-colors duration-300" style={{ backgroundColor: bgColorValue }}>
-        {/* Left: Reading area */}
-        <div
-          className="overflow-y-auto flex-shrink-0 min-h-0"
-          style={{ width: hasAnalyses ? leftWidth : '100%', backgroundColor: bgColorValue }}
-        >
-          <div className={hasAnalyses ? 'px-6 py-6 max-w-none' : 'px-8 py-6 max-w-[950px] mx-auto'}>
-            {/* API key prompt */}
-            {!apiKey && hasUntranslated && (
-              <div className="mb-6 p-4 bg-canvas-soft border border-hairline rounded-lg flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" strokeWidth="1.5">
-                    <circle cx="12" cy="12" r="10" />
-                    <path d="M12 16v-4M12 8h.01" />
-                  </svg>
-                  <span className="text-sm text-body-strong">配置 DeepSeek API Key 以启用段落翻译</span>
-                </div>
-                <Button variant="primary" size="sm" onClick={() => setShowApiKeyModal(true)}>
-                  配置
-                </Button>
-              </div>
-            )}
-            <ReadingArea />
+
+      {/* ── Desktop: horizontal split layout ── */}
+      {!isMobile && (
+        <div className="flex-1 min-h-0 flex overflow-hidden transition-colors duration-300" style={{ backgroundColor: bgColorValue }}>
+          {/* Left: Reading area */}
+          <div
+            className="overflow-y-auto flex-shrink-0 min-h-0"
+            style={{ width: hasAnalyses ? leftWidth : '100%', backgroundColor: bgColorValue }}
+          >
+            <div className={hasAnalyses ? 'px-6 py-6 max-w-none' : 'px-8 py-6 max-w-[950px] mx-auto'}>
+              {readingAreaContent}
+            </div>
+          </div>
+
+          {/* Resizable divider */}
+          {hasAnalyses && (
+            <div
+              className={`resize-handle ${isDragging ? '!bg-primary' : ''}`}
+              onMouseDown={handleDividerMouseDown}
+              onTouchStart={handleDividerTouchStart}
+            />
+          )}
+
+          {/* Right: Study panel */}
+          {hasAnalyses && (
+            <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
+              <StudyPanel />
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Mobile: single column layout ── */}
+      {isMobile && (
+        <div className="flex-1 min-h-0 overflow-y-auto" style={{ backgroundColor: bgColorValue }}>
+          <div className="px-4 py-4 max-w-none">
+            {readingAreaContent}
           </div>
         </div>
+      )}
 
-        {/* Resizable divider */}
-        {hasAnalyses && (
-          <div
-            className={`resize-handle ${isDragging ? '!bg-primary' : ''}`}
-            onMouseDown={handleDividerMouseDown}
-          />
-        )}
+      {/* ── Mobile: Study panel bottom sheet ── */}
+      {isMobile && hasAnalyses && studySheetOpen && (
+        <StudySheet onClose={() => setStudySheetOpen(false)}>
+          <StudyPanel />
+        </StudySheet>
+      )}
 
-        {/* Right: Study panel */}
-        {hasAnalyses && (
-          <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
-            <StudyPanel />
-          </div>
-        )}
-      </div>
+      {/* ── Mobile: Focused analysis sheet (tap analyzed word/sentence) ── */}
+      {isMobile && focusedAnalysis && (
+        <FocusedAnalysisSheet
+          type={focusedAnalysis.type}
+          analysisKey={focusedAnalysis.key}
+          onClose={() => setFocusedAnalysis(null)}
+        />
+      )}
+
+      {/* ── Mobile: FAB for study panel ── */}
+      {isMobile && hasAnalyses && !studySheetOpen && !focusedAnalysis && (
+        <button
+          onClick={() => setStudySheetOpen(true)}
+          className="fixed bottom-6 right-4 z-40 w-12 h-12 rounded-full bg-primary text-white shadow-lg flex items-center justify-center hover:bg-primary-active transition-colors touch-area"
+          aria-label="打开解析面板"
+        >
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+            <path d="M12 20V10M18 20V4M6 20v-4" />
+          </svg>
+        </button>
+      )}
 
       {/* Floating action bar */}
       {(selectedWordCount > 0 || selectedSentenceCount > 0) && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 shadow-float rounded-lg px-5 py-3 border border-hairline flex items-center gap-4" style={{ backgroundColor: bgColorValue }}>
+        <div className={[
+          'z-50 shadow-float rounded-lg px-4 md:px-5 py-3 border border-hairline flex items-center gap-3 md:gap-4 flex-wrap',
+          isMobile
+            ? 'fixed bottom-0 left-0 right-0 rounded-none'
+            : 'fixed bottom-6 left-1/2 -translate-x-1/2',
+        ].join(' ')} style={{ backgroundColor: bgColorValue }}>
           {selectedWordCount > 0 && (
             <>
               <span className="text-sm text-body">
@@ -418,7 +659,7 @@ export default function ReaderPage() {
             </>
           )}
           {selectedWordCount > 0 && selectedSentenceCount > 0 && (
-            <div className="w-px h-6 bg-hairline" />
+            <div className="w-px h-6 bg-hairline hidden md:block" />
           )}
           {selectedSentenceCount > 0 && (
             <>
@@ -440,6 +681,7 @@ export default function ReaderPage() {
         open={showApiKeyModal}
         onClose={() => {
           setShowApiKeyModal(false);
+          setSelectedProvider(getStoredAIProvider());
           setTranslationTrigger((n) => n + 1);
         }}
       />

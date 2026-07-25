@@ -36,6 +36,14 @@ log_info "系统信息: $(cat /etc/os-release | grep PRETTY_NAME | cut -d'"' -f2
 log_info "CPU 核心数: $(nproc)"
 log_info "内存: $(free -h | awk '/^Mem:/{print $2}')"
 
+# Detect public IP early — used by Step 3 (CORS) and Step 7 (summary)
+ECS_IP=$(curl -s ifconfig.me 2>/dev/null || curl -s ip.sb 2>/dev/null || echo "")
+if [ -n "$ECS_IP" ]; then
+    log_info "本机公网 IP: ${ECS_IP}"
+else
+    log_warn "无法检测公网 IP，部署完成后请手动更新 .env 中的 CORS_ORIGINS"
+fi
+
 # ============================================================
 # Step 1: Install Docker
 # ============================================================
@@ -92,7 +100,11 @@ if [ -f ".env" ]; then
 else
     echo ""
     echo "  ┌─────────────────────────────────────────────┐"
-    echo "  │  请输入以下 API 密钥（按 Enter 跳过可稍后配置）  │"
+    echo "  │  API 密钥请在部署完成后通过前端页面配置        │"
+    echo "  │  点击页面右上角🔑图标，输入你的密钥即可       │"
+    echo "  │  - DeepSeek API Key (AI 翻译/解析)           │"
+    echo "  │  - MinerU API Token (PDF 识别)               │"
+    echo "  │  密钥保存在浏览器本地，不经过服务器           │"
     echo "  └─────────────────────────────────────────────┘"
     echo ""
 
@@ -103,22 +115,20 @@ else
     RANDOM_KEY=$(openssl rand -hex 32 2>/dev/null || cat /dev/urandom | tr -dc 'a-zA-Z0-9' | head -c 64)
     sed -i "s/^SECRET_KEY=.*/SECRET_KEY=${RANDOM_KEY}/" .env
 
-    # DeepSeek API Key
-    read -p "  DeepSeek API Key (必填): " DEEPSEEK_KEY
-    if [ -n "$DEEPSEEK_KEY" ]; then
-        sed -i "s/^DEEPSEEK_API_KEY=.*/DEEPSEEK_API_KEY=${DEEPSEEK_KEY}/" .env
-    fi
-
-    # MinerU Token
-    read -p "  MinerU API Token (PDF 解析，必填): " MINERU_TOKEN
-    if [ -n "$MINERU_TOKEN" ]; then
-        sed -i "s/^MINERU_API_TOKEN=.*/MINERU_API_TOKEN=${MINERU_TOKEN}/" .env
-    fi
-
     # DB Password
     read -p "  数据库密码 (默认 pdfreader_pass): " DB_PW
     if [ -n "$DB_PW" ]; then
         sed -i "s/^DB_PASSWORD=.*/DB_PASSWORD=${DB_PW}/" .env
+    fi
+
+    # Note: DeepSeek Key and MinerU Token are intentionally left empty —
+    # users provide them through the frontend UI (🔑 icon, top-right).
+    # They are stored in the browser's localStorage, never sent to the server.
+
+    # Auto-append the ECS public IP to CORS_ORIGINS
+    if [ -n "$ECS_IP" ]; then
+        sed -i "s|^CORS_ORIGINS=.*|&,http://${ECS_IP}|" .env
+        log_info "已将 ECS 公网 IP (${ECS_IP}) 追加到 CORS_ORIGINS"
     fi
 
     echo ""
@@ -193,8 +203,6 @@ fi
 # ============================================================
 # Step 7: Print summary
 # ============================================================
-ECS_IP=$(curl -s ifconfig.me 2>/dev/null || curl -s ip.sb 2>/dev/null || echo "YOUR_ECS_IP")
-
 echo ""
 echo "  ╔═══════════════════════════════════════════════╗"
 echo "  ║         🎉  部署完成！                          ║"

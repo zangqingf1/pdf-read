@@ -4,7 +4,11 @@ import ParagraphBlock from './ParagraphBlock';
 import { useReaderStore, FONT_SIZE_MIN, FONT_SIZE_MAX } from '../../stores/readerStore';
 import TypographyDrawer from './TypographyDrawer';
 
-export default function ReadingArea() {
+interface ReadingAreaProps {
+  isTouchDevice?: boolean;
+}
+
+export default function ReadingArea({ isTouchDevice = false }: ReadingAreaProps) {
   const {
     title,
     paragraphs,
@@ -24,7 +28,7 @@ export default function ReadingArea() {
   return (
     <div>
       {/* ── Document header ── */}
-      <div className="mb-10 pb-6 border-b border-hairline">
+      <div className="hidden md:block mb-10 pb-6 border-b border-hairline">
         <h2 className="text-display-md font-display text-ink mb-2">
           {title || 'Untitled Document'}
         </h2>
@@ -71,7 +75,7 @@ export default function ReadingArea() {
             <button
               onClick={decreaseFontSize}
               disabled={fontSize <= FONT_SIZE_MIN}
-              className="w-8 h-8 flex items-center justify-center rounded-md hover:bg-surface-card disabled:opacity-30 transition-colors"
+              className="w-8 h-8 flex items-center justify-center rounded-md hover:bg-surface-card disabled:opacity-30 transition-colors touch-area"
               title="缩小字体"
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -82,7 +86,7 @@ export default function ReadingArea() {
             <button
               onClick={increaseFontSize}
               disabled={fontSize >= FONT_SIZE_MAX}
-              className="w-8 h-8 flex items-center justify-center rounded-md hover:bg-surface-card disabled:opacity-30 transition-colors"
+              className="w-8 h-8 flex items-center justify-center rounded-md hover:bg-surface-card disabled:opacity-30 transition-colors touch-area"
               title="放大字体"
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -92,7 +96,7 @@ export default function ReadingArea() {
             <div className="w-px h-5 bg-hairline mx-0.5" />
             <button
               onClick={() => setDrawerOpen(true)}
-              className="w-8 h-8 flex items-center justify-center rounded-md hover:bg-surface-card transition-colors"
+              className="w-8 h-8 flex items-center justify-center rounded-md hover:bg-surface-card transition-colors touch-area"
               title="排版设置"
             >
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
@@ -113,6 +117,7 @@ export default function ReadingArea() {
             paragraph={para}
             translation={translations[para.index]}
             isTranslating={isTranslating}
+            isTouchDevice={isTouchDevice}
           />
         ))}
       </div>

@@ -2,9 +2,11 @@ import { useState, useEffect } from 'react';
 import Modal from '../ui/Modal';
 import Input from '../ui/Input';
 import Button from '../ui/Button';
+import type { AIProvider } from '../../services/translateApi';
 
 const MINERU_KEY = 'mineru_api_token';
 const DEEPSEEK_KEY = 'deepseek_api_key';
+const AI_PROVIDER_KEY = 'ai_provider';
 
 export function getStoredMineruToken(): string {
   return localStorage.getItem(MINERU_KEY) || '';
@@ -20,6 +22,14 @@ export function getStoredDeepseekKey(): string {
 
 export function setStoredDeepseekKey(key: string) {
   localStorage.setItem(DEEPSEEK_KEY, key);
+}
+
+export function getStoredAIProvider(): AIProvider {
+  return 'deepseek';
+}
+
+export function setStoredAIProvider(provider: AIProvider) {
+  localStorage.setItem(AI_PROVIDER_KEY, provider);
 }
 
 interface Props {
@@ -72,7 +82,6 @@ export default function ApiKeyModal({ open, onClose }: Props) {
         </span>
       </div>
 
-      {/* MinerU */}
       <div className="mb-5">
         <div className="flex items-center gap-1.5 mb-2">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" strokeWidth="1.5">
@@ -122,6 +131,7 @@ export default function ApiKeyModal({ open, onClose }: Props) {
           获取 Key，用于 AI 段落翻译
         </p>
       </div>
+
     </Modal>
   );
 }

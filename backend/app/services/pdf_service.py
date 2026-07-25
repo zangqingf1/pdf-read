@@ -39,13 +39,14 @@ class PDFService:
         self.ocr = ocr or ocr_engine
 
     async def upload_and_save(
-        self, file: UploadFile, db: AsyncSession
+        self, file: UploadFile, db: AsyncSession, user_id: uuid.UUID | None = None
     ) -> Document:
         """Validate, save, and create a Document record in the database.
 
         Args:
             file: The uploaded PDF file.
             db: Database session.
+            user_id: The owning user's ID (required for data isolation).
 
         Returns:
             The created Document (status=pending).
@@ -93,6 +94,7 @@ class PDFService:
             original_text="",  # Will be filled after parsing
             parse_status="pending",
             page_count=page_count,
+            user_id=user_id,
             created_at=datetime.now(),  # Use local time, not SQLite UTC default
         )
         db.add(document)
@@ -162,9 +164,13 @@ class PDFService:
         return document
 
     async def get_document(
-        self, document_id: uuid.UUID, db: AsyncSession
+        self, document_id: uuid.UUID, db: AsyncSession,
+        user_id: uuid.UUID | None = None,
     ) -> Optional[Document]:
-        """Get a document by ID with paragraphs loaded."""
+        """Get a document by ID with paragraphs loaded.
+
+        If user_id is provided, the query is scoped to that user (data isolation).
+        """
         from sqlalchemy.orm import selectinload
 
         stmt = (
@@ -172,17 +178,25 @@ class PDFService:
             .where(Document.id == document_id)
             .options(selectinload(Document.paragraphs))
         )
+        if user_id is not None:
+            stmt = stmt.where(Document.user_id == user_id)
         result = await db.execute(stmt)
         return result.scalar_one_or_none()
 
     async def list_documents(
-        self, db: AsyncSession, limit: int = 20, offset: int = 0
+        self, db: AsyncSession, limit: int = 20, offset: int = 0,
+        user_id: uuid.UUID | None = None,
     ) -> tuple[list[Document], int]:
-        """List documents ordered by creation time (newest first)."""
+        """List documents ordered by creation time (newest first).
+
+        If user_id is provided, only documents owned by that user are returned.
+        """
         from sqlalchemy import func as sqlfunc
 
         # Count total
         count_stmt = select(sqlfunc.count()).select_from(Document)
+        if user_id is not None:
+            count_stmt = count_stmt.where(Document.user_id == user_id)
         total_result = await db.execute(count_stmt)
         total = total_result.scalar_one()
 
@@ -193,6 +207,8 @@ class PDFService:
             .limit(limit)
             .offset(offset)
         )
+        if user_id is not None:
+            stmt = stmt.where(Document.user_id == user_id)
         result = await db.execute(stmt)
         documents = result.scalars().all()
 

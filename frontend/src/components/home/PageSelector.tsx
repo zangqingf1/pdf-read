@@ -1,11 +1,11 @@
 import { useState, useCallback, useRef, useEffect, type Dispatch, type SetStateAction } from 'react';
 import { Document, Page } from 'react-pdf';
 import { pdfjs } from 'react-pdf';
-import { getPDFFileUrl } from '../../services/pdfApi';
+import { fetchPDFBlob } from '../../services/pdfApi';
 import Button from '../ui/Button';
 
-// Set PDF.js worker
-pdfjs.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjs.version}/pdf.worker.min.mjs`;
+// Set PDF.js worker — use unpkg for reliability (same as PDFViewerPanel)
+pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
 
 const MAX_PAGES = 10;
 
@@ -30,7 +30,38 @@ export default function PageSelector({
   const [numPages, setNumPages] = useState<number | null>(null);
   const gridRef = useRef<HTMLDivElement>(null);
   const [pageWidth, setPageWidth] = useState(500);
-  const [columns, setColumns] = useState<1 | 2 | 3 | 4>(2);
+  const [columns, setColumns] = useState<1 | 2 | 3 | 4>(
+    typeof window !== 'undefined' && window.innerWidth >= 768 ? 2 : 1
+  );
+  const [pdfBlobUrl, setPdfBlobUrl] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState(false);
+
+  // Fetch PDF as blob through axios (so auth header is included)
+  useEffect(() => {
+    let cancelled = false;
+    fetchPDFBlob(taskId)
+      .then((blob) => {
+        if (!cancelled) {
+          setPdfBlobUrl(URL.createObjectURL(blob));
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setLoadError(true);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [taskId]);
+
+  // Cleanup blob URL on unmount
+  useEffect(() => {
+    const url = pdfBlobUrl;
+    return () => {
+      if (url) URL.revokeObjectURL(url);
+    };
+  }, [pdfBlobUrl]);
 
   // Compute page width based on column count
   useEffect(() => {
@@ -67,8 +98,8 @@ export default function PageSelector({
   return (
     <div className="flex flex-col min-h-0 flex-1 bg-canvas">
       {/* Header */}
-      <div className="flex items-center justify-between px-6 py-3 border-b border-hairline-soft">
-        <div className="flex items-center gap-3">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 px-4 md:px-6 py-3 border-b border-hairline-soft">
+        <div className="flex items-center gap-3 flex-wrap">
           <h3 className="text-lg font-display font-medium text-ink m-0">选择要阅读的页面</h3>
           <span className="text-sm text-muted">
             共 {pageCount} 页，最多选择 {MAX_PAGES} 页
@@ -80,7 +111,7 @@ export default function PageSelector({
                 key={n}
                 onClick={() => setColumns(n)}
                 className={[
-                  'w-7 h-6 flex items-center justify-center rounded text-xs font-medium transition-colors',
+                  'w-7 h-6 flex items-center justify-center rounded text-xs font-medium transition-colors touch-area',
                   columns === n ? 'bg-white text-primary shadow-sm' : 'text-muted-soft hover:text-ink',
                 ].join(' ')}
               >
@@ -110,8 +141,9 @@ export default function PageSelector({
         className="flex-1 min-h-0 overflow-y-auto p-4 page-selector-grid"
       >
         <Document
-          file={getPDFFileUrl(taskId)}
+          file={pdfBlobUrl}
           onLoadSuccess={onDocumentLoadSuccess}
+          onLoadError={() => setLoadError(true)}
           loading={
             <div className="text-center py-16">
               <div className="animate-spin h-8 w-8 border-2 border-primary border-t-transparent rounded-full mx-auto mb-3" />

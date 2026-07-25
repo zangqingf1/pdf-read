@@ -27,6 +27,9 @@ interface DocumentState {
   wordAnalyses: Record<string, WordAnalysisResult>; // "paragraphIndex:word" -> analysis
   isAnalyzing: boolean;
   analysisError: string | null;
+  analysisProgress: { completed: number; total: number } | null;
+  /** Raw AI streaming text per word key — shown while generation is in flight */
+  streamingTexts: Record<string, string>;
 
   // Sentence selection state
   selectedSentences: Record<string, { text: string }>; // "paragraphIndex:sentenceIndex" -> { text }
@@ -34,6 +37,8 @@ interface DocumentState {
   sentenceAnalyses: Record<string, SentenceAnalysisResult>; // same key pattern
   isAnalyzingSentences: boolean;
   sentenceAnalysisError: string | null;
+  /** Raw AI streaming text per sentence key — shown while generation is in flight */
+  sentenceStreamingTexts: Record<string, string>;
 
   // Reverse navigation: highlight a specific analysis card in the panel
   highlightedAnalysisKey: string | null;
@@ -52,9 +57,13 @@ interface DocumentState {
   clearWordSelection: () => void;
   setWordAnalyses: (results: WordAnalysisResult[]) => void;
   removeWordAnalysis: (paragraphIndex: number, word: string) => void;
+  removePendingWordAnalyses: () => void;
   clearWordAnalyses: () => void;
   setAnalyzing: (analyzing: boolean) => void;
   setAnalysisError: (error: string | null) => void;
+  setAnalysisProgress: (progress: { completed: number; total: number } | null) => void;
+  appendStreamingText: (key: string, text: string) => void;
+  clearStreamingTexts: () => void;
 
   // Sentence actions
   toggleSentenceSelection: (paragraphIndex: number, sentenceIndex: number, text: string) => void;
@@ -64,6 +73,8 @@ interface DocumentState {
   clearSentenceAnalyses: () => void;
   setAnalyzingSentences: (analyzing: boolean) => void;
   setSentenceAnalysisError: (error: string | null) => void;
+  appendSentenceStreamingText: (key: string, text: string) => void;
+  clearSentenceStreamingTexts: () => void;
 
   // Reverse navigation
   setHighlightedAnalysis: (key: string | null, tab: 'words' | 'sentences' | null) => void;
@@ -88,11 +99,14 @@ export const useDocumentStore = create<DocumentState>((set) => ({
   wordAnalyses: {},
   isAnalyzing: false,
   analysisError: null,
+  analysisProgress: null,
+  streamingTexts: {},
 
   selectedSentences: {},
   sentenceAnalyses: {},
   isAnalyzingSentences: false,
   sentenceAnalysisError: null,
+  sentenceStreamingTexts: {},
 
   highlightedAnalysisKey: null,
   highlightedAnalysisTab: null,
@@ -119,6 +133,8 @@ export const useDocumentStore = create<DocumentState>((set) => ({
             part_of_speech: wa.part_of_speech,
             definition: wa.definition,
             definition_zh: wa.definition_zh,
+            collocations: wa.collocations || [],
+            example_sentence: wa.example_sentence || '',
             cognates: wa.cognates,
             synonyms_antonyms: wa.synonyms_antonyms,
             base_form: wa.base_form,
@@ -132,7 +148,13 @@ export const useDocumentStore = create<DocumentState>((set) => ({
       if (data.sentence_analyses) {
         for (const sa of data.sentence_analyses) {
           const key = `${sa.paragraph_index}:${sa.sentence_index}`;
-          sentenceAnalyses[key] = sa;
+          sentenceAnalyses[key] = {
+            id: sa.id,
+            paragraph_index: sa.paragraph_index,
+            sentence_index: sa.sentence_index,
+            sentence_text: sa.sentence_text || '',
+            content: sa.content || '',
+          };
         }
       }
 
@@ -173,10 +195,13 @@ export const useDocumentStore = create<DocumentState>((set) => ({
       wordAnalyses: {},
       isAnalyzing: false,
       analysisError: null,
+      analysisProgress: null,
+      streamingTexts: {},
       selectedSentences: {},
       sentenceAnalyses: {},
       isAnalyzingSentences: false,
       sentenceAnalysisError: null,
+      sentenceStreamingTexts: {},
       highlightedAnalysisKey: null,
       highlightedAnalysisTab: null,
     }),
@@ -228,11 +253,34 @@ export const useDocumentStore = create<DocumentState>((set) => ({
       return { wordAnalyses };
     }),
 
+  removePendingWordAnalyses: () =>
+    set((state) => {
+      const wordAnalyses = { ...state.wordAnalyses };
+      for (const key of Object.keys(wordAnalyses)) {
+        if (wordAnalyses[key]._pending) {
+          delete wordAnalyses[key];
+        }
+      }
+      return { wordAnalyses };
+    }),
+
   clearWordAnalyses: () => set({ wordAnalyses: {} }),
 
   setAnalyzing: (analyzing) => set({ isAnalyzing: analyzing }),
 
   setAnalysisError: (error) => set({ analysisError: error }),
+
+  setAnalysisProgress: (progress) => set({ analysisProgress: progress }),
+
+  appendStreamingText: (key, text) =>
+    set((state) => ({
+      streamingTexts: {
+        ...state.streamingTexts,
+        [key]: (state.streamingTexts[key] || '') + text,
+      },
+    })),
+
+  clearStreamingTexts: () => set({ streamingTexts: {} }),
 
   // ── Sentence actions ──────────────────────────────────────────
 
@@ -273,6 +321,16 @@ export const useDocumentStore = create<DocumentState>((set) => ({
   setAnalyzingSentences: (analyzing) => set({ isAnalyzingSentences: analyzing }),
 
   setSentenceAnalysisError: (error) => set({ sentenceAnalysisError: error }),
+
+  appendSentenceStreamingText: (key, text) =>
+    set((state) => ({
+      sentenceStreamingTexts: {
+        ...state.sentenceStreamingTexts,
+        [key]: (state.sentenceStreamingTexts[key] || '') + text,
+      },
+    })),
+
+  clearSentenceStreamingTexts: () => set({ sentenceStreamingTexts: {} }),
 
   // ── Reverse navigation ──────────────────────────────────────
 

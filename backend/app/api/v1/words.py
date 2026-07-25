@@ -5,19 +5,33 @@ import re
 import uuid
 
 from fastapi import APIRouter, HTTPException, Depends
+from fastapi.responses import StreamingResponse
 from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth.deps import get_current_user
 from app.database import get_db
+from app.models.document import Document
+from app.models.user import User
 from app.models.word_analysis import WordAnalysis
 from app.schemas.words import (
     WordAnalysisRequest,
     WordAnalysisResponse,
     WordAnalysisResult,
 )
-from app.services.ai_service import AIService, ai_service
+from app.services.ai_service import create_ai_service
 
 router = APIRouter()
+
+
+async def _verify_document_ownership(
+    document_id: str, user: User, db: AsyncSession
+) -> Document:
+    """Verify the document exists and belongs to the current user."""
+    doc = await db.get(Document, uuid.UUID(document_id))
+    if doc is None or doc.user_id != user.id:
+        raise HTTPException(status_code=404, detail=f"Document {document_id} not found")
+    return doc
 
 
 def _extract_sentence(text: str, word: str) -> str:
@@ -128,6 +142,11 @@ async def _persist_analyses(
             existing.part_of_speech = entry.get("part_of_speech", "")
             existing.definition = entry.get("definition", "")
             existing.definition_zh = entry.get("definition_zh", "")
+            collocations = entry.get("collocations", [])
+            existing.collocations = (
+                json.dumps(collocations, ensure_ascii=False) if collocations else "[]"
+            )
+            existing.example_sentence = entry.get("example_sentence", "")
             cognates = entry.get("cognates", [])
             syn_ant = entry.get("synonyms_antonyms", {"synonyms": [], "antonyms": []})
             existing.cognates = (
@@ -140,6 +159,7 @@ async def _persist_analyses(
             existing.plural_form = entry.get("plural_form", "")
         else:
             # Create new record
+            collocations = entry.get("collocations", [])
             cognates = entry.get("cognates", [])
             syn_ant = entry.get("synonyms_antonyms", {"synonyms": [], "antonyms": []})
             new_analysis = WordAnalysis(
@@ -150,6 +170,8 @@ async def _persist_analyses(
                 part_of_speech=entry.get("part_of_speech", ""),
                 definition=entry.get("definition", ""),
                 definition_zh=entry.get("definition_zh", ""),
+                collocations=json.dumps(collocations, ensure_ascii=False) if collocations else "[]",
+                example_sentence=entry.get("example_sentence", ""),
                 cognates=json.dumps(cognates, ensure_ascii=False) if cognates else "[]",
                 synonyms_antonyms=json.dumps(syn_ant, ensure_ascii=False) if syn_ant else '{"synonyms": [], "antonyms": []}',
                 base_form=entry.get("base_form", ""),
@@ -164,11 +186,12 @@ async def _persist_analyses(
 async def analyze_words(
     request: WordAnalysisRequest,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
-    """Analyze selected words using DeepSeek AI.
+    """Analyze selected words using AI (DeepSeek).
 
     Accepts entries grouped by paragraph (each entry has a sentence context,
-    word list, and optional existing translation). Calls DeepSeek in parallel
+    word list, and optional existing translation). Calls AI in parallel
     batches and persists results to the database so they survive page reloads.
 
     Returns a list of word analyses with id fields for later deletion.
@@ -176,9 +199,11 @@ async def analyze_words(
     if not request.entries:
         raise HTTPException(status_code=400, detail="No words to analyze")
 
-    ai = ai_service
-    if request.api_key:
-        ai = AIService(api_key=request.api_key)
+    # Verify document ownership if document_id is provided
+    if request.document_id:
+        await _verify_document_ownership(request.document_id, current_user, db)
+
+    ai = create_ai_service(provider=request.provider or "deepseek", api_key=request.api_key)
 
     try:
         # Flatten entries: each entry may contain multiple words.
@@ -217,6 +242,8 @@ async def analyze_words(
                 part_of_speech=r.get("part_of_speech", ""),
                 definition=r.get("definition", ""),
                 definition_zh=r.get("definition_zh", ""),
+                collocations=r.get("collocations", []),
+                example_sentence=r.get("example_sentence", ""),
                 cognates=r.get("cognates", []),
                 synonyms_antonyms=r.get("synonyms_antonyms", {"synonyms": [], "antonyms": []}),
                 base_form=r.get("base_form", ""),
@@ -239,12 +266,12 @@ async def analyze_words(
         if "401" in err_msg or "Unauthorized" in err_msg or "Authorization" in err_msg:
             raise HTTPException(
                 status_code=401,
-                detail="DeepSeek API Key 无效或未配置，请点击右上角🔑图标设置。",
+                detail="AI API Key 无效或未配置，请点击右上角🔑图标设置。",
             )
         elif "402" in err_msg or "insufficient" in err_msg.lower():
             raise HTTPException(
                 status_code=402,
-                detail="DeepSeek 账户余额不足，请前往 platform.deepseek.com 充值。",
+                detail="AI 账户余额不足，请检查对应平台的账户状态。",
             )
         elif "429" in err_msg or "rate" in err_msg.lower():
             raise HTTPException(
@@ -263,15 +290,151 @@ async def analyze_words(
             )
 
 
+@router.post("/stream")
+async def analyze_words_stream(
+    request: WordAnalysisRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Analyze words with SSE streaming — results arrive progressively.
+
+    Each completed batch of word analyses is sent as a Server-Sent Event:
+    ``data: {"type": "batch", "analyses": [...]}``
+
+    A final event signals completion:
+    ``data: {"type": "done"}``
+
+    The frontend can render each word analysis card as it arrives instead
+    of waiting for the entire batch.
+    """
+    if not request.entries:
+        raise HTTPException(status_code=400, detail="No words to analyze")
+
+    # Verify document ownership if document_id is provided
+    if request.document_id:
+        await _verify_document_ownership(request.document_id, current_user, db)
+
+    ai = create_ai_service(provider=request.provider or "deepseek", api_key=request.api_key)
+
+    # Flatten entries (same as /analyze)
+    flat_entries: list[dict] = []
+    for entry in request.entries:
+        for word in entry.words:
+            word = word.strip()
+            extracted_sentence = _extract_sentence(entry.sentence, word)
+            flat_entries.append({
+                "paragraph_index": entry.paragraph_index,
+                "word": word,
+                "sentence": extracted_sentence,
+                "sentence_translation": None,
+            })
+
+    # Deduplicate
+    seen = set()
+    unique_entries = []
+    for e in flat_entries:
+        key = (e["paragraph_index"], e["word"].lower())
+        if key not in seen:
+            seen.add(key)
+            unique_entries.append(e)
+
+    async def event_generator():
+        all_raw: list[dict] = []
+        try:
+            async for event in ai.analyze_words_stream(unique_entries):
+                if event["type"] == "chunk":
+                    # Relay raw text chunk to frontend so user sees AI output in real time
+                    yield (
+                        "data: "
+                        + json.dumps({
+                            "type": "chunk",
+                            "batch_id": event["batch_id"],
+                            "text": event["text"],
+                            "words": event["words"],
+                            "para_index": event["para_index"],
+                        }, ensure_ascii=False)
+                        + "\n\n"
+                    )
+
+                elif event["type"] == "batch":
+                    batch_results = event["results"]
+                    all_raw.extend(batch_results)
+
+                    # Build result list for this batch
+                    batch_analyses = []
+                    for r in batch_results:
+                        batch_analyses.append({
+                            "paragraph_index": r.get("paragraph_index", 0),
+                            "word": r.get("word", ""),
+                            "phonetic": r.get("phonetic", ""),
+                            "part_of_speech": r.get("part_of_speech", ""),
+                            "definition": r.get("definition", ""),
+                            "definition_zh": r.get("definition_zh", ""),
+                            "collocations": r.get("collocations", []),
+                            "example_sentence": r.get("example_sentence", ""),
+                            "cognates": r.get("cognates", []),
+                            "synonyms_antonyms": r.get("synonyms_antonyms", {"synonyms": [], "antonyms": []}),
+                            "base_form": r.get("base_form", ""),
+                            "plural_form": r.get("plural_form", ""),
+                        })
+                    yield (
+                        "data: "
+                        + json.dumps({
+                            "type": "batch",
+                            "analyses": batch_analyses,
+                            "words": event["words"],
+                            "para_index": event["para_index"],
+                        }, ensure_ascii=False)
+                        + "\n\n"
+                    )
+
+            # Persist if document_id provided
+            if request.document_id and all_raw:
+                try:
+                    await _persist_analyses(request.document_id, all_raw, db)
+                except Exception:
+                    pass
+
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+
+        except ValueError as e:
+            yield f"data: {json.dumps({'type': 'error', 'code': 400, 'message': str(e)}, ensure_ascii=False)}\n\n"
+        except Exception as e:
+            err_msg = str(e)
+            if "401" in err_msg or "Unauthorized" in err_msg:
+                code, msg = 401, "AI API Key 无效或未配置，请点击右上角🔑图标设置。"
+            elif "402" in err_msg or "insufficient" in err_msg.lower():
+                code, msg = 402, "AI 账户余额不足，请检查对应平台的账户状态。"
+            elif "429" in err_msg or "rate" in err_msg.lower():
+                code, msg = 429, "API 请求过于频繁，请稍后重试。"
+            elif "timeout" in err_msg.lower():
+                code, msg = 504, "AI 服务响应超时，请稍后重试。"
+            else:
+                code, msg = 502, f"单词解析失败: {err_msg[:200]}"
+            yield f"data: {json.dumps({'type': 'error', 'code': code, 'message': msg}, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 @router.get("/list/{document_id}", response_model=WordAnalysisResponse)
 async def get_word_analyses(
     document_id: str,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     """Get all saved word analyses for a document.
 
     Used to restore word analysis results when re-opening a document.
     """
+    await _verify_document_ownership(document_id, current_user, db)
     stmt = (
         select(WordAnalysis)
         .where(WordAnalysis.document_id == document_id)
@@ -282,6 +445,10 @@ async def get_word_analyses(
 
     analyses = []
     for wa in records:
+        try:
+            collocations = json.loads(wa.collocations) if wa.collocations else []
+        except (json.JSONDecodeError, TypeError):
+            collocations = []
         try:
             cognates = json.loads(wa.cognates) if wa.cognates else []
         except (json.JSONDecodeError, TypeError):
@@ -299,6 +466,8 @@ async def get_word_analyses(
             part_of_speech=wa.part_of_speech or "",
             definition=wa.definition or "",
             definition_zh=wa.definition_zh or "",
+            collocations=collocations,
+            example_sentence=wa.example_sentence or "",
             cognates=cognates,
             synonyms_antonyms=syn_ant,
             base_form=wa.base_form or "",
@@ -308,17 +477,38 @@ async def get_word_analyses(
     return WordAnalysisResponse(analyses=analyses)
 
 
+@router.api_route("/document/{document_id}", methods=["DELETE", "POST"])
+async def delete_all_word_analyses(
+    document_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Delete all word analysis records for a document."""
+    await _verify_document_ownership(document_id, current_user, db)
+    stmt = delete(WordAnalysis).where(WordAnalysis.document_id == document_id)
+    result = await db.execute(stmt)
+    await db.commit()
+
+    return {"status": "ok", "deleted": result.rowcount}
+
+
 @router.delete("/{analysis_id}")
 async def delete_word_analysis(
     analysis_id: str,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     """Delete a single word analysis record."""
-    stmt = delete(WordAnalysis).where(WordAnalysis.id == analysis_id)
+    # Verify ownership via the parent document
+    stmt = select(WordAnalysis).where(WordAnalysis.id == analysis_id)
     result = await db.execute(stmt)
-    await db.commit()
-
-    if result.rowcount == 0:
+    wa = result.scalar_one_or_none()
+    if wa is None:
         raise HTTPException(status_code=404, detail="Word analysis not found")
+
+    await _verify_document_ownership(wa.document_id, current_user, db)
+
+    await db.delete(wa)
+    await db.commit()
 
     return {"status": "ok"}

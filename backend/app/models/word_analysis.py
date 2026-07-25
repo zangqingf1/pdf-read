@@ -28,6 +28,8 @@ class WordAnalysis(Base):
     part_of_speech: Mapped[str] = mapped_column(String(50), default="")
     definition: Mapped[str] = mapped_column(Text, default="")
     definition_zh: Mapped[str] = mapped_column(Text, default="")
+    collocations: Mapped[str] = mapped_column(Text, default="[]")
+    example_sentence: Mapped[str] = mapped_column(Text, default="")
     cognates: Mapped[str] = mapped_column(Text, default="[]")
     synonyms_antonyms: Mapped[str] = mapped_column(Text, default='{"synonyms": [], "antonyms": []}')
     base_form: Mapped[str] = mapped_column(Text, default="")

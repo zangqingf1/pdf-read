@@ -211,7 +211,7 @@ export default function PDFUploader({
         <p className="text-muted mb-8 max-w-sm mx-auto">
           文档 <strong className="text-body-strong">{docTitle}</strong> 已准备就绪
         </p>
-        <div className="flex items-center justify-center gap-3">
+        <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
           <Button variant="primary" size="lg" onClick={() => navigate(`/review/${taskId}`)}>
             审阅与编辑
           </Button>
@@ -257,7 +257,7 @@ export default function PDFUploader({
         onDrop={handleDrop}
         onClick={() => !isBusy && fileInputRef.current?.click()}
         className={[
-          'upload-zone flex flex-col items-center justify-center p-10 rounded-lg border-2 border-dashed cursor-pointer transition-colors',
+          'upload-zone flex flex-col items-center justify-center p-6 md:p-10 rounded-lg border-2 border-dashed cursor-pointer transition-colors',
           dragOver ? 'upload-zone-dragover' : 'border-hairline bg-surface-card',
           isBusy ? 'opacity-50 pointer-events-none' : '',
         ].join(' ')}

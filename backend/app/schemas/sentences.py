@@ -1,4 +1,6 @@
-"""Pydantic schemas for sentence structure analysis."""
+"""Pydantic schemas for sentence analysis (精讲)."""
+
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -14,12 +16,9 @@ class SentenceAnalysisRequest(BaseModel):
     entries: list[SentenceEntry] = Field(min_length=1)
     api_key: str | None = None
     document_id: str
-
-
-class StructureItem(BaseModel):
-    text: str
-    label: str  # e.g. "主语从句", "谓语", "定语从句"
-    explanation: str  # grammatical explanation of this part
+    provider: Literal["deepseek"] | None = Field(
+        default=None, description="AI provider: deepseek"
+    )
 
 
 class SentenceAnalysisResult(BaseModel):
@@ -27,8 +26,7 @@ class SentenceAnalysisResult(BaseModel):
     paragraph_index: int
     sentence_index: int
     sentence_text: str
-    structure: list[StructureItem] = Field(default_factory=list)
-    idiomatic_translation: str = ""
+    content: str = ""  # Raw markdown from AI: 原文/主干/讲解/译文
 
 
 class SentenceAnalysisResponse(BaseModel):

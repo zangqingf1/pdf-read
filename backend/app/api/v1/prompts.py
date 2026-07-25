@@ -4,8 +4,10 @@ from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth.deps import get_current_user
 from app.database import get_db
 from app.models.prompt_template import PromptTemplate
+from app.models.user import User
 from app.schemas.prompts import (
     PromptTemplateOut,
     PromptTemplateListResponse,
@@ -47,6 +49,7 @@ def _build_response(name: str, row: PromptTemplate | None) -> PromptTemplateOut:
 @router.get("", response_model=PromptTemplateListResponse)
 async def list_prompt_templates(
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     """List all prompt templates with current values.
 
@@ -66,6 +69,7 @@ async def list_prompt_templates(
 async def get_prompt_template(
     name: str,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     """Get a single prompt template by name."""
     if name not in _VALID_NAMES:
@@ -86,6 +90,7 @@ async def update_prompt_template(
     name: str,
     request: PromptTemplateUpdateRequest,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     """Create or update a prompt template.
 
@@ -118,6 +123,7 @@ async def update_prompt_template(
 async def reset_prompt_template(
     name: str,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     """Reset a single prompt template to its built-in default.
 
@@ -140,6 +146,7 @@ async def reset_prompt_template(
 @router.post("/reset-all", response_model=PromptTemplateListResponse)
 async def reset_all_prompt_templates(
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     """Reset all prompt templates to built-in defaults.
 

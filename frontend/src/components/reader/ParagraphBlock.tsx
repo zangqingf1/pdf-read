@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useMemo, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { ParagraphResult } from '../../services/pdfApi';
@@ -6,10 +6,19 @@ import { useReaderStore, FONT_FAMILIES, LINE_HEIGHTS } from '../../stores/reader
 import { useDocumentStore } from '../../stores/documentStore';
 import { triggerScrollToAnalysis } from './StudyPanel';
 
+// ── Module-level callback: open focused analysis on mobile ──
+let _onOpenFocusedAnalysis: ((type: 'word' | 'sentence', key: string) => void) | null = null;
+export function setOnOpenFocusedAnalysis(
+  cb: ((type: 'word' | 'sentence', key: string) => void) | null
+) {
+  _onOpenFocusedAnalysis = cb;
+}
+
 interface ParagraphBlockProps {
   paragraph: ParagraphResult;
   translation?: string;
   isTranslating?: boolean;
+  isTouchDevice?: boolean;
 }
 
 /** Split text into sentences. */
@@ -20,26 +29,93 @@ function splitSentences(text: string): { text: string; index: number }[] {
     .filter((s) => s.text.length > 0);
 }
 
-/** A clickable word token. */
+/** A clickable word token. On mobile, long-press selects the parent sentence. */
 function WordToken({
   text,
   word,
   paragraphIndex,
+  sentenceIndex,
+  sentenceText,
+  isTouchDevice,
 }: {
   text: string;
   word: string;
   paragraphIndex: number;
+  sentenceIndex: number;
+  sentenceText: string;
+  isTouchDevice: boolean;
 }) {
-  const { selectedWords, wordAnalyses, toggleWordSelection } = useDocumentStore();
+  const {
+    selectedWords,
+    wordAnalyses,
+    sentenceAnalyses,
+    toggleWordSelection,
+    toggleSentenceSelection,
+  } = useDocumentStore();
   const key = `${paragraphIndex}:${word.toLowerCase()}`;
   const isSelected = !!selectedWords[key];
   const hasAnalysis = !!wordAnalyses[key];
+  const sentenceKey = `${paragraphIndex}:${sentenceIndex}`;
+  const sentenceHasAnalysis = !!sentenceAnalyses[sentenceKey];
 
+  // ── Long press → select sentence or open analysis (mobile only) ──
+  const longPressTimer = useRef<ReturnType<typeof setTimeout>>();
+  const longPressFired = useRef(false);
+  const [longPressActive, setLongPressActive] = useState(false);
+
+  const clearLongPress = useCallback(() => {
+    if (longPressTimer.current) {
+      clearTimeout(longPressTimer.current);
+      longPressTimer.current = undefined;
+    }
+    setLongPressActive(false);
+  }, []);
+
+  const handleTouchStart = useCallback((e: React.TouchEvent) => {
+    if (!isTouchDevice) return;
+    e.stopPropagation(); // prevent SentenceToken from also starting its timer
+    longPressFired.current = false;
+    longPressTimer.current = setTimeout(() => {
+      longPressFired.current = true;
+      setLongPressActive(true);
+      try { navigator.vibrate?.(10); } catch { /* noop */ }
+      if (sentenceHasAnalysis) {
+        if (_onOpenFocusedAnalysis) {
+          _onOpenFocusedAnalysis('sentence', sentenceKey);
+        } else {
+          triggerScrollToAnalysis(sentenceKey, 'sentences');
+        }
+      } else {
+        toggleSentenceSelection(paragraphIndex, sentenceIndex, sentenceText);
+      }
+      // Reset visual after animation
+      setTimeout(() => setLongPressActive(false), 600);
+    }, 300);
+  }, [isTouchDevice, paragraphIndex, sentenceIndex, sentenceText, sentenceKey, sentenceHasAnalysis, toggleSentenceSelection]);
+
+  const handleTouchEnd = useCallback(() => {
+    clearLongPress();
+  }, [clearLongPress]);
+
+  const handleTouchMove = useCallback(() => {
+    clearLongPress();
+  }, [clearLongPress]);
+
+  // ── Click → select word ──
   const handleClick = useCallback(
     (e: React.MouseEvent) => {
       e.stopPropagation();
+      // If long press just fired, skip the click (don't select word)
+      if (longPressFired.current) {
+        longPressFired.current = false;
+        return;
+      }
       if (hasAnalysis) {
-        triggerScrollToAnalysis(key, 'words');
+        if (_onOpenFocusedAnalysis) {
+          _onOpenFocusedAnalysis('word', key);
+        } else {
+          triggerScrollToAnalysis(key, 'words');
+        }
       } else {
         toggleWordSelection(paragraphIndex, word.toLowerCase());
       }
@@ -49,8 +125,16 @@ function WordToken({
 
   return (
     <span
-      className={`word-token ${isSelected ? 'word-token-selected' : ''} ${hasAnalysis && !isSelected ? 'word-token-has-analysis' : ''}`}
+      className={[
+        'word-token',
+        isSelected ? 'word-token-selected' : '',
+        hasAnalysis && !isSelected ? 'word-token-has-analysis' : '',
+        longPressActive ? 'long-press-active' : '',
+      ].join(' ')}
       onClick={handleClick}
+      onTouchStart={handleTouchStart}
+      onTouchEnd={handleTouchEnd}
+      onTouchMove={handleTouchMove}
     >
       {text}
     </span>
@@ -58,14 +142,30 @@ function WordToken({
 }
 
 /** Render plain text with clickable word tokens. */
-function renderTokenizedText(text: string, paragraphIndex: number): React.ReactNode {
+function renderTokenizedText(
+  text: string,
+  paragraphIndex: number,
+  sentenceIndex: number,
+  sentenceText: string,
+  isTouchDevice: boolean,
+): React.ReactNode {
   const parts = text.split(/(\s+)/g);
   return parts.map((part, i) => {
     if (/^\s+$/.test(part)) return part;
     if (/[a-zA-Z]/.test(part)) {
       const word = part.replace(/[^a-zA-Z'-]/g, '');
       if (word.length > 0) {
-        return <WordToken key={i} text={part} word={word} paragraphIndex={paragraphIndex} />;
+        return (
+          <WordToken
+            key={i}
+            text={part}
+            word={word}
+            paragraphIndex={paragraphIndex}
+            sentenceIndex={sentenceIndex}
+            sentenceText={sentenceText}
+            isTouchDevice={isTouchDevice}
+          />
+        );
       }
     }
     return part;
@@ -73,17 +173,23 @@ function renderTokenizedText(text: string, paragraphIndex: number): React.ReactN
 }
 
 /** Recursively process React children for word tokens. */
-function processChildren(children: React.ReactNode, paragraphIndex: number): React.ReactNode {
+function processChildren(
+  children: React.ReactNode,
+  paragraphIndex: number,
+  sentenceIndex: number,
+  sentenceText: string,
+  isTouchDevice: boolean,
+): React.ReactNode {
   return React.Children.map(children, (child) => {
     if (typeof child === 'string') {
-      return renderTokenizedText(child, paragraphIndex);
+      return renderTokenizedText(child, paragraphIndex, sentenceIndex, sentenceText, isTouchDevice);
     }
     if (React.isValidElement(child)) {
       const childProps = (child.props as any) || {};
       if (childProps.children) {
         return React.cloneElement(child, {
           ...childProps,
-          children: processChildren(childProps.children, paragraphIndex),
+          children: processChildren(childProps.children, paragraphIndex, sentenceIndex, sentenceText, isTouchDevice),
         } as any);
       }
     }
@@ -95,9 +201,11 @@ function processChildren(children: React.ReactNode, paragraphIndex: number): Rea
 function SentenceToken({
   sentence,
   paragraphIndex,
+  isTouchDevice,
 }: {
   sentence: { text: string; index: number };
   paragraphIndex: number;
+  isTouchDevice: boolean;
 }) {
   const {
     selectedSentences,
@@ -108,11 +216,56 @@ function SentenceToken({
   const isSelected = !!selectedSentences[key];
   const hasAnalysis = !!sentenceAnalyses[key];
 
+  // ── Long press detection (mobile: reliable fallback for inline spans) ──
+  const longPressTimer = useRef<ReturnType<typeof setTimeout>>();
+  const longPressFired = useRef(false);
+  const [longPressActive, setLongPressActive] = useState(false);
+
+  const clearLongPress = useCallback(() => {
+    if (longPressTimer.current) {
+      clearTimeout(longPressTimer.current);
+      longPressTimer.current = undefined;
+    }
+    setLongPressActive(false);
+  }, []);
+
+  const handleTouchStart = useCallback((e: React.TouchEvent) => {
+    if (!isTouchDevice) return;
+    longPressFired.current = false;
+    longPressTimer.current = setTimeout(() => {
+      longPressFired.current = true;
+      setLongPressActive(true);
+      try { navigator.vibrate?.(10); } catch { /* noop */ }
+      if (hasAnalysis) {
+        if (_onOpenFocusedAnalysis) {
+          _onOpenFocusedAnalysis('sentence', key);
+        } else {
+          triggerScrollToAnalysis(key, 'sentences');
+        }
+      } else {
+        toggleSentenceSelection(paragraphIndex, sentence.index, sentence.text);
+      }
+      setTimeout(() => setLongPressActive(false), 600);
+    }, 300);
+  }, [isTouchDevice, hasAnalysis, key, paragraphIndex, sentence, toggleSentenceSelection]);
+
+  const handleTouchEnd = useCallback(() => clearLongPress(), [clearLongPress]);
+  const handleTouchMove = useCallback(() => clearLongPress(), [clearLongPress]);
+
   const handleClick = useCallback(
     (e: React.MouseEvent) => {
       e.stopPropagation();
+      // If long press just fired, skip click
+      if (longPressFired.current) {
+        longPressFired.current = false;
+        return;
+      }
       if (hasAnalysis) {
-        triggerScrollToAnalysis(key, 'sentences');
+        if (_onOpenFocusedAnalysis) {
+          _onOpenFocusedAnalysis('sentence', key);
+        } else {
+          triggerScrollToAnalysis(key, 'sentences');
+        }
       } else {
         toggleSentenceSelection(paragraphIndex, sentence.index, sentence.text);
       }
@@ -123,16 +276,21 @@ function SentenceToken({
   const components = useMemo(
     () => ({
       p: ({ children, ...props }: any) => (
-        <span {...props}>{processChildren(children, paragraphIndex)}</span>
+        <span {...props}>
+          {processChildren(children, paragraphIndex, sentence.index, sentence.text, isTouchDevice)}
+        </span>
       ),
     }),
-    [paragraphIndex]
+    [paragraphIndex, sentence.index, sentence.text, isTouchDevice]
   );
 
   return (
     <span
-      className={`sentence-token ${isSelected ? 'sentence-token-selected' : ''} ${hasAnalysis && !isSelected ? 'sentence-token-has-analysis' : ''}`}
+      className={`sentence-token ${isSelected ? 'sentence-token-selected' : ''} ${hasAnalysis && !isSelected ? 'sentence-token-has-analysis' : ''} ${longPressActive ? 'long-press-active' : ''}`}
       onClick={handleClick}
+      onTouchStart={handleTouchStart}
+      onTouchEnd={handleTouchEnd}
+      onTouchMove={handleTouchMove}
       data-paragraph-index={paragraphIndex}
       data-sentence-index={sentence.index}
     >
@@ -147,6 +305,7 @@ export default function ParagraphBlock({
   paragraph,
   translation,
   isTranslating,
+  isTouchDevice = false,
 }: ParagraphBlockProps) {
   const { fontSize, fontFamily, lineHeight } = useReaderStore();
   const [showTranslation, setShowTranslation] = useState(false);
@@ -169,6 +328,7 @@ export default function ParagraphBlock({
             key={sentence.index}
             sentence={sentence}
             paragraphIndex={paragraph.index}
+            isTouchDevice={isTouchDevice}
           />
         ))}{' '}
       </p>

@@ -1,5 +1,7 @@
 """Pydantic schemas for word analysis API."""
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -20,6 +22,9 @@ class WordAnalysisRequest(BaseModel):
     entries: list[WordEntry] = Field(..., min_length=1)
     api_key: str | None = Field(default=None)
     document_id: str = Field(..., description="Document ID for persisting results")
+    provider: Literal["deepseek"] | None = Field(
+        default=None, description="AI provider: deepseek"
+    )
 
 
 class WordAnalysisResult(BaseModel):
@@ -32,6 +37,8 @@ class WordAnalysisResult(BaseModel):
     part_of_speech: str = ""
     definition: str = ""
     definition_zh: str = ""
+    collocations: list[str] = Field(default_factory=list)
+    example_sentence: str = ""
     cognates: list[dict] = Field(default_factory=list)
     synonyms_antonyms: dict = Field(default_factory=lambda: {"synonyms": [], "antonyms": []})
     base_form: str = ""

@@ -1,36 +1,71 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { flushSync } from 'react-dom';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { useDocumentStore } from '../../stores/documentStore';
 import { useReaderStore, WORD_PANEL_FONT_SIZE_MIN, WORD_PANEL_FONT_SIZE_MAX, BG_COLORS } from '../../stores/readerStore';
-import { deleteWordAnalysis, WordAnalysisResult } from '../../services/wordAnalysisApi';
-import { deleteSentenceAnalysis } from '../../services/sentenceAnalysisApi';
-import type { SentenceAnalysisResult, StructureItem } from '../../services/sentenceAnalysisApi';
+import { deleteWordAnalysis, deleteAllWordAnalyses, WordAnalysisResult } from '../../services/wordAnalysisApi';
+import { deleteSentenceAnalysis, deleteAllSentenceAnalyses } from '../../services/sentenceAnalysisApi';
+import type { SentenceAnalysisResult } from '../../services/sentenceAnalysisApi';
 import EmptyState from '../ui/EmptyState';
 import Button from '../ui/Button';
-
-// ── Structure color palette ──
-const STRUCTURE_COLORS = [
-  { bg: '#fdf3ef', border: '#e8b4a0' },
-  { bg: '#fdf8ed', border: '#e8d5a0' },
-  { bg: '#f0f7f1', border: '#a3d4a8' },
-  { bg: '#f5f0e8', border: '#d4c9b8' },
-  { bg: '#f3eef8', border: '#c4b8d4' },
-  { bg: '#eef6f3', border: '#a0c8bc' },
-  { bg: '#fef8ed', border: '#e8d08a' },
-  { bg: '#f1efe8', border: '#c4bfb0' },
-  { bg: '#eef2f8', border: '#a8b8d4' },
-  { bg: '#eff5ed', border: '#b0c8a5' },
-];
-
-function getStructureColor(index: number) {
-  return STRUCTURE_COLORS[index % STRUCTURE_COLORS.length];
-}
 
 // ── Module-level callback for reverse navigation ──
 let _scrollToAnalysis: ((key: string, tab: 'words' | 'sentences') => void) | null = null;
 
 export function triggerScrollToAnalysis(key: string, tab: 'words' | 'sentences') {
   _scrollToAnalysis?.(key, tab);
+}
+
+// ── Streaming Word Card (shows raw AI output as itʼs generated) ──────
+
+function StreamingWordCard({
+  word,
+  paragraphIndex,
+  rawText,
+}: {
+  word: string;
+  paragraphIndex: number;
+  rawText: string;
+}) {
+  const rawTextRef = useRef<HTMLDivElement>(null);
+
+  // Auto-scroll to bottom as text streams in
+  useEffect(() => {
+    if (rawTextRef.current) {
+      rawTextRef.current.scrollTop = rawTextRef.current.scrollHeight;
+    }
+  }, [rawText]);
+
+  return (
+    <div
+      className="bg-surface-card border border-primary/30 rounded-lg p-3.5 mb-3"
+      data-word-key={`${paragraphIndex}:${word.toLowerCase()}`}
+      data-paragraph-index={paragraphIndex}
+      style={{ boxShadow: '0 0 0 1px rgba(204,120,92,0.15)' }}
+    >
+      {/* Word header with streaming indicator */}
+      <div className="flex items-center gap-2 mb-2">
+        <span className="font-bold text-ink text-base font-reading">{word}</span>
+        <span className="inline-flex items-center gap-1 text-xs text-primary">
+          <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
+          AI 生成中...
+        </span>
+      </div>
+
+      {/* Raw AI output — monospace, scrollable, typewriter feel */}
+      <div
+        ref={rawTextRef}
+        className="bg-[#faf9f5] border border-hairline rounded-md p-2.5 max-h-[200px] overflow-y-auto"
+      >
+        <pre className="text-xs font-mono text-body-strong whitespace-pre-wrap break-words m-0 leading-relaxed">
+          {rawText || (
+            <span className="text-muted-soft animate-pulse">等待 AI 响应...</span>
+          )}
+        </pre>
+      </div>
+    </div>
+  );
 }
 
 // ── Word Card ──────────────────────────────────────────────────────
@@ -53,7 +88,9 @@ function WordCard({
     try {
       if (analysis.id) await deleteWordAnalysis(analysis.id);
       onDelete();
-    } catch { onDelete(); }
+    } catch {
+      // Keep card visible if API call fails — user can retry
+    }
     finally { setDeleting(false); setConfirming(false); }
   }, [analysis.id, onDelete]);
 
@@ -196,11 +233,148 @@ function WordCard({
           )}
         </div>
       )}
+
+      {/* Collocations */}
+      {analysis.collocations && analysis.collocations.length > 0 && (
+        <div className="mb-2">
+          <span className="text-muted text-xs block mb-1">常见搭配</span>
+          <div className="flex flex-wrap gap-1.5">
+            {analysis.collocations.map((c, i) => (
+              <span key={i} className="inline-flex items-center bg-[#eef4fa] border border-[#c8ddf0] rounded px-2 py-0.5 text-xs font-reading">
+                {c}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Example Sentence */}
+      {analysis.example_sentence && (
+        <div className="mb-2 pt-2 border-t border-hairline">
+          <span className="text-muted text-xs block mb-1">例句</span>
+          <p className="text-body leading-relaxed italic text-xs m-0 font-reading">
+            {analysis.example_sentence}
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Streaming Sentence Card (shows raw AI output as itʼs generated) ──
+
+function StreamingSentenceCard({
+  sentenceText,
+  paragraphIndex,
+  sentenceIndex,
+  rawText,
+}: {
+  sentenceText: string;
+  paragraphIndex: number;
+  sentenceIndex: number;
+  rawText: string;
+}) {
+  const rawTextRef = useRef<HTMLDivElement>(null);
+
+  // Auto-scroll to bottom as text streams in
+  useEffect(() => {
+    if (rawTextRef.current) {
+      rawTextRef.current.scrollTop = rawTextRef.current.scrollHeight;
+    }
+  }, [rawText]);
+
+  return (
+    <div
+      className="bg-surface-card border border-primary/30 rounded-lg p-3.5 mb-3"
+      data-sentence-key={`${paragraphIndex}:${sentenceIndex}`}
+      data-paragraph-index={paragraphIndex}
+      style={{ boxShadow: '0 0 0 1px rgba(204,120,92,0.15)' }}
+    >
+      {/* Sentence header with streaming indicator */}
+      <div className="flex items-center gap-2 mb-2">
+        <span className="font-semibold text-ink leading-snug text-sm line-clamp-2 font-reading">
+          {sentenceText}
+        </span>
+        <span className="inline-flex items-center gap-1 text-xs text-primary flex-shrink-0">
+          <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
+          AI 生成中...
+        </span>
+      </div>
+
+      {/* Raw AI output — monospace, scrollable, typewriter feel */}
+      <div
+        ref={rawTextRef}
+        className="bg-[#faf9f5] border border-hairline rounded-md p-2.5 max-h-[200px] overflow-y-auto"
+      >
+        <pre className="text-xs font-mono text-body-strong whitespace-pre-wrap break-words m-0 leading-relaxed">
+          {rawText || (
+            <span className="text-muted-soft animate-pulse">等待 AI 响应...</span>
+          )}
+        </pre>
+      </div>
     </div>
   );
 }
 
 // ── Sentence Card ──────────────────────────────────────────────────
+
+/** Render AI analysis content using react-markdown with styled section headers. */
+function SentenceContent({ content }: { content: string }) {
+  if (!content) return null;
+
+  return (
+    <div className="sentence-content text-body leading-relaxed text-sm font-chinese">
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          // Style bold headers (**原文**：, **主干**：, etc.) with colored labels
+          strong: ({ children, ...props }) => {
+            const text = String(children);
+            // Match section headers like "原文", "主干", "讲解", "译文"
+            const headerMatch = text.match(/^(.+?)[：:]\s*/);
+            if (headerMatch) {
+              const header = headerMatch[1].trim();
+              const after = text.slice(headerMatch[0].length);
+              const isCore = header.includes('主干');
+              const isExplain = header.includes('讲解');
+              return (
+                <span className="block mt-3 first:mt-0 mb-1.5">
+                  <span className={[
+                    'inline-block text-xs font-semibold px-2 py-0.5 rounded mr-1.5 align-middle',
+                    isCore ? 'bg-[#fdf3ef] text-[#b85c3a] border border-[#e8b4a0]' :
+                    isExplain ? 'bg-[#f0f7f1] text-[#4a7c59] border border-[#a3d4a8]' :
+                    'bg-[#eef2f8] text-[#5a6d8a] border border-[#a8b8d4]',
+                  ].join(' ')}
+                  >
+                    {header}
+                  </span>
+                  {after && <span className="align-middle">{after}</span>}
+                </span>
+              );
+            }
+            return <strong {...props}>{children}</strong>;
+          },
+          // Style paragraphs
+          p: ({ children, ...props }) => (
+            <p className="m-0 mb-1 last:mb-0" {...props}>{children}</p>
+          ),
+          // Style list items
+          li: ({ children, ...props }) => (
+            <li className="mb-0.5 last:mb-0 text-body" {...props}>{children}</li>
+          ),
+          ul: ({ children, ...props }) => (
+            <ul className="m-0 mb-1 pl-4 list-disc" {...props}>{children}</ul>
+          ),
+          ol: ({ children, ...props }) => (
+            <ol className="m-0 mb-1 pl-4 list-decimal" {...props}>{children}</ol>
+          ),
+        }}
+      >
+        {content}
+      </ReactMarkdown>
+    </div>
+  );
+}
 
 function SentenceCard({
   analysis,
@@ -219,7 +393,9 @@ function SentenceCard({
     try {
       if (analysis.id) await deleteSentenceAnalysis(analysis.id);
       onDelete();
-    } catch { onDelete(); }
+    } catch {
+      // Keep card visible if API call fails — user can retry
+    }
     finally { setDeleting(false); setConfirming(false); }
   }, [analysis.id, onDelete]);
 
@@ -268,55 +444,8 @@ function SentenceCard({
         )}
       </div>
 
-      {/* Structure */}
-      {analysis.structure && analysis.structure.length > 0 && (
-        <div className="mb-3">
-          <span className="text-muted text-xs block mb-1.5">句子结构</span>
-          <div className="flex flex-wrap gap-0.5 mb-2 leading-relaxed">
-            {analysis.structure.map((seg: StructureItem, i: number) => {
-              const color = getStructureColor(i);
-              return (
-                <span
-                  key={i}
-                  className="sentence-structure-block"
-                  style={{ backgroundColor: color.bg, borderColor: color.border }}
-                >
-                  <span className="sentence-structure-text">{seg.text}</span>
-                  <span className="sentence-structure-label" style={{ color: color.border }}>
-                    {seg.label}
-                  </span>
-                </span>
-              );
-            })}
-          </div>
-          <div className="space-y-1.5">
-            {analysis.structure.map((seg: StructureItem, i: number) => {
-              const color = getStructureColor(i);
-              return (
-                <div key={i} className="flex gap-1.5 text-xs">
-                  <span
-                    className="inline-block px-1.5 py-0 rounded font-medium flex-shrink-0"
-                    style={{ backgroundColor: color.bg, color: '#555', border: `1px solid ${color.border}` }}
-                  >
-                    {seg.label}
-                  </span>
-                  <span className="text-body">{seg.explanation}</span>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* Idiomatic translation */}
-      {analysis.idiomatic_translation && (
-        <div className="mt-2 pt-2 border-t border-hairline">
-          <span className="text-muted text-xs block mb-1">地道翻译</span>
-          <p className="text-body leading-relaxed italic text-sm m-0 font-chinese">
-            {analysis.idiomatic_translation}
-          </p>
-        </div>
-      )}
+      {/* Content: 原文/主干/讲解/译文 */}
+      <SentenceContent content={analysis.content} />
     </div>
   );
 }
@@ -325,6 +454,7 @@ function SentenceCard({
 
 export default function StudyPanel() {
   const {
+    documentId,
     wordAnalyses,
     sentenceAnalyses,
     removeWordAnalysis,
@@ -335,6 +465,9 @@ export default function StudyPanel() {
     isAnalyzingSentences,
     analysisError,
     sentenceAnalysisError,
+    analysisProgress,
+    streamingTexts,
+    sentenceStreamingTexts,
     selectedWords,
     selectedSentences,
   } = useDocumentStore();
@@ -407,16 +540,47 @@ export default function StudyPanel() {
     [removeSentenceAnalysis]
   );
 
-  const handleClearCurrent = useCallback(() => {
-    if (activeTab === 'words') clearWordAnalyses();
-    else clearSentenceAnalyses();
+  const [clearError, setClearError] = useState<string | null>(null);
+
+  const handleClearCurrent = useCallback(async () => {
+    if (!documentId) {
+      setClearError('文档 ID 不存在，无法清空');
+      setClearConfirming(false);
+      return;
+    }
+    setClearError(null);
+    try {
+      if (activeTab === 'words') {
+        await deleteAllWordAnalyses(documentId);
+        clearWordAnalyses();
+      } else {
+        await deleteAllSentenceAnalyses(documentId);
+        clearSentenceAnalyses();
+      }
+    } catch (e: any) {
+      const status = e?.response?.status;
+      const detail = e?.response?.data?.detail || '';
+      const message = e?.message || '';
+      console.error('清空解析记录失败:', { status, detail, message, documentId, url: e?.config?.url });
+      // Build a meaningful error message
+      if (status === 404) {
+        setClearError(`删除接口未找到 (404) — 请确认后端服务已启动且路由正确。文档ID: ${documentId.slice(0, 8)}...`);
+      } else if (status) {
+        setClearError(`清空失败 (HTTP ${status}): ${detail || message}`);
+      } else if (message) {
+        setClearError(`网络错误: ${message}`);
+      } else {
+        setClearError('清空失败，请稍后重试');
+      }
+      // Do NOT clear locally — let user retry after the API succeeds
+    }
     setClearConfirming(false);
-  }, [activeTab, clearWordAnalyses, clearSentenceAnalyses]);
+  }, [activeTab, documentId, clearWordAnalyses, clearSentenceAnalyses]);
 
   return (
     <div className="flex-1 min-h-0 flex flex-col border-l border-hairline transition-colors duration-300" style={{ backgroundColor: bgColorValue }}>
-      {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-hairline flex-shrink-0">
+      {/* Header — hidden on mobile (StudySheet provides its own header) */}
+      <div className="hidden md:flex items-center justify-between px-4 py-3 border-b border-hairline flex-shrink-0">
         <h3 className="text-sm font-display font-medium text-ink m-0">解析面板</h3>
         <div className="flex items-center gap-1">
           {/* Font size controls */}
@@ -468,8 +632,29 @@ export default function StudyPanel() {
         </div>
       </div>
 
-      {/* Progress indicators */}
-      {isAnalyzing && pendingWordCount > 0 && (
+      {/* Progress indicator with live count */}
+      {isAnalyzing && analysisProgress && (
+        <div className="px-4 py-2 bg-surface-card border-b border-hairline flex-shrink-0">
+          <div className="flex items-center gap-2 mb-1.5">
+            <svg className="animate-spin" width="14" height="14" viewBox="0 0 24 24" fill="none">
+              <circle cx="12" cy="12" r="10" stroke="var(--primary)" strokeWidth="4" opacity="0.25" />
+              <path d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" fill="var(--primary)" opacity="0.75" />
+            </svg>
+            <span className="text-xs text-body">
+              已完成 {analysisProgress.completed}/{analysisProgress.total} 个单词
+            </span>
+          </div>
+          {/* Mini progress bar */}
+          <div className="w-full h-1 bg-surface-cream-strong rounded-full overflow-hidden">
+            <div
+              className="h-full bg-primary rounded-full transition-all duration-300 ease-out"
+              style={{ width: `${(analysisProgress.completed / analysisProgress.total) * 100}%` }}
+            />
+          </div>
+        </div>
+      )}
+      {/* Fallback: old-style indicator when progress tracking not available */}
+      {isAnalyzing && !analysisProgress && pendingWordCount > 0 && (
         <div className="px-4 py-2 bg-surface-card border-b border-hairline flex items-center gap-2 flex-shrink-0">
           <svg className="animate-spin" width="14" height="14" viewBox="0 0 24 24" fill="none">
             <circle cx="12" cy="12" r="10" stroke="var(--primary)" strokeWidth="4" opacity="0.25" />
@@ -532,23 +717,49 @@ export default function StudyPanel() {
               </div>
             )}
 
+            {/* Clear error */}
+            {clearError && activeTab === 'words' && (
+              <div className="mb-3 p-3 bg-error/10 border border-error/20 rounded-md text-sm text-error flex items-center justify-between">
+                <span>{clearError}</span>
+                <button
+                  className="text-xs text-error underline hover:no-underline ml-2 flex-shrink-0"
+                  onClick={() => setClearError(null)}
+                >
+                  关闭
+                </button>
+              </div>
+            )}
+
             {/* Empty */}
-            {wordList.length === 0 && !isAnalyzing && !analysisError && (
+            {wordList.length === 0 && !isAnalyzing && !analysisError && !clearError && (
               <EmptyState
                 title="选中原文单词后点击解析"
                 description="点击文章中的任意单词，然后点击底部「解析」按钮获取详细释义"
               />
             )}
 
-            {/* Word cards */}
-            {wordList.map((analysis) => (
-              <WordCard
-                key={`${analysis.paragraph_index}:${analysis.word}`}
-                analysis={analysis}
-                onScrollToParagraph={handleScrollToParagraph}
-                onDelete={() => handleDeleteWord(analysis)}
-              />
-            ))}
+            {/* Word cards — streaming text while pending, full card when done */}
+            {wordList.map((analysis) => {
+              const key = `${analysis.paragraph_index}:${analysis.word.toLowerCase()}`;
+              if (analysis._pending) {
+                return (
+                  <StreamingWordCard
+                    key={key}
+                    word={analysis.word}
+                    paragraphIndex={analysis.paragraph_index}
+                    rawText={streamingTexts[key] || ''}
+                  />
+                );
+              }
+              return (
+                <WordCard
+                  key={key}
+                  analysis={analysis}
+                  onScrollToParagraph={handleScrollToParagraph}
+                  onDelete={() => handleDeleteWord(analysis)}
+                />
+              );
+            })}
           </>
         )}
 
@@ -568,23 +779,50 @@ export default function StudyPanel() {
               </div>
             )}
 
+            {/* Clear error */}
+            {clearError && activeTab === 'sentences' && (
+              <div className="mb-3 p-3 bg-error/10 border border-error/20 rounded-md text-sm text-error flex items-center justify-between">
+                <span>{clearError}</span>
+                <button
+                  className="text-xs text-error underline hover:no-underline ml-2 flex-shrink-0"
+                  onClick={() => setClearError(null)}
+                >
+                  关闭
+                </button>
+              </div>
+            )}
+
             {/* Empty */}
-            {sentenceList.length === 0 && !isAnalyzingSentences && !sentenceAnalysisError && (
+            {sentenceList.length === 0 && !isAnalyzingSentences && !sentenceAnalysisError && !clearError && (
               <EmptyState
                 title="选中原文句子后点击解析"
                 description="点击文章中的任意句子，然后点击底部「解析句子」按钮获取结构拆解和翻译"
               />
             )}
 
-            {/* Sentence cards */}
-            {sentenceList.map((analysis) => (
-              <SentenceCard
-                key={`${analysis.paragraph_index}:${analysis.sentence_index}`}
-                analysis={analysis}
-                onScrollToParagraph={handleScrollToParagraph}
-                onDelete={() => handleDeleteSentence(analysis)}
-              />
-            ))}
+            {/* Sentence cards — streaming text while pending, full card when done */}
+            {sentenceList.map((analysis) => {
+              const key = `${analysis.paragraph_index}:${analysis.sentence_index}`;
+              if (analysis._pending) {
+                return (
+                  <StreamingSentenceCard
+                    key={key}
+                    sentenceText={analysis.sentence_text}
+                    paragraphIndex={analysis.paragraph_index}
+                    sentenceIndex={analysis.sentence_index}
+                    rawText={sentenceStreamingTexts[key] || ''}
+                  />
+                );
+              }
+              return (
+                <SentenceCard
+                  key={key}
+                  analysis={analysis}
+                  onScrollToParagraph={handleScrollToParagraph}
+                  onDelete={() => handleDeleteSentence(analysis)}
+                />
+              );
+            })}
           </>
         )}
       </div>

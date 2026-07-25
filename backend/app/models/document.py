@@ -2,11 +2,15 @@
 
 import uuid
 from datetime import datetime
+from typing import TYPE_CHECKING
 
-from sqlalchemy import JSON, String, Integer, Text, DateTime, Uuid, func
+from sqlalchemy import JSON, String, Integer, Text, DateTime, Uuid, ForeignKey, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
+
+if TYPE_CHECKING:
+    from app.models.user import User
 
 
 class Document(Base):
@@ -28,6 +32,11 @@ class Document(Base):
     page_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     selected_pages: Mapped[list[int] | None] = mapped_column(JSON, nullable=True)
 
+    # User ownership
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now()
     )
@@ -36,6 +45,7 @@ class Document(Base):
     )
 
     # Relationships
+    owner: Mapped["User"] = relationship("User", back_populates="documents")
     paragraphs: Mapped[list["Paragraph"]] = relationship(
         "Paragraph", back_populates="document", cascade="all, delete-orphan"
     )

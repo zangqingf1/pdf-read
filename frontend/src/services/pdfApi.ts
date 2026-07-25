@@ -30,6 +30,8 @@ export interface WordAnalysisItem {
   part_of_speech: string;
   definition: string;
   definition_zh: string;
+  collocations: string[];
+  example_sentence: string;
   cognates: Array<{ word: string; part_of_speech: string }>;
   synonyms_antonyms: {
     synonyms: Array<{ word: string; part_of_speech: string }>;
@@ -132,8 +134,39 @@ export function getPDFFileUrl(taskId: string): string {
   return `/api/v1/pdf/file/${taskId}`;
 }
 
+/**
+ * Fetch PDF file as a Blob through the axios instance (includes auth header).
+ * Use this when react-pdf needs to load a PDF that requires authentication.
+ */
+export async function fetchPDFBlob(taskId: string): Promise<Blob> {
+  const { data } = await api.get(`/pdf/file/${taskId}`, {
+    responseType: 'blob',
+  });
+  return data;
+}
+
 export async function deleteDocument(taskId: string): Promise<void> {
   await api.delete(`/pdf/documents/${taskId}`);
+}
+
+export interface BatchDeleteRequest {
+  document_ids: string[];
+}
+
+export interface BatchDeleteResponse {
+  deleted_count: number;
+  failed_ids: string[];
+  message: string;
+}
+
+export async function batchDeleteDocuments(
+  documentIds: string[]
+): Promise<BatchDeleteResponse> {
+  const { data } = await api.post<BatchDeleteResponse>(
+    '/pdf/documents/batch-delete',
+    { document_ids: documentIds }
+  );
+  return data;
 }
 
 export async function retryDocument(taskId: string): Promise<PDFUploadResponse> {

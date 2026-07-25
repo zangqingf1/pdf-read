@@ -1,6 +1,6 @@
 import { useEffect, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { useReaderStore, BG_COLORS, FONT_FAMILIES, LINE_HEIGHTS } from '../../stores/readerStore';
+import { useReaderStore, BG_COLORS, FONT_FAMILIES, LINE_HEIGHTS, FONT_SIZE_MIN, FONT_SIZE_MAX, WORD_PANEL_FONT_SIZE_MIN, WORD_PANEL_FONT_SIZE_MAX } from '../../stores/readerStore';
 
 interface TypographyDrawerProps {
   open: boolean;
@@ -8,7 +8,12 @@ interface TypographyDrawerProps {
 }
 
 export default function TypographyDrawer({ open, onClose }: TypographyDrawerProps) {
-  const { bgColor, fontFamily, lineHeight, setBgColor, setFontFamily, setLineHeight } = useReaderStore();
+  const {
+    bgColor, fontFamily, lineHeight,
+    fontSize, increaseFontSize, decreaseFontSize,
+    wordPanelFontSize, increaseWordPanelFontSize, decreaseWordPanelFontSize,
+    setBgColor, setFontFamily, setLineHeight,
+  } = useReaderStore();
   const overlayRef = useRef<HTMLDivElement>(null);
 
   const handleKeyDown = useCallback(
@@ -58,6 +63,50 @@ export default function TypographyDrawer({ open, onClose }: TypographyDrawerProp
 
         {/* Body */}
         <div className="flex-1 overflow-y-auto px-5 py-5 space-y-6">
+          {/* ── Text Font Size ── */}
+          <section>
+            <h4 className="text-xs font-medium text-muted-soft uppercase tracking-wide mb-3">文本字号</h4>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={decreaseFontSize}
+                disabled={fontSize <= FONT_SIZE_MIN}
+                className="w-10 h-10 flex items-center justify-center rounded-lg border border-hairline hover:bg-surface-card disabled:opacity-30 transition-colors touch-area"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M5 12h14" /></svg>
+              </button>
+              <span className="text-lg font-medium text-ink min-w-[48px] text-center tabular-nums">{fontSize}px</span>
+              <button
+                onClick={increaseFontSize}
+                disabled={fontSize >= FONT_SIZE_MAX}
+                className="w-10 h-10 flex items-center justify-center rounded-lg border border-hairline hover:bg-surface-card disabled:opacity-30 transition-colors touch-area"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 5v14M5 12h14" /></svg>
+              </button>
+            </div>
+          </section>
+
+          {/* ── Analysis Font Size ── */}
+          <section>
+            <h4 className="text-xs font-medium text-muted-soft uppercase tracking-wide mb-3">解析字号</h4>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={decreaseWordPanelFontSize}
+                disabled={wordPanelFontSize <= WORD_PANEL_FONT_SIZE_MIN}
+                className="w-10 h-10 flex items-center justify-center rounded-lg border border-hairline hover:bg-surface-card disabled:opacity-30 transition-colors touch-area"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M5 12h14" /></svg>
+              </button>
+              <span className="text-lg font-medium text-ink min-w-[48px] text-center tabular-nums">{wordPanelFontSize}px</span>
+              <button
+                onClick={increaseWordPanelFontSize}
+                disabled={wordPanelFontSize >= WORD_PANEL_FONT_SIZE_MAX}
+                className="w-10 h-10 flex items-center justify-center rounded-lg border border-hairline hover:bg-surface-card disabled:opacity-30 transition-colors touch-area"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 5v14M5 12h14" /></svg>
+              </button>
+            </div>
+          </section>
+
           {/* ── Background Color ── */}
           <section>
             <h4 className="text-xs font-medium text-muted-soft uppercase tracking-wide mb-3">背景色</h4>

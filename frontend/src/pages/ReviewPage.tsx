@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { getPDFResult, updateParagraphs, deleteParagraph, mergeParagraphs, reorderParagraphs } from '../services/pdfApi';
 import { useSplitPane } from '../hooks/useSplitPane';
+import { useResponsiveBreakpoint } from '../hooks/useResponsiveBreakpoint';
 import { useUndoRedo } from '../hooks/useUndoRedo';
 import ReviewHeader from '../components/review/ReviewHeader';
 import PDFViewerPanel from '../components/review/PDFViewerPanel';
@@ -49,8 +50,10 @@ export default function ReviewPage() {
   const latestDirtySetRef = useRef<Set<number>>(new Set());
   const savedOrderRef = useRef<string[]>([]);
 
-  // ── Split pane ──
-  const { leftWidth, isDragging, handleDividerMouseDown } = useSplitPane(0.60);
+  // ── Split pane / mobile tab ──
+  const { leftWidth, isDragging, handleDividerMouseDown, handleDividerTouchStart } = useSplitPane(0.60);
+  const { isMobile } = useResponsiveBreakpoint();
+  const [mobileTab, setMobileTab] = useState<'pdf' | 'editor'>('pdf');
 
   // ── Load document ──
   useEffect(() => {
@@ -518,43 +521,92 @@ export default function ReviewPage() {
         onRedo={handleRedo}
       />
 
-      {/* Main content: split pane */}
-      <div
-        className="flex flex-1 overflow-hidden"
-        style={{
-          cursor: isDragging ? 'col-resize' : undefined,
-          userSelect: isDragging ? 'none' : undefined,
-        }}
-      >
-        {/* Left: PDF viewer */}
-        <div className="h-full flex-shrink-0" style={{ width: leftWidth }}>
-          {id && <PDFViewerPanel taskId={id} width={leftWidth} selectedPages={selectedPages} />}
-        </div>
+      {/* Main content */}
+      {isMobile ? (
+        /* ── Mobile: tab toggle layout ── */
+        <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+          {/* Tab bar */}
+          <div className="flex border-b border-hairline bg-canvas flex-shrink-0">
+            <button
+              onClick={() => setMobileTab('pdf')}
+              className={[
+                'flex-1 py-2.5 text-sm font-medium text-center transition-colors border-b-2',
+                mobileTab === 'pdf'
+                  ? 'border-primary text-primary'
+                  : 'border-transparent text-muted hover:text-body',
+              ].join(' ')}
+            >
+              PDF 预览
+            </button>
+            <button
+              onClick={() => setMobileTab('editor')}
+              className={[
+                'flex-1 py-2.5 text-sm font-medium text-center transition-colors border-b-2',
+                mobileTab === 'editor'
+                  ? 'border-primary text-primary'
+                  : 'border-transparent text-muted hover:text-body',
+              ].join(' ')}
+            >
+              编辑段落
+            </button>
+          </div>
 
-        {/* Divider */}
+          {/* Tab content */}
+          <div className="flex-1 min-h-0 overflow-hidden">
+            {mobileTab === 'pdf' ? (
+              id && <PDFViewerPanel taskId={id} width={window.innerWidth} selectedPages={selectedPages} />
+            ) : (
+              <EditableParagraphPanel
+                paragraphs={paragraphs}
+                dirtySet={dirtySet}
+                onParagraphChange={handleParagraphChange}
+                onDelete={handleDelete}
+                onMergeDown={handleMergeDown}
+                onReorder={handleReorder}
+              />
+            )}
+          </div>
+        </div>
+      ) : (
+        /* ── Desktop: split pane layout ── */
         <div
-          onMouseDown={handleDividerMouseDown}
-          className="w-[6px] cursor-col-resize flex-shrink-0 flex items-center justify-center transition-colors"
-          style={{ background: isDragging ? 'var(--primary)' : 'var(--hairline)' }}
+          className="flex flex-1 overflow-hidden"
+          style={{
+            cursor: isDragging ? 'col-resize' : undefined,
+            userSelect: isDragging ? 'none' : undefined,
+          }}
         >
-          <div
-            className="w-0.5 h-10 rounded-sm"
-            style={{ background: isDragging ? '#fff' : '#c4bfb0' }}
-          />
-        </div>
+          {/* Left: PDF viewer */}
+          <div className="h-full flex-shrink-0" style={{ width: leftWidth }}>
+            {id && <PDFViewerPanel taskId={id} width={leftWidth} selectedPages={selectedPages} />}
+          </div>
 
-        {/* Right: editable paragraphs */}
-        <div className="flex-1 h-full overflow-hidden">
-          <EditableParagraphPanel
-            paragraphs={paragraphs}
-            dirtySet={dirtySet}
-            onParagraphChange={handleParagraphChange}
-            onDelete={handleDelete}
-            onMergeDown={handleMergeDown}
-            onReorder={handleReorder}
-          />
+          {/* Divider */}
+          <div
+            onMouseDown={handleDividerMouseDown}
+            onTouchStart={handleDividerTouchStart}
+            className="w-[6px] cursor-col-resize flex-shrink-0 flex items-center justify-center transition-colors touch-action-none"
+            style={{ background: isDragging ? 'var(--primary)' : 'var(--hairline)' }}
+          >
+            <div
+              className="w-0.5 h-10 rounded-sm"
+              style={{ background: isDragging ? '#fff' : '#c4bfb0' }}
+            />
+          </div>
+
+          {/* Right: editable paragraphs */}
+          <div className="flex-1 h-full overflow-hidden">
+            <EditableParagraphPanel
+              paragraphs={paragraphs}
+              dirtySet={dirtySet}
+              onParagraphChange={handleParagraphChange}
+              onDelete={handleDelete}
+              onMergeDown={handleMergeDown}
+              onReorder={handleReorder}
+            />
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Confirm dialog */}
       <Modal

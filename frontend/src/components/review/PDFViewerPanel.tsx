@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Document, Page, pdfjs } from 'react-pdf';
-import { getPDFFileUrl } from '../../services/pdfApi';
+import { fetchPDFBlob } from '../../services/pdfApi';
 
 // Set PDF.js worker
 pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
@@ -14,8 +14,35 @@ interface PDFViewerPanelProps {
 export default function PDFViewerPanel({ taskId, width, selectedPages }: PDFViewerPanelProps) {
   const [numPages, setNumPages] = useState<number | null>(null);
   const [loadError, setLoadError] = useState(false);
+  const [pdfBlobUrl, setPdfBlobUrl] = useState<string | null>(null);
 
-  const fileUrl = getPDFFileUrl(taskId);
+  // Fetch PDF as blob through axios (so auth header is included)
+  useEffect(() => {
+    let cancelled = false;
+    fetchPDFBlob(taskId)
+      .then((blob) => {
+        if (!cancelled) {
+          setPdfBlobUrl(URL.createObjectURL(blob));
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setLoadError(true);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [taskId]);
+
+  // Cleanup blob URL on unmount
+  useEffect(() => {
+    const url = pdfBlobUrl;
+    return () => {
+      if (url) URL.revokeObjectURL(url);
+    };
+  }, [pdfBlobUrl]);
+
   const pageWidth = Math.max(200, width - 32);
 
   const pagesToRender: number[] = selectedPages && selectedPages.length > 0
@@ -34,7 +61,7 @@ export default function PDFViewerPanel({ taskId, width, selectedPages }: PDFView
         </div>
       ) : (
         <Document
-          file={fileUrl}
+          file={pdfBlobUrl}
           onLoadSuccess={({ numPages: n }) => setNumPages(n)}
           onLoadError={() => setLoadError(true)}
           loading={

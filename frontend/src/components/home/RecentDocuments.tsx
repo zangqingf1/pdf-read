@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { listDocuments, deleteDocument, retryDocument, type DocumentListItem } from '../../services/pdfApi';
+import { listDocuments, deleteDocument, retryDocument, batchDeleteDocuments, type DocumentListItem } from '../../services/pdfApi';
 import dayjs from 'dayjs';
 import Button from '../ui/Button';
 import Badge from '../ui/Badge';
@@ -31,6 +31,12 @@ export default function RecentDocuments({ refreshKey = 0, sidebar = false }: Rec
   const [loading, setLoading] = useState(false);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+
+  // Batch selection
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [batchDeleting, setBatchDeleting] = useState(false);
+
   const navigate = useNavigate();
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -85,6 +91,44 @@ export default function RecentDocuments({ refreshKey = 0, sidebar = false }: Rec
     } finally { setActionLoading(null); }
   };
 
+  // ── Batch selection ──
+
+  const toggleSelect = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedIds.size === documents.length && documents.length > 0) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(documents.map((d) => d.id)));
+    }
+  };
+
+  const exitSelectMode = () => {
+    setSelectMode(false);
+    setSelectedIds(new Set());
+  };
+
+  const handleBatchDelete = async () => {
+    if (selectedIds.size === 0) return;
+    setBatchDeleting(true);
+    try {
+      const result = await batchDeleteDocuments(Array.from(selectedIds));
+      toastFn?.(result.message);
+      exitSelectMode();
+      await fetchDocuments();
+    } catch (err: any) {
+      toastFn?.(err?.response?.data?.detail || '批量删除失败');
+    } finally {
+      setBatchDeleting(false);
+    }
+  };
+
   if (loading && documents.length === 0) {
     return (
       <div className={sidebar ? 'flex items-center justify-center py-8' : 'text-center py-12'}>
@@ -116,7 +160,60 @@ export default function RecentDocuments({ refreshKey = 0, sidebar = false }: Rec
   return (
     <div>
       {!sidebar && (
-        <h3 className="text-lg font-display font-medium text-ink mb-4">最近阅读</h3>
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-display font-medium text-ink">最近阅读</h3>
+          {documents.length > 0 && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => { setSelectMode(!selectMode); setSelectedIds(new Set()); }}
+            >
+              {selectMode ? '取消' : '批量管理'}
+            </Button>
+          )}
+        </div>
+      )}
+
+      {/* Batch management for sidebar: toggle entry */}
+      {sidebar && documents.length > 0 && !selectMode && (
+        <div className="px-3 mb-1">
+          <button
+            className="text-[11px] text-muted-soft hover:text-primary transition-colors"
+            onClick={() => setSelectMode(true)}
+          >
+            批量管理
+          </button>
+        </div>
+      )}
+
+      {/* Batch action bar */}
+      {selectMode && selectedIds.size > 0 && (
+        <div className={`flex items-center gap-2 mb-3 animate-fade-in ${sidebar ? 'px-3' : ''}`}>
+          <span className="text-xs text-muted">
+            已选 {selectedIds.size} 项
+          </span>
+          <Button
+            variant="danger"
+            size="sm"
+            loading={batchDeleting}
+            onClick={handleBatchDelete}
+          >
+            删除选中
+          </Button>
+          <Button variant="ghost" size="sm" onClick={exitSelectMode}>
+            取消
+          </Button>
+        </div>
+      )}
+
+      {/* Empty selection bar (show when selectMode is on but nothing selected) */}
+      {selectMode && selectedIds.size === 0 && (
+        <div className={`flex items-center gap-2 mb-3 ${sidebar ? 'px-3' : ''}`}>
+          <span className="text-xs text-muted">点击文档进行选择</span>
+          <Button variant="ghost" size="sm" onClick={exitSelectMode}>
+            取消
+          </Button>
+        </div>
       )}
 
       <div className={sidebar ? 'space-y-0.5' : 'space-y-1'}>
@@ -130,6 +227,7 @@ export default function RecentDocuments({ refreshKey = 0, sidebar = false }: Rec
             <div
               key={doc.id}
               onClick={() => {
+                if (selectMode) { toggleSelect(doc.id); return; }
                 if (isCompleted) navigate(`/document/${doc.id}`);
                 else if (sidebar && isAwaitingSelection) navigate(`/?resume=${doc.id}`);
                 else if (sidebar && isFailed) handleRetry(doc.id);
@@ -137,9 +235,22 @@ export default function RecentDocuments({ refreshKey = 0, sidebar = false }: Rec
               className={[
                 'group flex items-center gap-3 rounded-lg transition-colors',
                 sidebar ? 'px-3 py-2' : 'px-4 py-3',
-                (isCompleted || (sidebar && (isAwaitingSelection || isFailed))) ? 'cursor-pointer hover:bg-surface-card' : '',
+                selectMode ? 'cursor-pointer' : '',
+                selectedIds.has(doc.id) ? 'bg-primary/10' : '',
+                (!selectMode && (isCompleted || (sidebar && (isAwaitingSelection || isFailed)))) ? 'cursor-pointer hover:bg-surface-card' : '',
               ].join(' ')}
             >
+              {/* Checkbox in select mode */}
+              {selectMode && (
+                <input
+                  type="checkbox"
+                  className="w-5 h-5 rounded border-hairline accent-primary cursor-pointer flex-shrink-0"
+                  checked={selectedIds.has(doc.id)}
+                  onChange={() => toggleSelect(doc.id)}
+                  onClick={(e) => e.stopPropagation()}
+                />
+              )}
+
               {/* PDF icon */}
               <svg width={sidebar ? 18 : 22} height={sidebar ? 18 : 22} viewBox="0 0 24 24" fill="none" stroke="#c64545" strokeWidth="1.5" className="flex-shrink-0">
                 <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
@@ -184,7 +295,8 @@ export default function RecentDocuments({ refreshKey = 0, sidebar = false }: Rec
                 </div>
               </div>
 
-              {/* Actions */}
+              {/* Actions (hidden in select mode) */}
+              {!selectMode && (
               <div className="flex items-center gap-1 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
                 {/* Sidebar: compact actions */}
                 {sidebar && (
@@ -207,7 +319,7 @@ export default function RecentDocuments({ refreshKey = 0, sidebar = false }: Rec
                       </div>
                     ) : (
                       <button
-                        className="w-5 h-5 flex items-center justify-center rounded text-muted-soft hover:text-error hover:bg-error/5 opacity-0 group-hover:opacity-100 transition-all"
+                        className="w-5 h-5 flex items-center justify-center rounded text-muted-soft hover:text-error hover:bg-error/5 md:opacity-0 md:group-hover:opacity-100 transition-all"
                         onClick={() => setConfirmDelete(doc.id)}
                         title="删除"
                       >
@@ -257,7 +369,7 @@ export default function RecentDocuments({ refreshKey = 0, sidebar = false }: Rec
                       </div>
                     ) : (
                       <button
-                        className="w-7 h-7 flex items-center justify-center rounded-md text-muted-soft hover:text-error hover:bg-error/5 opacity-0 group-hover:opacity-100 transition-all"
+                        className="w-7 h-7 flex items-center justify-center rounded-md text-muted-soft hover:text-error hover:bg-error/5 md:opacity-0 md:group-hover:opacity-100 transition-all"
                         onClick={() => setConfirmDelete(doc.id)}
                         title="删除"
                       >
@@ -269,6 +381,7 @@ export default function RecentDocuments({ refreshKey = 0, sidebar = false }: Rec
                   </>
                 )}
               </div>
+              )}
             </div>
           );
         })}

@@ -51,12 +51,12 @@ export default function Modal({
     <div
       ref={overlayRef}
       onClick={handleOverlayClick}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 animate-fade-in"
+      className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/30 animate-fade-in"
     >
       <div
         ref={contentRef}
-        className="bg-canvas rounded-lg shadow-modal animate-slide-up max-h-[85vh] flex flex-col"
-        style={{ width: `min(${width}, calc(100vw - 48px))` }}
+        className="bg-canvas rounded-t-xl md:rounded-lg shadow-modal animate-slide-up max-h-[90vh] md:max-h-[85vh] flex flex-col w-full md:w-auto"
+        style={{ width: typeof window !== 'undefined' && window.innerWidth < 768 ? '100%' : `min(${width}, calc(100vw - 48px))` }}
       >
         {/* Header */}
         {(title || closable) && (

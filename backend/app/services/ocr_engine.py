@@ -248,7 +248,7 @@ class OCREngine:
 
         Args:
             pdf_path: Local path to the PDF file.
-            api_token: MinerU API token (overrides settings.MINERU_API_TOKEN).
+            api_token: MinerU API token (required — from frontend localStorage).
             selected_pages: Optional list of 1-based page numbers to include.
                 If None, all pages are included.
 
@@ -260,10 +260,10 @@ class OCREngine:
             FileNotFoundError: If the PDF file doesn't exist.
             ValueError: If no API token is configured.
         """
-        token = (api_token or settings.MINERU_API_TOKEN).strip()
+        token = (api_token or "").strip()
         if not token:
             raise ValueError(
-                "MinerU API Token 未配置。请在 .env 中设置 MINERU_API_TOKEN 或在页面右上角配置。"
+                "MinerU API Token 未配置。请点击页面右上角🔑图标设置。"
             )
 
         if not os.path.exists(pdf_path):

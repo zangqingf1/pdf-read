@@ -37,6 +37,8 @@ class WordAnalysisItem(BaseModel):
     part_of_speech: str = ""
     definition: str = ""
     definition_zh: str = ""
+    collocations: list[str] = Field(default_factory=list)
+    example_sentence: str = ""
     cognates: list[dict] = Field(default_factory=list)
     synonyms_antonyms: dict = Field(default_factory=lambda: {"synonyms": [], "antonyms": []})
     base_form: str = ""
@@ -124,4 +126,14 @@ class ReorderParagraphsRequest(BaseModel):
 
 class ReorderParagraphsResponse(BaseModel):
     document_id: str
+    message: str
+
+
+class BatchDeleteRequest(BaseModel):
+    document_ids: list[str] = Field(..., min_length=1, max_length=100)
+
+
+class BatchDeleteResponse(BaseModel):
+    deleted_count: int
+    failed_ids: list[str] = Field(default_factory=list)
     message: str
