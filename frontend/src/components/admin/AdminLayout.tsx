@@ -39,6 +39,18 @@ const NAV_ITEMS = [
       </svg>
     ),
   },
+  {
+    to: '/admin/prompts',
+    label: 'Prompt 管理',
+    icon: (
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <polygon points="12 2 22 8.5 22 15.5 12 22 2 15.5 2 8.5 12 2" />
+        <line x1="12" y1="22" x2="12" y2="15.5" />
+        <polyline points="22 8.5 12 15.5 2 8.5" />
+        <polyline points="2 15.5 12 8.5 22 15.5" />
+      </svg>
+    ),
+  },
 ];
 
 export default function AdminLayout() {

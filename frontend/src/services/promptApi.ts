@@ -2,6 +2,7 @@ import api from './api';
 
 export interface PromptTemplate {
   name: string; // "translate" | "analyze_words" | "analyze_sentences"
+  display_name: string; // Human-readable name in Chinese
   system_prompt: string;
   user_prompt: string;
   placeholders: string[];

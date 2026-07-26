@@ -13,12 +13,12 @@ from app.schemas.prompts import (
     PromptTemplateListResponse,
     PromptTemplateUpdateRequest,
 )
-from app.services.prompt_defaults import DEFAULT_PROMPTS, PLACEHOLDERS
+from app.services.prompt_defaults import DEFAULT_PROMPTS, PLACEHOLDERS, TEMPLATE_NAMES
 
 router = APIRouter()
 
 # All valid template names
-_VALID_NAMES = frozenset({"analyze_sentences"})
+_VALID_NAMES = frozenset(DEFAULT_PROMPTS.keys())
 
 
 def _build_response(name: str, row: PromptTemplate | None) -> PromptTemplateOut:
@@ -29,6 +29,7 @@ def _build_response(name: str, row: PromptTemplate | None) -> PromptTemplateOut:
     if row is not None and (row.system_prompt or row.user_prompt):
         return PromptTemplateOut(
             name=name,
+            display_name=TEMPLATE_NAMES.get(name, name),
             system_prompt=row.system_prompt,
             user_prompt=row.user_prompt,
             placeholders=list(placeholders),
@@ -38,6 +39,7 @@ def _build_response(name: str, row: PromptTemplate | None) -> PromptTemplateOut:
 
     return PromptTemplateOut(
         name=name,
+        display_name=TEMPLATE_NAMES.get(name, name),
         system_prompt=defaults["system_prompt"],
         user_prompt=defaults["user_prompt"],
         placeholders=list(placeholders),
@@ -61,7 +63,7 @@ async def list_prompt_templates(
     result = await db.execute(stmt)
     rows: dict[str, PromptTemplate] = {r.name: r for r in result.scalars().all()}
 
-    templates = [_build_response(name, rows.get(name)) for name in _VALID_NAMES]
+    templates = [_build_response(name, rows.get(name)) for name in sorted(_VALID_NAMES)]
     return PromptTemplateListResponse(templates=templates)
 
 
