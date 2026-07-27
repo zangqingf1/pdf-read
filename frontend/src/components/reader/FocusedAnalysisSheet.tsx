@@ -42,7 +42,7 @@ function FocusedWordCard({
         <div className="flex items-baseline gap-2 flex-wrap">
           <span className="font-bold text-ink text-lg font-reading">{analysis.word}</span>
           {analysis.phonetic && (
-            <span className="text-muted-soft text-sm">{analysis.phonetic}</span>
+            <span className="text-muted-soft text-xs">{analysis.phonetic}</span>
           )}
         </div>
         {confirming ? (
@@ -299,7 +299,7 @@ export default function FocusedAnalysisSheet({
       <div className="flex-1 bg-black/30" onClick={onClose} />
 
       {/* Sheet */}
-      <div className="max-h-[35vh] bg-canvas rounded-t-xl flex flex-col overflow-hidden shadow-modal animate-slide-up">
+      <div className="max-h-[45vh] bg-canvas rounded-t-xl flex flex-col overflow-hidden shadow-modal animate-slide-up">
         {/* Content */}
         <div className="flex-1 overflow-y-auto p-4 study-panel-content" style={{ fontSize: wordPanelFontSize }}>
           {!hasData && (

@@ -14,6 +14,7 @@ class PromptTemplateOut(BaseModel):
     user_prompt: str = Field(..., description="Main instruction with {placeholders}")
     placeholders: list[str] = Field(default_factory=list, description="Available placeholder variables")
     is_customized: bool = Field(default=False, description="Whether user has saved a custom version")
+    is_default: bool = Field(default=False, description="Whether this is the admin-defined system default")
     updated_at: datetime | None = Field(default=None, description="Last update time")
 
     model_config = {"from_attributes": True}
@@ -38,4 +39,8 @@ class PromptTemplateUpdateRequest(BaseModel):
         min_length=1,
         max_length=10000,
         description="Main instruction with {placeholders}",
+    )
+    set_as_default: bool = Field(
+        default=False,
+        description="If True, save as the admin-defined system default instead of a custom override",
     )

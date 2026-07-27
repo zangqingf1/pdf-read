@@ -107,17 +107,34 @@ export async function analyzeWordsStream(
     headers['Authorization'] = `Bearer ${token}`;
   }
 
-  const response = await fetch(url, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({
-      entries,
-      api_key: apiKey || undefined,
-      document_id: documentId,
-      provider: provider || undefined,
-    }),
-    signal,
-  });
+  // ── Timeout: abort if the stream hasn't finished within 5 minutes ──
+  const STREAM_TIMEOUT_MS = 5 * 60 * 1000; // 5 min
+  const timeoutController = new AbortController();
+  const timeoutId = setTimeout(() => timeoutController.abort(), STREAM_TIMEOUT_MS);
+  let timedOut = false;
+  timeoutController.signal.addEventListener('abort', () => { timedOut = true; });
+
+  // Combine the external signal (user cancel) with our timeout signal
+  const combinedSignal = signal
+    ? combineAbortSignals(signal, timeoutController.signal)
+    : timeoutController.signal;
+
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        entries,
+        api_key: apiKey || undefined,
+        document_id: documentId,
+        provider: provider || undefined,
+      }),
+      signal: combinedSignal,
+    });
+  } finally {
+    clearTimeout(timeoutId);
+  }
 
   if (!response.ok) {
     const text = await response.text();
@@ -133,49 +150,85 @@ export async function analyzeWordsStream(
   const allResults: WordAnalysisResult[] = [];
   let buffer = '';
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
+  // ── Per-read timeout: 120 s without data = connection likely dead ──
+  const READ_TIMEOUT_MS = 120_000;
 
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split('\n');
-    buffer = lines.pop() || '';
-
-    for (const line of lines) {
-      if (!line.startsWith('data: ')) continue;
-      const jsonStr = line.slice(6);
+  try {
+    while (true) {
+      // Re-arm timeout controller for each read
+      const readTimeoutId = setTimeout(() => timeoutController.abort(), READ_TIMEOUT_MS);
+      let done: boolean;
+      let value: Uint8Array;
       try {
-        const event: WordAnalysisSSEEvent = JSON.parse(jsonStr);
+        const readResult = await reader.read();
+        done = readResult.done;
+        value = readResult.value || new Uint8Array(0);
+      } finally {
+        clearTimeout(readTimeoutId);
+      }
+      if (done) break;
 
-        if (event.type === 'done') {
-          return allResults;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        const jsonStr = line.slice(6);
+        try {
+          const event: WordAnalysisSSEEvent = JSON.parse(jsonStr);
+
+          if (event.type === 'done') {
+            return allResults;
+          }
+          if (event.type === 'error') {
+            throw new Error(event.message || '单词解析失败');
+          }
+          if (event.type === 'chunk' && event.text && event.batch_id != null) {
+            // Raw AI text token — forward to streaming display
+            onChunk({
+              batch_id: event.batch_id,
+              text: event.text,
+              words: event.words || [],
+              para_index: event.para_index || 0,
+            });
+          }
+          if (event.type === 'batch' && event.analyses) {
+            allResults.push(...event.analyses);
+            onProgress(event.analyses);
+          }
+        } catch (e) {
+          if (e instanceof Error && e.message.includes('单词解析')) {
+            throw e;
+          }
+          console.warn('SSE parse error:', e);
         }
-        if (event.type === 'error') {
-          throw new Error(event.message || '单词解析失败');
-        }
-        if (event.type === 'chunk' && event.text && event.batch_id != null) {
-          // Raw AI text token — forward to streaming display
-          onChunk({
-            batch_id: event.batch_id,
-            text: event.text,
-            words: event.words || [],
-            para_index: event.para_index || 0,
-          });
-        }
-        if (event.type === 'batch' && event.analyses) {
-          allResults.push(...event.analyses);
-          onProgress(event.analyses);
-        }
-      } catch (e) {
-        if (e instanceof Error && e.message.includes('单词解析')) {
-          throw e;
-        }
-        console.warn('SSE parse error:', e);
       }
     }
+  } catch (err: any) {
+    // Distinguish timeout from user-initiated abort
+    if (err.name === 'AbortError') {
+      if (timedOut && !signal?.aborted) {
+        throw new Error('单词解析超时，AI 服务响应过慢，请减少选中单词数量后重试');
+      }
+      // User-initiated abort — re-throw so caller can ignore it
+      throw err;
+    }
+    throw err;
   }
 
   return allResults;
+}
+
+/** Combine two AbortSignals — when either fires, the combined signal fires. */
+function combineAbortSignals(a: AbortSignal, b: AbortSignal): AbortSignal {
+  const controller = new AbortController();
+  const onAbort = () => controller.abort();
+  a.addEventListener('abort', onAbort, { once: true });
+  b.addEventListener('abort', onAbort, { once: true });
+  // If either is already aborted, fire immediately
+  if (a.aborted || b.aborted) controller.abort();
+  return controller.signal;
 }
 
 export async function getWordAnalyses(

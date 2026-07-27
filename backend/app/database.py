@@ -139,15 +139,38 @@ async def run_migrations():
         )
 
         # ═══════════════════════════════════════════════════════════════
-        # Migration 003: documents.user_id — user ownership
+        # Migration 004: prompt_templates.is_default — two-tier prompts
         # ═══════════════════════════════════════════════════════════════
+        # SQLite cannot ALTER PRIMARY KEY, so we recreate the table.
+        # Step 1: create new table with composite PK (name, is_default).
         await _apply(
-            "003a_documents_user_id",
-            "ALTER TABLE documents ADD COLUMN user_id CHAR(36)",
+            "004a_prompt_templates_new_schema",
+            "CREATE TABLE IF NOT EXISTS _prompt_templates_v2 ("
+            "  name VARCHAR(50) NOT NULL,"
+            "  is_default BOOLEAN NOT NULL DEFAULT 0,"
+            "  system_prompt TEXT DEFAULT '',"
+            "  user_prompt TEXT DEFAULT '',"
+            "  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,"
+            "  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,"
+            "  PRIMARY KEY (name, is_default)"
+            ")",
+        )
+        # Step 2: copy existing rows (all legacy rows become is_default=False).
+        await _apply(
+            "004b_prompt_templates_copy_data",
+            "INSERT OR IGNORE INTO _prompt_templates_v2 "
+            "  (name, is_default, system_prompt, user_prompt, created_at, updated_at)"
+            "  SELECT name, 0, system_prompt, user_prompt, created_at, updated_at"
+            "  FROM prompt_templates",
+        )
+        # Step 3: swap tables.
+        await _apply(
+            "004c_prompt_templates_drop_old",
+            "DROP TABLE IF EXISTS prompt_templates",
         )
         await _apply(
-            "003b_documents_user_id_index",
-            "CREATE INDEX IF NOT EXISTS ix_documents_user_id ON documents(user_id)",
+            "004d_prompt_templates_rename_v2",
+            "ALTER TABLE _prompt_templates_v2 RENAME TO prompt_templates",
         )
 
 

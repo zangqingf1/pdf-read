@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { usePromptStore } from '../../stores/promptStore';
-import type { PromptTemplate } from '../../services/promptApi';
+import { getDefaultPrompt, type PromptTemplate } from '../../services/promptApi';
 import Button from '../../components/ui/Button';
 import { TextArea } from '../../components/ui/Input';
 import Badge from '../../components/ui/Badge';
@@ -29,6 +29,7 @@ export default function AdminPrompts() {
     error,
     fetchTemplates,
     updateTemplate,
+    promoteTemplate,
     resetTemplate,
     resetAllTemplates,
   } = usePromptStore();
@@ -37,10 +38,16 @@ export default function AdminPrompts() {
   const [editTarget, setEditTarget] = useState<PromptTemplate | null>(null);
   const [editSystem, setEditSystem] = useState('');
   const [editUser, setEditUser] = useState('');
+  const [editAsDefault, setEditAsDefault] = useState(false);
+  const [defaultPrompt, setDefaultPrompt] = useState<PromptTemplate | null>(null);
+  const [showDefault, setShowDefault] = useState(false);
 
   // Reset confirmation
   const [resetTarget, setResetTarget] = useState<string | null>(null);
   const [resetAllConfirming, setResetAllConfirming] = useState(false);
+
+  // Promote confirmation
+  const [promoteTarget, setPromoteTarget] = useState<string | null>(null);
 
   // Success message
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
@@ -55,20 +62,38 @@ export default function AdminPrompts() {
   };
 
   // ── Edit handlers ──
-  const openEdit = (tpl: PromptTemplate) => {
+  const openEdit = async (tpl: PromptTemplate) => {
     setEditTarget(tpl);
     setEditSystem(tpl.system_prompt);
     setEditUser(tpl.user_prompt);
+    setEditAsDefault(tpl.is_default);
+    setShowDefault(false);
+    try {
+      const def = await getDefaultPrompt(tpl.name);
+      setDefaultPrompt(def);
+    } catch {
+      setDefaultPrompt(null);
+    }
   };
 
   const handleSave = async () => {
     if (!editTarget) return;
-    await updateTemplate(editTarget.name, {
-      system_prompt: editSystem,
-      user_prompt: editUser,
-    });
+    await updateTemplate(
+      editTarget.name,
+      { system_prompt: editSystem, user_prompt: editUser },
+      editAsDefault,
+    );
     setEditTarget(null);
-    showSuccess(`${editTarget.display_name || editTarget.name} 提示词已保存`);
+    const label = editAsDefault ? '系统默认' : '自定义';
+    showSuccess(`${editTarget.display_name || editTarget.name} 已保存为${label}提示词`);
+  };
+
+  // ── Promote handler ──
+  const handlePromote = async (name: string) => {
+    setPromoteTarget(null);
+    await promoteTemplate(name);
+    const tpl = templates.find((t) => t.name === name);
+    showSuccess(`${tpl?.display_name || name} 已提升为系统默认`);
   };
 
   // ── Reset handlers ──
@@ -76,14 +101,24 @@ export default function AdminPrompts() {
     setResetTarget(null);
     await resetTemplate(name);
     const tpl = templates.find((t) => t.name === name);
-    showSuccess(`${tpl?.display_name || name} 已重置为默认值`);
+    showSuccess(`${tpl?.display_name || name} 已重置为出厂默认值`);
   };
 
   const handleResetAll = async () => {
     setResetAllConfirming(false);
     await resetAllTemplates();
-    showSuccess('全部提示词已重置为默认值');
+    showSuccess('全部提示词已重置为出厂默认值');
   };
+
+  // ── Status badge ──
+  const statusBadge = (tpl: PromptTemplate) => {
+    if (tpl.is_default) return <Badge variant="coral">系统默认</Badge>;
+    if (tpl.is_customized) return <Badge variant="coral">已自定义</Badge>;
+    return <Badge variant="default">出厂默认</Badge>;
+  };
+
+  const hasAnyModification = (tpl: PromptTemplate) =>
+    tpl.is_customized || tpl.is_default;
 
   return (
     <div>
@@ -96,7 +131,7 @@ export default function AdminPrompts() {
           loading={isSaving}
           onClick={() => setResetAllConfirming(true)}
         >
-          重置全部为默认
+          重置全部为出厂默认
         </Button>
       </div>
 
@@ -127,6 +162,7 @@ export default function AdminPrompts() {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {templates.map((tpl) => {
               const isResetBusy = resetTarget === tpl.name && isSaving;
+              const isPromoteBusy = promoteTarget === tpl.name && isSaving;
 
               return (
                 <div
@@ -138,11 +174,7 @@ export default function AdminPrompts() {
                     <h3 className="font-display font-medium text-ink text-base">
                       {tpl.display_name || tpl.name}
                     </h3>
-                    {tpl.is_customized ? (
-                      <Badge variant="coral">已自定义</Badge>
-                    ) : (
-                      <Badge variant="default">默认</Badge>
-                    )}
+                    {statusBadge(tpl)}
                   </div>
 
                   <p className="text-xs text-muted-soft mb-3 font-mono">
@@ -167,7 +199,7 @@ export default function AdminPrompts() {
                   </div>
 
                   {/* Actions */}
-                  <div className="flex gap-2 pt-3 border-t border-hairline">
+                  <div className="flex gap-2 pt-3 border-t border-hairline flex-wrap">
                     <Button
                       variant="secondary"
                       size="sm"
@@ -176,33 +208,68 @@ export default function AdminPrompts() {
                     >
                       编辑
                     </Button>
-                    {resetTarget === tpl.name ? (
-                      <div className="flex gap-1">
-                        <button
-                          className="px-2 py-1 text-xs font-medium text-error hover:bg-error/10 rounded"
-                          onClick={() => handleResetSingle(tpl.name)}
-                          disabled={isResetBusy}
+
+                    {/* Promote: only for custom (is_customized && !is_default) */}
+                    {tpl.is_customized && !tpl.is_default && (
+                      promoteTarget === tpl.name ? (
+                        <div className="flex gap-1">
+                          <button
+                            className="px-2 py-1 text-xs font-medium text-primary hover:bg-primary/10 rounded"
+                            onClick={() => handlePromote(tpl.name)}
+                            disabled={isPromoteBusy}
+                          >
+                            确定提升
+                          </button>
+                          <button
+                            className="px-2 py-1 text-xs text-muted hover:bg-surface-card rounded"
+                            onClick={() => setPromoteTarget(null)}
+                          >
+                            取消
+                          </button>
+                        </div>
+                      ) : (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="!text-primary hover:!bg-primary/10"
+                          loading={isPromoteBusy}
+                          onClick={() => setPromoteTarget(tpl.name)}
+                          title="将当前自定义提示词提升为系统默认"
                         >
-                          确定
-                        </button>
-                        <button
-                          className="px-2 py-1 text-xs text-muted hover:bg-surface-card rounded"
-                          onClick={() => setResetTarget(null)}
+                          提升为默认
+                        </Button>
+                      )
+                    )}
+
+                    {/* Reset: available for any modified prompt */}
+                    {hasAnyModification(tpl) && (
+                      resetTarget === tpl.name ? (
+                        <div className="flex gap-1">
+                          <button
+                            className="px-2 py-1 text-xs font-medium text-error hover:bg-error/10 rounded"
+                            onClick={() => handleResetSingle(tpl.name)}
+                            disabled={isResetBusy}
+                          >
+                            确定
+                          </button>
+                          <button
+                            className="px-2 py-1 text-xs text-muted hover:bg-surface-card rounded"
+                            onClick={() => setResetTarget(null)}
+                          >
+                            取消
+                          </button>
+                        </div>
+                      ) : (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="!text-error hover:!bg-error/10"
+                          loading={isResetBusy}
+                          onClick={() => setResetTarget(tpl.name)}
                         >
-                          取消
-                        </button>
-                      </div>
-                    ) : (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="!text-error hover:!bg-error/10"
-                        loading={isResetBusy}
-                        onClick={() => setResetTarget(tpl.name)}
-                        disabled={!tpl.is_customized}
-                      >
-                        重置
-                      </Button>
+                          重置
+                        </Button>
+                      )
                     )}
                   </div>
                 </div>
@@ -242,6 +309,19 @@ export default function AdminPrompts() {
                 不要删除或修改占位符。保存后立即生效。
               </span>
             </div>
+
+            {/* Save-as toggle */}
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={editAsDefault}
+                onChange={(e) => setEditAsDefault(e.target.checked)}
+                className="w-4 h-4 rounded border-hairline text-primary focus:ring-primary/30"
+              />
+              <span className="text-sm text-body">
+                保存为<strong>系统默认</strong>（所有用户默认使用此版本）
+              </span>
+            </label>
 
             {/* System Prompt */}
             <div>
@@ -291,6 +371,40 @@ export default function AdminPrompts() {
                 ))}
               </div>
             </div>
+
+            {/* Default prompt reference (collapsible) */}
+            {defaultPrompt && (
+              <div>
+                <button
+                  type="button"
+                  className="flex items-center gap-1.5 text-xs text-primary hover:text-primary/80 font-medium mb-2"
+                  onClick={() => setShowDefault(!showDefault)}
+                >
+                  <svg
+                    width="14" height="14" viewBox="0 0 24 24"
+                    fill="none" stroke="currentColor" strokeWidth="1.5"
+                    className={`transition-transform ${showDefault ? 'rotate-90' : ''}`}
+                  >
+                    <path d="M9 5l7 7-7 7" />
+                  </svg>
+                  {showDefault ? '收起出厂默认模板' : '查看出厂默认模板（参考）'}
+                </button>
+                {showDefault && (
+                  <div className="p-3 bg-canvas border border-hairline rounded-md space-y-3">
+                    {defaultPrompt.system_prompt && (
+                      <div>
+                        <span className="text-xs text-muted-soft block mb-1">System Prompt（出厂默认）</span>
+                        <p className="text-xs text-muted font-mono whitespace-pre-wrap">{defaultPrompt.system_prompt}</p>
+                      </div>
+                    )}
+                    <div>
+                      <span className="text-xs text-muted-soft block mb-1">User Prompt（出厂默认）</span>
+                      <p className="text-xs text-muted font-mono whitespace-pre-wrap">{defaultPrompt.user_prompt}</p>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
       </Modal>
@@ -318,10 +432,10 @@ export default function AdminPrompts() {
         }
       >
         <p className="text-sm text-body">
-          确定要将所有三个 Prompt 模板重置为系统默认值吗？
+          确定要将所有三个 Prompt 模板重置为出厂默认值吗？
         </p>
         <p className="text-sm text-muted mt-2">
-          此操作将删除所有自定义修改，不可撤销。
+          此操作将删除所有自定义修改和系统默认设置，不可撤销。
         </p>
       </Modal>
     </div>

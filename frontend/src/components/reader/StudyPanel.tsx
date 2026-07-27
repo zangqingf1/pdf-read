@@ -12,9 +12,22 @@ import Button from '../ui/Button';
 
 // ── Module-level callback for reverse navigation ──
 let _scrollToAnalysis: ((key: string, tab: 'words' | 'sentences') => void) | null = null;
+let _openPanel: (() => void) | null = null;
+let _pendingScroll: { key: string; tab: 'words' | 'sentences' } | null = null;
+
+export function setOnOpenPanel(cb: (() => void) | null) {
+  _openPanel = cb;
+}
 
 export function triggerScrollToAnalysis(key: string, tab: 'words' | 'sentences') {
-  _scrollToAnalysis?.(key, tab);
+  if (_scrollToAnalysis) {
+    // Panel is mounted — scroll immediately
+    _scrollToAnalysis(key, tab);
+  } else {
+    // Panel is closed — request open + queue the scroll for after mount
+    _pendingScroll = { key, tab };
+    _openPanel?.();
+  }
 }
 
 // ── Streaming Word Card (shows raw AI output as itʼs generated) ──────
@@ -111,7 +124,7 @@ function WordCard({
             {analysis.word}
           </span>
           {analysis.phonetic && (
-            <span className="text-muted-soft" style={{ fontSize: '0.85em' }}>
+            <span className="text-muted-soft" style={{ fontSize: '0.75em' }}>
               {analysis.phonetic}
             </span>
           )}
@@ -452,7 +465,7 @@ function SentenceCard({
 
 // ── Main Panel ─────────────────────────────────────────────────────
 
-export default function StudyPanel() {
+export default function StudyPanel({ onClose }: { onClose?: () => void }) {
   const {
     documentId,
     wordAnalyses,
@@ -514,6 +527,14 @@ export default function StudyPanel() {
         setTimeout(() => el.classList.remove(flashClass), 1500);
       }
     };
+
+    // Execute pending scroll if panel was opened via click on analyzed word/sentence
+    if (_pendingScroll) {
+      const { key, tab } = _pendingScroll;
+      _pendingScroll = null;
+      setTimeout(() => _scrollToAnalysis?.(key, tab), 150);
+    }
+
     return () => { _scrollToAnalysis = null; };
   }, []);
 
@@ -583,6 +604,18 @@ export default function StudyPanel() {
       <div className="hidden md:flex items-center justify-between px-4 py-3 border-b border-hairline flex-shrink-0">
         <h3 className="text-sm font-display font-medium text-ink m-0">解析面板</h3>
         <div className="flex items-center gap-1">
+          {/* Close panel button */}
+          {onClose && (
+            <button
+              onClick={onClose}
+              className="w-7 h-7 flex items-center justify-center rounded-md hover:bg-surface-card transition-colors text-muted-soft hover:text-ink"
+              title="关闭面板"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                <path d="M18 6L6 18M6 6l12 12" />
+              </svg>
+            </button>
+          )}
           {/* Font size controls */}
           <button
             onClick={decreaseWordPanelFontSize}

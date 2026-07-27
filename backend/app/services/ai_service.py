@@ -8,6 +8,9 @@ from collections.abc import AsyncGenerator
 
 import httpx
 
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.config import settings
 from app.services.prompt_defaults import DEFAULT_PROMPTS, PLACEHOLDERS
 
@@ -81,6 +84,38 @@ def _resolve_prompt(
     return messages
 
 
+async def resolve_prompt_overrides(
+    db: AsyncSession, name: str
+) -> tuple[str | None, str | None]:
+    """Resolve effective prompt overrides with two-tier lookup.
+
+    Resolution order:
+    1. Custom override  (is_default=False) — user-level customization
+    2. System default   (is_default=True)  — admin-defined default
+    3. Factory default  (prompt_defaults.py) — hardcoded fallback (None, None)
+
+    Returns ``(system_prompt, user_prompt)`` or ``(None, None)`` to use
+    the factory default.
+    """
+    from app.models.prompt_template import PromptTemplate
+
+    stmt = (
+        select(PromptTemplate)
+        .where(PromptTemplate.name == name)
+        .order_by(PromptTemplate.is_default.asc())  # False (0) before True (1)
+    )
+    result = await db.execute(stmt)
+    rows = result.scalars().all()
+
+    for row in rows:
+        system = row.system_prompt if row.system_prompt else None
+        user = row.user_prompt if row.user_prompt else None
+        if system or user:
+            return (system, user)
+
+    return (None, None)
+
+
 class AIService:
     """AI API wrapper for paragraph translation with parallel batches.
 
@@ -113,7 +148,7 @@ class AIService:
                     "Authorization": f"Bearer {self.api_key}",
                     "Content-Type": "application/json",
                 },
-                timeout=httpx.Timeout(60.0, connect=10.0),
+                timeout=httpx.Timeout(120.0, connect=10.0),
                 limits=httpx.Limits(
                     max_connections=concurrency + 5,
                     max_keepalive_connections=concurrency,
@@ -344,6 +379,10 @@ class AIService:
     def _normalize_word_result(r: dict, para_index: int) -> None:
         """Normalize fields in a single word analysis result (mutates dict in place)."""
         r["paragraph_index"] = para_index
+        # Normalize word to lowercase so frontend keys (which use .toLowerCase())
+        # consistently match regardless of AI casing.
+        if "word" in r and isinstance(r["word"], str):
+            r["word"] = r["word"].strip().lower()
         if "collocations" not in r or not isinstance(r.get("collocations"), list):
             r["collocations"] = []
         if not isinstance(r.get("example_sentence"), str):
@@ -559,142 +598,162 @@ class AIService:
             sentence: str,
             sentence_translation: str | None,
         ) -> None:
-            """Stream raw tokens for one batch, then parse & push results to queue."""
-            async with semaphore:
-                words_list = ", ".join(words_batch)
+            """Stream raw tokens for one batch, then parse & push results to queue.
 
-                messages = _resolve_prompt(
-                    "analyze_words",
-                    {
-                        "words_list": words_list,
-                        "sentence": sentence,
-                        "sentence_translation": sentence_translation or "无",
-                    },
-                    system_override=system_prompt_override,
-                    user_override=user_prompt_override,
+            IMPORTANT: Every code path MUST push a "batch" event to *queue*.
+            If a task dies without doing so, the main event loop deadlocks
+            waiting for ``completed_batches`` to reach ``total_batches``.
+            """
+            try:
+                async with semaphore:
+                    words_list = ", ".join(words_batch)
+
+                    messages = _resolve_prompt(
+                        "analyze_words",
+                        {
+                            "words_list": words_list,
+                            "sentence": sentence,
+                            "sentence_translation": sentence_translation or "无",
+                        },
+                        system_override=system_prompt_override,
+                        user_override=user_prompt_override,
+                    )
+
+                    # NOTE: no response_format when streaming — JSON mode is
+                    # incompatible with stream=True.  The prompt itself instructs
+                    # the model to output JSON.
+                    payload = {
+                        "model": self.model,
+                        "messages": messages,
+                        "temperature": 0.3,
+                        "max_tokens": max(512, min(len(words_batch) * 500, 3072)),
+                        "stream": True,
+                    }
+
+                    accumulated = ""
+
+                    for attempt in range(3):
+                        try:
+                            async with self.client.stream(
+                                "POST", "/chat/completions", json=payload
+                            ) as response:
+                                response.raise_for_status()
+
+                                async for line in response.aiter_lines():
+                                    if not line.startswith("data: "):
+                                        continue
+                                    data_str = line[6:]
+                                    if data_str.strip() == "[DONE]":
+                                        break
+                                    try:
+                                        chunk_data = json.loads(data_str)
+                                        choices = chunk_data.get("choices", [])
+                                        if choices:
+                                            delta = choices[0].get("delta", {})
+                                            content = delta.get("content", "")
+                                            if content:
+                                                accumulated += content
+                                                await queue.put({
+                                                    "type": "chunk",
+                                                    "batch_id": batch_id,
+                                                    "text": content,
+                                                    "words": words_batch,
+                                                    "para_index": para_index,
+                                                })
+                                    except (json.JSONDecodeError, KeyError, IndexError):
+                                        continue
+
+                            # ── Parse the accumulated text as JSON ──
+                            text = accumulated.strip()
+
+                            # Strip markdown code fences if present
+                            if text.startswith("```"):
+                                text = text.removeprefix("```json").removeprefix("```").strip()
+                                if text.endswith("```"):
+                                    text = text[:-3].strip()
+
+                            parsed = json.loads(text)
+
+                            if isinstance(parsed, dict):
+                                results = parsed.get("words", [])
+                            elif isinstance(parsed, list):
+                                results = parsed
+                            else:
+                                results = []
+
+                            if not isinstance(results, list):
+                                results = []
+
+                            results = _normalize_results(results, para_index)
+                            await queue.put({
+                                "type": "batch",
+                                "batch_id": batch_id,
+                                "results": results,
+                                "words": words_batch,
+                                "para_index": para_index,
+                            })
+                            return  # success — exit retry loop
+
+                        except (httpx.HTTPError, httpx.TimeoutException) as e:
+                            if _is_fatal_error(e):
+                                err_msg = str(e)
+                                if "401" in err_msg or "Unauthorized" in err_msg:
+                                    err_msg = "AI API Key 无效或未配置，请点击右上角🔑图标设置。"
+                                await queue.put({
+                                    "type": "batch",
+                                    "batch_id": batch_id,
+                                    "results": [{"__error__": err_msg}],
+                                    "words": words_batch,
+                                    "para_index": para_index,
+                                })
+                                return
+                            if attempt < 2:
+                                await asyncio.sleep(2 ** attempt)
+                                accumulated = ""
+                            else:
+                                logger.exception(
+                                    "Word analysis stream batch %d failed (HTTP/timeout)", batch_id
+                                )
+                                await queue.put({
+                                    "type": "batch",
+                                    "batch_id": batch_id,
+                                    "results": [],
+                                    "words": words_batch,
+                                    "para_index": para_index,
+                                })
+                                return
+                        except (json.JSONDecodeError, KeyError, TypeError):
+                            if attempt < 2:
+                                await asyncio.sleep(2 ** attempt)
+                                accumulated = ""
+                            else:
+                                logger.exception(
+                                    "Word analysis stream batch %d failed (JSON/decode)", batch_id
+                                )
+                                await queue.put({
+                                    "type": "batch",
+                                    "batch_id": batch_id,
+                                    "results": [],
+                                    "words": words_batch,
+                                    "para_index": para_index,
+                                })
+                                return
+
+                    # Shouldn't reach here
+                    await queue.put({
+                        "type": "batch",
+                        "batch_id": batch_id,
+                        "results": [],
+                        "words": words_batch,
+                        "para_index": para_index,
+                    })
+            except Exception:
+                # ── Catch-all: prevent any unhandled exception from
+                # deadlocking the main event loop.  This must ALWAYS push a
+                # "batch" event so completed_batches can advance. ──
+                logger.exception(
+                    "Word analysis stream batch %d crashed unexpectedly", batch_id
                 )
-
-                # NOTE: no response_format when streaming — JSON mode is
-                # incompatible with stream=True.  The prompt itself instructs
-                # the model to output JSON.
-                payload = {
-                    "model": self.model,
-                    "messages": messages,
-                    "temperature": 0.3,
-                    "max_tokens": max(512, min(len(words_batch) * 500, 3072)),
-                    "stream": True,
-                }
-
-                accumulated = ""
-
-                for attempt in range(3):
-                    try:
-                        async with self.client.stream(
-                            "POST", "/chat/completions", json=payload
-                        ) as response:
-                            response.raise_for_status()
-
-                            async for line in response.aiter_lines():
-                                if not line.startswith("data: "):
-                                    continue
-                                data_str = line[6:]
-                                if data_str.strip() == "[DONE]":
-                                    break
-                                try:
-                                    chunk_data = json.loads(data_str)
-                                    choices = chunk_data.get("choices", [])
-                                    if choices:
-                                        delta = choices[0].get("delta", {})
-                                        content = delta.get("content", "")
-                                        if content:
-                                            accumulated += content
-                                            await queue.put({
-                                                "type": "chunk",
-                                                "batch_id": batch_id,
-                                                "text": content,
-                                                "words": words_batch,
-                                                "para_index": para_index,
-                                            })
-                                except (json.JSONDecodeError, KeyError, IndexError):
-                                    continue
-
-                        # ── Parse the accumulated text as JSON ──
-                        text = accumulated.strip()
-
-                        # Strip markdown code fences if present
-                        if text.startswith("```"):
-                            text = text.removeprefix("```json").removeprefix("```").strip()
-                            if text.endswith("```"):
-                                text = text[:-3].strip()
-
-                        parsed = json.loads(text)
-
-                        if isinstance(parsed, dict):
-                            results = parsed.get("words", [])
-                        elif isinstance(parsed, list):
-                            results = parsed
-                        else:
-                            results = []
-
-                        if not isinstance(results, list):
-                            results = []
-
-                        results = _normalize_results(results, para_index)
-                        await queue.put({
-                            "type": "batch",
-                            "batch_id": batch_id,
-                            "results": results,
-                            "words": words_batch,
-                            "para_index": para_index,
-                        })
-                        return  # success — exit retry loop
-
-                    except (httpx.HTTPError, httpx.TimeoutException) as e:
-                        if _is_fatal_error(e):
-                            err_msg = str(e)
-                            if "401" in err_msg or "Unauthorized" in err_msg:
-                                err_msg = "AI API Key 无效或未配置，请点击右上角🔑图标设置。"
-                            await queue.put({
-                                "type": "batch",
-                                "batch_id": batch_id,
-                                "results": [{"__error__": err_msg}],
-                                "words": words_batch,
-                                "para_index": para_index,
-                            })
-                            return
-                        if attempt < 2:
-                            await asyncio.sleep(2 ** attempt)
-                            accumulated = ""
-                        else:
-                            logger.exception(
-                                "Word analysis stream batch %d failed (HTTP/timeout)", batch_id
-                            )
-                            await queue.put({
-                                "type": "batch",
-                                "batch_id": batch_id,
-                                "results": [],
-                                "words": words_batch,
-                                "para_index": para_index,
-                            })
-                            return
-                    except (json.JSONDecodeError, KeyError, TypeError):
-                        if attempt < 2:
-                            await asyncio.sleep(2 ** attempt)
-                            accumulated = ""
-                        else:
-                            logger.exception(
-                                "Word analysis stream batch %d failed (JSON/decode)", batch_id
-                            )
-                            await queue.put({
-                                "type": "batch",
-                                "batch_id": batch_id,
-                                "results": [],
-                                "words": words_batch,
-                                "para_index": para_index,
-                            })
-                            return
-
-                # Shouldn't reach here
                 await queue.put({
                     "type": "batch",
                     "batch_id": batch_id,
@@ -739,8 +798,18 @@ class AIService:
         ]
 
         # Stream events as they arrive — chunks AND batch results
+        # Per-event timeout (seconds): if no event arrives within this window
+        # the loop aborts to prevent a deadlocked SSE connection.
+        EVENT_TIMEOUT = 180  # 3 min — generous for slow AI generation
         while completed_batches < total_batches:
-            event = await queue.get()
+            try:
+                event = await asyncio.wait_for(queue.get(), timeout=EVENT_TIMEOUT)
+            except asyncio.TimeoutError:
+                logger.error(
+                    "Word analysis stream timed out after %ds — %d/%d batches completed",
+                    EVENT_TIMEOUT, completed_batches, total_batches,
+                )
+                break
             if event.get("type") == "batch":
                 # Check for fatal error sentinel
                 if (

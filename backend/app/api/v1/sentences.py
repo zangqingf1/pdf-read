@@ -12,7 +12,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth.deps import get_current_user
 from app.database import get_db
 from app.models.document import Document
-from app.models.prompt_template import PromptTemplate
 from app.models.sentence_analysis import SentenceAnalysis
 from app.models.user import User
 from app.schemas.sentences import (
@@ -20,7 +19,7 @@ from app.schemas.sentences import (
     SentenceAnalysisResponse,
     SentenceAnalysisResult,
 )
-from app.services.ai_service import create_ai_service
+from app.services.ai_service import create_ai_service, resolve_prompt_overrides
 
 router = APIRouter()
 _logger = logging.getLogger(__name__)
@@ -34,20 +33,6 @@ async def _verify_document_ownership(
     if doc is None or doc.user_id != user.id:
         raise HTTPException(status_code=404, detail=f"Document {document_id} not found")
     return doc
-
-
-async def _get_prompt_overrides(
-    db: AsyncSession, name: str
-) -> tuple[str | None, str | None]:
-    """Fetch custom prompt overrides from DB."""
-    stmt = select(PromptTemplate).where(PromptTemplate.name == name)
-    result = await db.execute(stmt)
-    row = result.scalars().first()
-    if row is None:
-        return (None, None)
-    system = row.system_prompt if row.system_prompt else None
-    user = row.user_prompt if row.user_prompt else None
-    return (system, user)
 
 
 async def _persist_analyses(
@@ -177,7 +162,7 @@ async def analyze_sentences(
             })
 
         # Call AI service
-        system_override, user_override = await _get_prompt_overrides(db, "analyze_sentences")
+        system_override, user_override = await resolve_prompt_overrides(db, "analyze_sentences")
         raw_results = await ai.analyze_sentences(
             entries,
             system_prompt_override=system_override,
@@ -269,7 +254,7 @@ async def analyze_sentences_stream(
             "sentence_translation": entry.sentence_translation,
         })
 
-    system_override, user_override = await _get_prompt_overrides(db, "analyze_sentences")
+    system_override, user_override = await resolve_prompt_overrides(db, "analyze_sentences")
 
     async def event_generator():
         all_raw: list[dict] = []

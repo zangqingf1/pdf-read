@@ -17,7 +17,7 @@ export default function StudySheet({ children, title = '解析面板', onClose }
       <div className="flex-1 bg-black/30" onClick={onClose} />
 
       {/* Sheet */}
-      <div className="h-[30vh] bg-canvas rounded-t-xl flex flex-col overflow-hidden shadow-modal animate-slide-up">
+      <div className="h-[45vh] bg-canvas rounded-t-xl flex flex-col overflow-hidden shadow-modal animate-slide-up">
         {/* Drag handle indicator */}
         <div className="flex justify-center pt-2 pb-1 flex-shrink-0">
           <div className="w-10 h-1 rounded-full bg-hairline" />

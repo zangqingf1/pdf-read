@@ -18,6 +18,7 @@ import StudyPanel from '../components/reader/StudyPanel';
 import StudySheet from '../components/reader/StudySheet';
 import FocusedAnalysisSheet from '../components/reader/FocusedAnalysisSheet';
 import { setOnOpenFocusedAnalysis } from '../components/reader/ParagraphBlock';
+import { setOnOpenPanel } from '../components/reader/StudyPanel';
 import Button from '../components/ui/Button';
 import Spinner, { PageSpinner } from '../components/ui/Spinner';
 
@@ -99,6 +100,7 @@ export default function ReaderPage() {
   const { isMobile, isTouchDevice } = useResponsiveBreakpoint();
   const [studySheetOpen, setStudySheetOpen] = useState(false);
   const [focusedAnalysis, setFocusedAnalysis] = useState<{ type: 'word' | 'sentence'; key: string } | null>(null);
+  const [panelOpen, setPanelOpen] = useState(true);
 
   const hasAnalyses = Object.keys(wordAnalyses).length > 0
     || Object.keys(sentenceAnalyses).length > 0
@@ -239,6 +241,12 @@ export default function ReaderPage() {
     }
   }, [isMobile]);
 
+  // ── Register open-panel callback (for clicking analyzed words/sentences when panel is closed) ──
+  useEffect(() => {
+    setOnOpenPanel(() => setPanelOpen(true));
+    return () => setOnOpenPanel(null);
+  }, []);
+
   // ── Auto-translate (streaming) ──
   useEffect(() => {
     if (paragraphs.length === 0 || isTranslating) return;
@@ -278,6 +286,14 @@ export default function ReaderPage() {
 
     return () => abortController.abort();
   }, [documentId, paragraphs.length, translationTrigger, selectedProvider]);
+
+  // ── Auto-open panel when analysis starts ──
+  useEffect(() => {
+    if (isAnalyzing || isAnalyzingSentences) {
+      setPanelOpen(true);
+      if (isMobile) setStudySheetOpen(true);
+    }
+  }, [isAnalyzing, isAnalyzingSentences, isMobile]);
 
   // ── Analyze selected words (streaming) ──
   const analysisAbortRef = useRef<AbortController | null>(null);
@@ -577,15 +593,15 @@ export default function ReaderPage() {
           {/* Left: Reading area */}
           <div
             className="overflow-y-auto flex-shrink-0 min-h-0"
-            style={{ width: hasAnalyses ? leftWidth : '100%', backgroundColor: bgColorValue }}
+            style={{ width: hasAnalyses && panelOpen ? leftWidth : '100%', backgroundColor: bgColorValue }}
           >
-            <div className={hasAnalyses ? 'px-6 py-6 max-w-none' : 'px-8 py-6 max-w-[950px] mx-auto'}>
+            <div className={hasAnalyses && panelOpen ? 'px-6 py-6 max-w-none' : 'px-8 py-6 max-w-[950px] mx-auto'}>
               {readingAreaContent}
             </div>
           </div>
 
           {/* Resizable divider */}
-          {hasAnalyses && (
+          {hasAnalyses && panelOpen && (
             <div
               className={`resize-handle ${isDragging ? '!bg-primary' : ''}`}
               onMouseDown={handleDividerMouseDown}
@@ -594,10 +610,25 @@ export default function ReaderPage() {
           )}
 
           {/* Right: Study panel */}
-          {hasAnalyses && (
+          {hasAnalyses && panelOpen && (
             <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
-              <StudyPanel />
+              <StudyPanel onClose={() => setPanelOpen(false)} />
             </div>
+          )}
+
+          {/* Reopen panel button — shown when panel is closed but has analyses */}
+          {hasAnalyses && !panelOpen && (
+            <button
+              onClick={() => setPanelOpen(true)}
+              className="fixed right-3 top-1/2 -translate-y-1/2 z-40 w-9 h-24 bg-surface-card border border-hairline rounded-l-lg shadow-md flex flex-col items-center justify-center gap-1.5 hover:bg-canvas-soft transition-colors touch-area group"
+              title="打开解析面板"
+              style={{ borderRight: 'none' }}
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="group-hover:scale-110 transition-transform">
+                <path d="M15 18l-6-6 6-6" />
+              </svg>
+              <span className="text-[10px] text-muted-soft font-medium leading-tight text-center group-hover:text-primary transition-colors">解析<br/>面板</span>
+            </button>
           )}
         </div>
       )}

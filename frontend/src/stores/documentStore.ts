@@ -124,7 +124,7 @@ export const useDocumentStore = create<DocumentState>((set) => ({
       const wordAnalyses: Record<string, WordAnalysisResult> = {};
       if (data.word_analyses) {
         for (const wa of data.word_analyses) {
-          const key = `${wa.paragraph_index}:${wa.word}`;
+          const key = `${wa.paragraph_index}:${wa.word.toLowerCase()}`;
           wordAnalyses[key] = {
             id: wa.id,
             paragraph_index: wa.paragraph_index,
@@ -223,7 +223,7 @@ export const useDocumentStore = create<DocumentState>((set) => ({
 
   toggleWordSelection: (paragraphIndex, word) =>
     set((state) => {
-      const key = `${paragraphIndex}:${word}`;
+      const key = `${paragraphIndex}:${word.toLowerCase()}`;
       const selectedWords = { ...state.selectedWords };
       if (selectedWords[key]) {
         delete selectedWords[key];
@@ -239,7 +239,7 @@ export const useDocumentStore = create<DocumentState>((set) => ({
     set((state) => {
       const wordAnalyses = { ...state.wordAnalyses };
       for (const r of results) {
-        const key = `${r.paragraph_index}:${r.word}`;
+        const key = `${r.paragraph_index}:${r.word.toLowerCase()}`;
         wordAnalyses[key] = r;
       }
       return { wordAnalyses };
@@ -247,7 +247,7 @@ export const useDocumentStore = create<DocumentState>((set) => ({
 
   removeWordAnalysis: (paragraphIndex, word) =>
     set((state) => {
-      const key = `${paragraphIndex}:${word}`;
+      const key = `${paragraphIndex}:${word.toLowerCase()}`;
       const wordAnalyses = { ...state.wordAnalyses };
       delete wordAnalyses[key];
       return { wordAnalyses };

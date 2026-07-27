@@ -3,6 +3,8 @@ import type { PromptTemplate, PromptTemplateUpdateRequest } from '../services/pr
 import {
   getPromptTemplates,
   updatePromptTemplate,
+  updateDefaultPrompt,
+  promoteToDefault,
   resetPromptTemplate,
   resetAllPromptTemplates,
 } from '../services/promptApi';
@@ -14,7 +16,8 @@ interface PromptStoreState {
   error: string | null;
 
   fetchTemplates: () => Promise<void>;
-  updateTemplate: (name: string, body: PromptTemplateUpdateRequest) => Promise<void>;
+  updateTemplate: (name: string, body: PromptTemplateUpdateRequest, setAsDefault?: boolean) => Promise<void>;
+  promoteTemplate: (name: string) => Promise<void>;
   resetTemplate: (name: string) => Promise<void>;
   resetAllTemplates: () => Promise<void>;
   clearError: () => void;
@@ -39,10 +42,12 @@ export const usePromptStore = create<PromptStoreState>((set, get) => ({
     }
   },
 
-  updateTemplate: async (name: string, body: PromptTemplateUpdateRequest) => {
+  updateTemplate: async (name: string, body: PromptTemplateUpdateRequest, setAsDefault = false) => {
     set({ isSaving: true, error: null });
     try {
-      const updated = await updatePromptTemplate(name, body);
+      const updated = setAsDefault
+        ? await updateDefaultPrompt(name, body)
+        : await updatePromptTemplate(name, body);
       const templates = get().templates.map((t) =>
         t.name === name ? updated : t
       );
@@ -51,6 +56,22 @@ export const usePromptStore = create<PromptStoreState>((set, get) => ({
       set({
         isSaving: false,
         error: e?.response?.data?.detail || e?.message || 'Failed to save template',
+      });
+    }
+  },
+
+  promoteTemplate: async (name: string) => {
+    set({ isSaving: true, error: null });
+    try {
+      const updated = await promoteToDefault(name);
+      const templates = get().templates.map((t) =>
+        t.name === name ? updated : t
+      );
+      set({ templates, isSaving: false });
+    } catch (e: any) {
+      set({
+        isSaving: false,
+        error: e?.response?.data?.detail || e?.message || 'Failed to promote template',
       });
     }
   },

@@ -1,7 +1,13 @@
-"""Prompt template management API routes."""
+"""Prompt template management API routes.
+
+Two-tier prompt system:
+- is_default=True  → admin-defined system default (set via /default or set_as_default)
+- is_default=False → user-level custom override (currently unused, legacy rows)
+- Factory default  → hardcoded in prompt_defaults.py (fallback when no DB row)
+"""
 
 from fastapi import APIRouter, HTTPException, Depends
-from sqlalchemy import select, delete
+from sqlalchemy import select, delete, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.deps import get_current_user
@@ -21,31 +27,47 @@ router = APIRouter()
 _VALID_NAMES = frozenset(DEFAULT_PROMPTS.keys())
 
 
-def _build_response(name: str, row: PromptTemplate | None) -> PromptTemplateOut:
-    """Build a PromptTemplateOut from defaults + optional DB override."""
-    defaults = DEFAULT_PROMPTS[name]
+def _build_out(
+    name: str,
+    *,
+    system_prompt: str,
+    user_prompt: str,
+    is_customized: bool = False,
+    is_default: bool = False,
+    updated_at=None,
+) -> PromptTemplateOut:
+    """Build a PromptTemplateOut with explicit values."""
     placeholders = PLACEHOLDERS.get(name, [])
-
-    if row is not None and (row.system_prompt or row.user_prompt):
-        return PromptTemplateOut(
-            name=name,
-            display_name=TEMPLATE_NAMES.get(name, name),
-            system_prompt=row.system_prompt,
-            user_prompt=row.user_prompt,
-            placeholders=list(placeholders),
-            is_customized=True,
-            updated_at=row.updated_at,
-        )
-
     return PromptTemplateOut(
         name=name,
         display_name=TEMPLATE_NAMES.get(name, name),
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
+        placeholders=list(placeholders),
+        is_customized=is_customized,
+        is_default=is_default,
+        updated_at=updated_at,
+    )
+
+
+def _factory(name: str) -> PromptTemplateOut:
+    """Return the factory (hardcoded) default for a template."""
+    defaults = DEFAULT_PROMPTS[name]
+    return _build_out(
+        name,
         system_prompt=defaults["system_prompt"],
         user_prompt=defaults["user_prompt"],
-        placeholders=list(placeholders),
-        is_customized=False,
-        updated_at=None,
     )
+
+
+def _best_row(rows: list[PromptTemplate]) -> PromptTemplate | None:
+    """Pick the most specific row: custom (is_default=False) before default (True)."""
+    customs = [r for r in rows if not r.is_default]
+    defaults = [r for r in rows if r.is_default]
+    for r in customs + defaults:
+        if r.system_prompt or r.user_prompt:
+            return r
+    return None
 
 
 @router.get("", response_model=PromptTemplateListResponse)
@@ -53,17 +75,36 @@ async def list_prompt_templates(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """List all prompt templates with current values.
+    """List all prompt templates with current effective values.
 
-    Returns all three template types (translate, analyze_words, analyze_sentences).
-    For each, returns the custom version if one exists in the DB, otherwise the
-    built-in default.  The ``is_customized`` flag indicates which case applies.
+    Returns the effective prompt for each type along with metadata about
+    which tier is active (custom / admin-default / factory-default).
     """
-    stmt = select(PromptTemplate)
+    stmt = select(PromptTemplate).order_by(PromptTemplate.name, PromptTemplate.is_default)
     result = await db.execute(stmt)
-    rows: dict[str, PromptTemplate] = {r.name: r for r in result.scalars().all()}
+    all_rows = result.scalars().all()
 
-    templates = [_build_response(name, rows.get(name)) for name in sorted(_VALID_NAMES)]
+    # Group by name
+    by_name: dict[str, list[PromptTemplate]] = {}
+    for r in all_rows:
+        by_name.setdefault(r.name, []).append(r)
+
+    templates: list[PromptTemplateOut] = []
+    for name in sorted(_VALID_NAMES):
+        rows = by_name.get(name, [])
+        best = _best_row(rows)
+        if best and (best.system_prompt or best.user_prompt):
+            templates.append(_build_out(
+                name,
+                system_prompt=best.system_prompt,
+                user_prompt=best.user_prompt,
+                is_customized=not best.is_default,
+                is_default=best.is_default,
+                updated_at=best.updated_at,
+            ))
+        else:
+            templates.append(_factory(name))
+
     return PromptTemplateListResponse(templates=templates)
 
 
@@ -73,7 +114,7 @@ async def get_prompt_template(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Get a single prompt template by name."""
+    """Get a single prompt template by name (effective version)."""
     if name not in _VALID_NAMES:
         raise HTTPException(
             status_code=404,
@@ -82,9 +123,19 @@ async def get_prompt_template(
 
     stmt = select(PromptTemplate).where(PromptTemplate.name == name)
     result = await db.execute(stmt)
-    row = result.scalars().first()
+    rows = result.scalars().all()
+    best = _best_row(rows)
 
-    return _build_response(name, row)
+    if best and (best.system_prompt or best.user_prompt):
+        return _build_out(
+            name,
+            system_prompt=best.system_prompt,
+            user_prompt=best.user_prompt,
+            is_customized=not best.is_default,
+            is_default=best.is_default,
+            updated_at=best.updated_at,
+        )
+    return _factory(name)
 
 
 @router.put("/{name}", response_model=PromptTemplateOut)
@@ -94,10 +145,10 @@ async def update_prompt_template(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Create or update a prompt template.
+    """Save a custom prompt override (is_default=False).
 
-    Upserts the row for the given template name.  Subsequent AI calls will use
-    the custom prompt instead of the built-in default.
+    Set ``set_as_default=True`` to save as the admin-defined system default
+    instead (is_default=True).
     """
     if name not in _VALID_NAMES:
         raise HTTPException(
@@ -105,12 +156,17 @@ async def update_prompt_template(
             detail=f"Unknown template name: {name}. Valid: {', '.join(sorted(_VALID_NAMES))}",
         )
 
-    stmt = select(PromptTemplate).where(PromptTemplate.name == name)
+    is_default = request.set_as_default
+
+    # Upsert the row for (name, is_default)
+    stmt = select(PromptTemplate).where(
+        and_(PromptTemplate.name == name, PromptTemplate.is_default == is_default)
+    )
     result = await db.execute(stmt)
     row = result.scalars().first()
 
     if row is None:
-        row = PromptTemplate(name=name)
+        row = PromptTemplate(name=name, is_default=is_default)
         db.add(row)
 
     row.system_prompt = request.system_prompt
@@ -118,7 +174,112 @@ async def update_prompt_template(
     await db.commit()
     await db.refresh(row)
 
-    return _build_response(name, row)
+    return _build_out(
+        name,
+        system_prompt=row.system_prompt,
+        user_prompt=row.user_prompt,
+        is_customized=not is_default,
+        is_default=is_default,
+        updated_at=row.updated_at,
+    )
+
+
+@router.put("/{name}/default", response_model=PromptTemplateOut)
+async def set_default_prompt(
+    name: str,
+    request: PromptTemplateUpdateRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Set (or update) the admin-defined system default for a template.
+
+    This is a convenience endpoint — equivalent to PUT /{name} with
+    ``set_as_default=true``.
+    """
+    request.set_as_default = True
+    return await update_prompt_template(name, request, db, current_user)
+
+
+@router.post("/{name}/promote", response_model=PromptTemplateOut)
+async def promote_to_default(
+    name: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Promote the current custom prompt (is_default=False) to system default (is_default=True).
+
+    Copies the custom prompt's content to the default tier, then deletes the
+    custom tier row.  After promotion, all users see this prompt as the
+    effective default.
+    """
+    if name not in _VALID_NAMES:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Unknown template name: {name}. Valid: {', '.join(sorted(_VALID_NAMES))}",
+        )
+
+    # Find the custom row
+    stmt = select(PromptTemplate).where(
+        and_(PromptTemplate.name == name, PromptTemplate.is_default == False)
+    )
+    result = await db.execute(stmt)
+    custom = result.scalars().first()
+
+    if custom is None or (not custom.system_prompt and not custom.user_prompt):
+        raise HTTPException(
+            status_code=400,
+            detail="No custom prompt exists to promote. Save a custom prompt first.",
+        )
+
+    # Upsert the default row with custom's content
+    stmt2 = select(PromptTemplate).where(
+        and_(PromptTemplate.name == name, PromptTemplate.is_default == True)
+    )
+    result2 = await db.execute(stmt2)
+    default_row = result2.scalars().first()
+
+    if default_row is None:
+        default_row = PromptTemplate(name=name, is_default=True)
+        db.add(default_row)
+
+    default_row.system_prompt = custom.system_prompt
+    default_row.user_prompt = custom.user_prompt
+
+    # Delete the custom row
+    await db.delete(custom)
+    await db.commit()
+    await db.refresh(default_row)
+
+    return _build_out(
+        name,
+        system_prompt=default_row.system_prompt,
+        user_prompt=default_row.user_prompt,
+        is_customized=False,
+        is_default=True,
+        updated_at=default_row.updated_at,
+    )
+
+
+@router.get("/{name}/default")
+async def get_default_prompt(
+    name: str,
+    current_user: User = Depends(get_current_user),
+):
+    """Get the hardcoded factory default prompt (read-only reference)."""
+    if name not in _VALID_NAMES:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Unknown template name: {name}. Valid: {', '.join(sorted(_VALID_NAMES))}",
+        )
+
+    defaults = DEFAULT_PROMPTS[name]
+    return {
+        "name": name,
+        "display_name": TEMPLATE_NAMES.get(name, name),
+        "system_prompt": defaults["system_prompt"],
+        "user_prompt": defaults["user_prompt"],
+        "placeholders": list(PLACEHOLDERS.get(name, [])),
+    }
 
 
 @router.post("/{name}/reset", response_model=PromptTemplateOut)
@@ -127,10 +288,9 @@ async def reset_prompt_template(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Reset a single prompt template to its built-in default.
+    """Reset a single prompt template: delete ALL DB rows (custom + default).
 
-    Deletes the custom row from the database.  The next GET request (and all
-    subsequent AI calls) will use the default prompt from prompt_defaults.py.
+    Falls back to the hardcoded factory default from prompt_defaults.py.
     """
     if name not in _VALID_NAMES:
         raise HTTPException(
@@ -142,7 +302,7 @@ async def reset_prompt_template(
     await db.execute(stmt)
     await db.commit()
 
-    return _build_response(name, None)
+    return _factory(name)
 
 
 @router.post("/reset-all", response_model=PromptTemplateListResponse)
@@ -150,14 +310,13 @@ async def reset_all_prompt_templates(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Reset all prompt templates to built-in defaults.
+    """Reset all prompt templates to factory defaults.
 
-    Deletes every custom prompt row.  All AI calls will use the original
-    default prompts from prompt_defaults.py.
+    Deletes every row from prompt_templates, both custom and admin-default.
     """
     stmt = delete(PromptTemplate)
     await db.execute(stmt)
     await db.commit()
 
-    templates = [_build_response(name, None) for name in DEFAULT_PROMPTS]
+    templates = [_factory(name) for name in sorted(_VALID_NAMES)]
     return PromptTemplateListResponse(templates=templates)

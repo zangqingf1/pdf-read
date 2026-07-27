@@ -16,7 +16,7 @@ from app.models.document import Document
 from app.models.paragraph import Paragraph
 from app.models.user import User
 from app.schemas.translate import TranslateRequest, TranslateResponse
-from app.services.ai_service import create_ai_service
+from app.services.ai_service import create_ai_service, resolve_prompt_overrides
 
 router = APIRouter()
 _logger = logging.getLogger(__name__)
@@ -80,8 +80,15 @@ async def translate_paragraphs(
             for p in request.paragraphs
         ]
 
+        # Resolve custom prompt from DB (if set), otherwise use defaults
+        system_override, user_override = await resolve_prompt_overrides(db, "translate")
+
         # translate_batch handles chunking + parallel processing internally
-        translations = await ai.translate_batch(paragraphs)
+        translations = await ai.translate_batch(
+            paragraphs,
+            system_prompt_override=system_override,
+            user_prompt_override=user_override,
+        )
 
         # Persist translations if document_id is provided
         if request.document_id and translations:
@@ -155,10 +162,17 @@ async def translate_stream(
         for p in request.paragraphs
     ]
 
+    # Resolve custom prompt from DB (if set), otherwise use defaults
+    system_override, user_override = await resolve_prompt_overrides(db, "translate")
+
     async def event_generator():
         translations: dict[int, str] = {}
         try:
-            async for index, translation in ai.translate_batch_stream(paragraphs):
+            async for index, translation in ai.translate_batch_stream(
+                paragraphs,
+                system_prompt_override=system_override,
+                user_prompt_override=user_override,
+            ):
                 translations[index] = translation
                 yield f"data: {json.dumps({'index': index, 'translation': translation}, ensure_ascii=False)}\n\n"
 

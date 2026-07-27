@@ -20,7 +20,7 @@ from app.schemas.words import (
     WordAnalysisResponse,
     WordAnalysisResult,
 )
-from app.services.ai_service import create_ai_service
+from app.services.ai_service import create_ai_service, resolve_prompt_overrides
 
 router = APIRouter()
 _logger = logging.getLogger(__name__)
@@ -125,7 +125,7 @@ async def _persist_analyses(
     overwrites existing record."""
     for entry in analyses:
         para_index = entry.get("paragraph_index", 0)
-        word = entry.get("word", "")
+        word = entry.get("word", "").strip().lower()
         if not word:
             continue
 
@@ -231,8 +231,15 @@ async def analyze_words(
                 seen.add(key)
                 unique_entries.append(e)
 
+        # Resolve custom prompt from DB (if set), otherwise use defaults
+        system_override, user_override = await resolve_prompt_overrides(db, "analyze_words")
+
         # Call AI service
-        raw_results = await ai.analyze_words(unique_entries)
+        raw_results = await ai.analyze_words(
+            unique_entries,
+            system_prompt_override=system_override,
+            user_prompt_override=user_override,
+        )
 
         # Build result list
         analyses: list[WordAnalysisResult] = []
@@ -318,6 +325,9 @@ async def analyze_words_stream(
 
     ai = create_ai_service(provider=request.provider or "deepseek", api_key=request.api_key)
 
+    # Resolve custom prompt from DB (if set), otherwise use defaults
+    system_override, user_override = await resolve_prompt_overrides(db, "analyze_words")
+
     # Flatten entries (same as /analyze)
     flat_entries: list[dict] = []
     for entry in request.entries:
@@ -343,7 +353,11 @@ async def analyze_words_stream(
     async def event_generator():
         all_raw: list[dict] = []
         try:
-            async for event in ai.analyze_words_stream(unique_entries):
+            async for event in ai.analyze_words_stream(
+                unique_entries,
+                system_prompt_override=system_override,
+                user_prompt_override=user_override,
+            ):
                 if event["type"] == "chunk":
                     # Relay raw text chunk to frontend so user sees AI output in real time
                     yield (
