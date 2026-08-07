@@ -27,16 +27,16 @@ DEFAULT_PROMPTS: dict[str, dict[str, str]] = {
     "analyze_words": {
         "system_prompt": (
             "你是一名专业词典编纂者和语料库语言学家。"
-            "你的任务是分析英语单词在其实际语境中的用法，"
+            "你的任务是分析英语单词在给定英文段落中的用法，"
             "以《牛津高阶学习者词典》的风格生成词条。"
-            "始终将每个分析字段（释义、词性、同义词）扎根于特定上下文含义 —— "
+            "始终将每个分析字段（释义、词性、同义词）扎根于该段落的具体上下文含义 —— "
             "不要罗列该词的所有可能含义。"
         ),
         "user_prompt": (
-            "请分析以下英语单词在给定句子中的用法。"
+            "请分析以下英语单词在给定英文段落中的用法。"
             "返回严格的 JSON 数组 —— 每个单词一个对象。\n\n"
-            '上下文句子："{sentence}"\n'
-            '上下文翻译："{sentence_translation}"\n'
+            '段落原文："{paragraph}"\n'
+            '段落翻译（仅供参考）："{sentence_translation}"\n'
             "待分析单词：{words_list}\n\n"
             "每个单词返回以下字段：\n\n"
             '- "word"：单词原样\n'
@@ -51,7 +51,7 @@ DEFAULT_PROMPTS: dict[str, dict[str, str]] = {
             '- "base_form"（可选）：仅屈折变化词需要，返回原形（went→go, better→good, phenomena→phenomenon）。已是原形则不包含此字段\n'
             '- "plural_form"（可选）：仅特殊不规则名词需要（phenomenon→phenomena, criterion→criteria）。规则变化或非名词则不包含此字段\n\n'
             "关键规则：\n"
-            "1. 所有含义判断必须基于上下文句子 —— 不要生成通用词典词条\n"
+            "1. 所有含义判断必须基于段落上下文 —— 不要生成通用词典词条\n"
             "2. 只返回 JSON 数组，不要加 markdown 代码块标记或任何注释\n"
             "3. 对于拼写相同但上下文含义不同的单词，分别处理\n"
             "4. 所有字符串值必须使用双引号，正确转义\n"
@@ -87,7 +87,7 @@ DEFAULT_PROMPTS: dict[str, dict[str, str]] = {
 
 PLACEHOLDERS: dict[str, list[str]] = {
     "translate": ["text", "prev_text", "next_text"],
-    "analyze_words": ["words_list", "sentence", "sentence_translation"],
+    "analyze_words": ["words_list", "paragraph", "sentence", "sentence_translation"],
     "analyze_sentences": ["sentence_text", "sentence_translation", "sentences_text", "translations_text"],
 }
 

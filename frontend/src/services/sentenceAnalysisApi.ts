@@ -54,7 +54,7 @@ export async function analyzeSentences(
 
 /** SSE event from the streaming sentence analysis endpoint */
 export interface SentenceAnalysisSSEEvent {
-  type?: 'done' | 'error' | 'batch' | 'chunk';
+  type?: 'done' | 'error' | 'batch' | 'chunk' | 'heartbeat';
   analyses?: SentenceAnalysisResult[];
   /** Raw text delta from AI token streaming */
   text?: string;
@@ -137,8 +137,9 @@ export async function analyzeSentencesStream(
   const allResults: SentenceAnalysisResult[] = [];
   let buffer = '';
 
-  // ── Per-read timeout: 120 s without data = connection likely dead ──
-  const READ_TIMEOUT_MS = 120_000;
+  // ── Per-read timeout: 300 s without data = connection likely dead ──
+  // 后端慢批次时每 60s 发一次 heartbeat, 正常等待不会误杀。
+  const READ_TIMEOUT_MS = 300_000;
 
   try {
     while (true) {
@@ -162,32 +163,38 @@ export async function analyzeSentencesStream(
       for (const line of lines) {
         if (!line.startsWith('data: ')) continue;
         const jsonStr = line.slice(6);
-        try {
-          const event: SentenceAnalysisSSEEvent = JSON.parse(jsonStr);
 
-          if (event.type === 'done') {
-            return allResults;
-          }
-          if (event.type === 'error') {
-            throw new Error(event.message || '句子解析失败');
-          }
-          if (event.type === 'chunk' && event.text && event.para_index != null && event.sentence_index != null) {
-            // Raw AI text token — forward to streaming display
-            onChunk({
-              text: event.text,
-              para_index: event.para_index,
-              sentence_index: event.sentence_index,
-            });
-          }
-          if (event.type === 'batch' && event.analyses) {
-            allResults.push(...event.analyses);
-            onProgress(event.analyses);
-          }
+        // 仅 JSON 解析失败在此吞掉 — 业务错误 (error/done) 直接 throw,
+        // 不再依赖 message 匹配 (后端 401/429/504 提示文案不含"句子解析")
+        let event: SentenceAnalysisSSEEvent;
+        try {
+          event = JSON.parse(jsonStr);
         } catch (e) {
-          if (e instanceof Error && e.message.includes('句子解析')) {
-            throw e;
-          }
           console.warn('SSE parse error:', e);
+          continue;
+        }
+
+        if (event.type === 'heartbeat') {
+          // 保活信号 — 收到即重置读超时计时, 无需其他处理
+          continue;
+        }
+        if (event.type === 'done') {
+          return allResults;
+        }
+        if (event.type === 'error') {
+          throw new Error(event.message || '句子解析失败');
+        }
+        if (event.type === 'chunk' && event.text && event.para_index != null && event.sentence_index != null) {
+          // Raw AI text token — forward to streaming display
+          onChunk({
+            text: event.text,
+            para_index: event.para_index,
+            sentence_index: event.sentence_index,
+          });
+        }
+        if (event.type === 'batch' && event.analyses) {
+          allResults.push(...event.analyses);
+          onProgress(event.analyses);
         }
       }
     }

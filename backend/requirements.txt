@@ -29,8 +29,7 @@ email-validator==2.2.0
 
 # Utilities
 python-jose[cryptography]==3.3.0
-passlib[bcrypt]==1.7.4
-bcrypt==4.0.1
+bcrypt==5.0.0  # passlib 已移除 — 直接使用 bcrypt API (passlib 与 bcrypt>=4.1 不兼容)
 slowapi==0.1.9
 aiofiles==24.1.0
 

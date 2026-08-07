@@ -387,7 +387,16 @@ export default function ReaderPage() {
       clearWordSelection();
     } catch (err: any) {
       if (err.name !== 'AbortError') {
-        const detail = err?.message || '单词解析失败';
+        let detail = err?.message || '单词解析失败';
+        // 中断/失败时明确列出仍未完成的单词 — 绝不静默丢失。
+        // 用 getState() 取最新 store, 闭包里的 wordAnalyses 是发起时的快照。
+        const latest = useDocumentStore.getState().wordAnalyses;
+        const missing = newKeys.filter((key) => !latest[key]);
+        if (missing.length > 0 && !detail.includes('未能解析')) {
+          const names = missing.slice(0, 10).map((k) => k.split(':')[1]).join(', ');
+          const more = missing.length > 10 ? ` 等 ${missing.length} 个` : '';
+          detail = `${detail} 以下 ${missing.length} 个单词未完成: ${names}${more}`;
+        }
         setAnalysisError(detail);
       }
     } finally {
@@ -473,7 +482,13 @@ export default function ReaderPage() {
       clearSentenceSelection();
     } catch (err: any) {
       if (err.name !== 'AbortError') {
-        const detail = err?.message || '句子解析失败';
+        let detail = err?.message || '句子解析失败';
+        // 中断/失败时明确提示未完成的句子数量
+        const latest = useDocumentStore.getState().sentenceAnalyses;
+        const missing = newKeys.filter((key) => !latest[key]);
+        if (missing.length > 0 && !detail.includes('未能解析')) {
+          detail = `${detail} 以下 ${missing.length} 个句子未完成`;
+        }
         setSentenceAnalysisError(detail);
       }
     } finally {
@@ -645,7 +660,7 @@ export default function ReaderPage() {
       {/* ── Mobile: Study panel bottom sheet ── */}
       {isMobile && hasAnalyses && studySheetOpen && (
         <StudySheet onClose={() => setStudySheetOpen(false)}>
-          <StudyPanel />
+          <StudyPanel mobile />
         </StudySheet>
       )}
 
@@ -676,7 +691,7 @@ export default function ReaderPage() {
         <div className={[
           'z-50 shadow-float rounded-lg px-4 md:px-5 py-3 border border-hairline flex items-center gap-3 md:gap-4 flex-wrap',
           isMobile
-            ? 'fixed bottom-0 left-0 right-0 rounded-none'
+            ? 'fixed bottom-0 left-0 right-0 rounded-t-xl'
             : 'fixed bottom-6 left-1/2 -translate-x-1/2',
         ].join(' ')} style={{ backgroundColor: bgColorValue }}>
           {selectedWordCount > 0 && (

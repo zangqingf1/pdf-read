@@ -264,6 +264,11 @@ async def analyze_sentences_stream(
                 system_prompt_override=system_override,
                 user_prompt_override=user_override,
             ):
+                if event["type"] == "heartbeat":
+                    # 保活心跳 — 前端据此重置读超时计时
+                    yield "data: " + json.dumps({"type": "heartbeat"}) + "\n\n"
+                    continue
+
                 if event["type"] == "chunk":
                     # Relay raw text chunk to frontend so user sees AI output in real time
                     yield (

@@ -64,14 +64,14 @@ export async function analyzeWords(
 
 /** SSE event from the streaming word analysis endpoint */
 export interface WordAnalysisSSEEvent {
-  type?: 'done' | 'error' | 'batch' | 'chunk';
+  type?: 'done' | 'error' | 'batch' | 'chunk' | 'incomplete' | 'heartbeat';
   analyses?: WordAnalysisResult[];
   /** Raw text delta from AI token streaming */
   text?: string;
   /** Which batch this chunk/result belongs to */
   batch_id?: number;
-  /** Words in this batch */
-  words?: string[];
+  /** chunk 事件: 本批单词; incomplete 事件: 缺失单词 [{para_index, word}] */
+  words?: string[] | Array<{ para_index: number; word: string }>;
   /** Paragraph index for this batch */
   para_index?: number;
   code?: number;
@@ -150,8 +150,43 @@ export async function analyzeWordsStream(
   const allResults: WordAnalysisResult[] = [];
   let buffer = '';
 
-  // ── Per-read timeout: 120 s without data = connection likely dead ──
-  const READ_TIMEOUT_MS = 120_000;
+  // ── Per-read timeout: 300 s without data = connection likely dead ──
+  // 后端慢批次时每 60s 发一次 heartbeat, 正常等待不会误杀;
+  // 5 分钟无任何数据才判定连接死亡。
+  const READ_TIMEOUT_MS = 300_000;
+
+  // ── Chunk throttling: merge token deltas per batch, flush every ~80ms ──
+  // 并发批次多时 token 级事件可达每秒数百次, 每条都触发 React 更新
+  // 会拖垮渲染 (选中单词越多越明显)。合并后更新频率降到 ~12 次/秒。
+  const CHUNK_FLUSH_MS = 80;
+  const chunkBuffers = new Map<number, { text: string; words: string[]; paraIndex: number }>();
+  const chunkTimers = new Map<number, ReturnType<typeof setTimeout>>();
+
+  const flushChunkBuffer = (batchId: number) => {
+    const buf = chunkBuffers.get(batchId);
+    if (buf && buf.text) {
+      onChunk({
+        batch_id: batchId,
+        text: buf.text,
+        words: buf.words,
+        para_index: buf.paraIndex,
+      });
+    }
+    chunkBuffers.delete(batchId);
+    chunkTimers.delete(batchId);
+  };
+
+  const scheduleChunkFlush = (batchId: number) => {
+    if (chunkTimers.has(batchId)) return;
+    chunkTimers.set(batchId, setTimeout(() => flushChunkBuffer(batchId), CHUNK_FLUSH_MS));
+  };
+
+  const flushAllChunks = () => {
+    for (const batchId of [...chunkTimers.keys()]) flushChunkBuffer(batchId);
+  };
+
+  // ── Words that failed after backend compensation — surfaced on completion ──
+  let incompleteWords: Array<{ para_index: number; word: string }> = [];
 
   try {
     while (true) {
@@ -175,37 +210,64 @@ export async function analyzeWordsStream(
       for (const line of lines) {
         if (!line.startsWith('data: ')) continue;
         const jsonStr = line.slice(6);
-        try {
-          const event: WordAnalysisSSEEvent = JSON.parse(jsonStr);
 
-          if (event.type === 'done') {
-            return allResults;
-          }
-          if (event.type === 'error') {
-            throw new Error(event.message || '单词解析失败');
-          }
-          if (event.type === 'chunk' && event.text && event.batch_id != null) {
-            // Raw AI text token — forward to streaming display
-            onChunk({
-              batch_id: event.batch_id,
-              text: event.text,
-              words: event.words || [],
-              para_index: event.para_index || 0,
-            });
-          }
-          if (event.type === 'batch' && event.analyses) {
-            allResults.push(...event.analyses);
-            onProgress(event.analyses);
-          }
+        // 仅 JSON 解析失败在此吞掉 — 业务错误 (error/incomplete/done)
+        // 直接 throw, 不再依赖 message 匹配 (后端 401/429/504 的
+        // 提示文案不含"单词解析", 旧实现会静默吞掉这些错误)
+        let event: WordAnalysisSSEEvent;
+        try {
+          event = JSON.parse(jsonStr);
         } catch (e) {
-          if (e instanceof Error && e.message.includes('单词解析')) {
-            throw e;
-          }
           console.warn('SSE parse error:', e);
+          continue;
+        }
+
+        if (event.type === 'heartbeat') {
+          // 保活信号 — 收到即重置读超时计时, 无需其他处理
+          continue;
+        }
+        if (event.type === 'done') {
+          flushAllChunks();
+          // 后端补偿后仍有失败单词 → 明确提示, 而不是静默丢失
+          if (incompleteWords.length > 0) {
+            const unique = [...new Set(incompleteWords.map((w) => w.word))];
+            const names = unique.slice(0, 10).join(', ');
+            const more = unique.length > 10 ? ` 等 ${unique.length} 个` : '';
+            throw new Error(`以下单词未能解析${more}: ${names} — 可减少选中数量后重试`);
+          }
+          return allResults;
+        }
+        if (event.type === 'error') {
+          flushAllChunks();
+          throw new Error(event.message || '单词解析失败');
+        }
+        if (event.type === 'incomplete' && Array.isArray(event.words)) {
+          incompleteWords.push(...(event.words as Array<{ para_index: number; word: string }>));
+          continue;
+        }
+        if (event.type === 'chunk' && event.text && event.batch_id != null) {
+          // Merge token deltas per batch — flush on a timer
+          const batchId = event.batch_id;
+          const existing = chunkBuffers.get(batchId);
+          if (existing) {
+            existing.text += event.text;
+          } else {
+            chunkBuffers.set(batchId, {
+              text: event.text,
+              words: (event.words as string[]) || [],
+              paraIndex: event.para_index || 0,
+            });
+            scheduleChunkFlush(batchId);
+          }
+        }
+        if (event.type === 'batch' && event.analyses) {
+          allResults.push(...event.analyses);
+          onProgress(event.analyses);
         }
       }
     }
   } catch (err: any) {
+    flushAllChunks();
     // Distinguish timeout from user-initiated abort
     if (err.name === 'AbortError') {
       if (timedOut && !signal?.aborted) {

@@ -465,7 +465,15 @@ function SentenceCard({
 
 // ── Main Panel ─────────────────────────────────────────────────────
 
-export default function StudyPanel({ onClose }: { onClose?: () => void }) {
+export default function StudyPanel({
+  onClose,
+  mobile = false,
+}: {
+  onClose?: () => void;
+  /** Mobile bottom-sheet mode: the sheet covers the lower viewport, so the
+   *  located paragraph must scroll to the top of the reading area */
+  mobile?: boolean;
+}) {
   const {
     documentId,
     wordAnalyses,
@@ -541,11 +549,13 @@ export default function StudyPanel({ onClose }: { onClose?: () => void }) {
   const handleScrollToParagraph = useCallback((paragraphIndex: number) => {
     const el = document.querySelector(`[data-paragraph-index="${paragraphIndex}"]`);
     if (el) {
-      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      // Mobile: the bottom sheet covers the lower viewport, so align the
+      // paragraph to the top of the reading area instead of centering it
+      el.scrollIntoView({ behavior: 'smooth', block: mobile ? 'start' : 'center' });
       el.classList.add('paragraph-flash');
       setTimeout(() => el.classList.remove('paragraph-flash'), 1500);
     }
-  }, []);
+  }, [mobile]);
 
   const handleDeleteWord = useCallback(
     (analysis: WordAnalysisResult) => {

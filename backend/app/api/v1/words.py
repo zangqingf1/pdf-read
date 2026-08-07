@@ -2,7 +2,6 @@
 
 import json
 import logging
-import re
 import uuid
 
 from fastapi import APIRouter, HTTPException, Depends
@@ -35,85 +34,6 @@ async def _verify_document_ownership(
         raise HTTPException(status_code=404, detail=f"Document {document_id} not found")
     return doc
 
-
-def _extract_sentence(text: str, word: str) -> str:
-    """Extract the sentence containing `word` from `text`.
-
-    Two-level split: paragraph/heading breaks (``\\n{2,}``), then
-    sentence-ending punctuation (``[.!?]\\s+``).  Skips markdown headings
-    when the word also appears in body text.
-
-    **Crucially**, when the best candidate is longer than 150 chars
-    (e.g. a run-on PDF paragraph without punctuation) the function
-    narrows to a ~200-char window around *this specific word*.  This
-    guarantees each word in the same paragraph gets its own unique
-    context for the AI prompt, producing distinct translations.
-    """
-    if not text or not word:
-        return text or ""
-
-    word_lower = word.lower()
-    HEADING_RE = re.compile(r'^#{1,6}\s+', re.MULTILINE)
-    SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+|(?<=[.!?][\"'])\s+")
-
-    # ── Stage 1: split into blocks by paragraph / heading breaks ──
-    blocks = re.split(r'\n{2,}', text)
-
-    candidates: list[tuple[str, bool]] = []  # (sentence, is_heading)
-
-    for block in blocks:
-        block = block.strip()
-        if not block:
-            continue
-
-        is_heading = bool(HEADING_RE.match(block)) and len(block) < 120
-        clean_block = HEADING_RE.sub('', block)
-
-        for s in SENTENCE_SPLIT.split(clean_block):
-            s = s.strip()
-            if s and word_lower in s.lower():
-                candidates.append((s, is_heading))
-
-        # Also check the original (with heading markers) — the word may
-        # only exist in a heading line.
-        if clean_block != block:
-            for s in SENTENCE_SPLIT.split(block):
-                s = s.strip()
-                if s and word_lower in s.lower():
-                    if s not in [c[0] for c in candidates]:
-                        candidates.append((s, is_heading))
-
-    # ── Pick the best candidate ──
-    if candidates:
-        body = [s for s, h in candidates if not h]
-        best = (body or [s for s, _ in candidates])[0]
-    else:
-        best = ""  # signal: no sentence found
-
-    # ── Narrow to a window if the "sentence" is too long ──
-    # A real English sentence is rarely > 150 chars.  Beyond that we're
-    # looking at a run-on paragraph — fall back to a per-word window so
-    # every word gets a distinct AI context.
-    MAX_SENTENCE = 150
-    WINDOW_HALF = 100  # chars on each side of the target word
-
-    if best and len(best) <= MAX_SENTENCE:
-        return best
-
-    # Either no sentence candidate at all, or the one we found is a
-    # run-on blob.  Extract a window tightly around the target word.
-    idx = text.lower().find(word_lower)
-    if idx >= 0:
-        start = max(0, idx - WINDOW_HALF)
-        end = min(len(text), idx + len(word) + WINDOW_HALF)
-        # Try not to break mid-word at the boundaries
-        while start > 0 and text[start - 1] not in (' ', '\n', '\r', '\t'):
-            start -= 1
-        while end < len(text) and text[end] not in (' ', '\n', '\r', '\t'):
-            end += 1
-        return text[start:end].strip()
-
-    return text[:200]
 
 
 async def _persist_analyses(
@@ -209,16 +129,15 @@ async def analyze_words(
 
     try:
         # Flatten entries: each entry may contain multiple words.
-        # For each word, extract the sentence that contains it from the paragraph.
+        # The whole paragraph text is used as AI context (no sentence splitting).
         flat_entries: list[dict] = []
         for entry in request.entries:
             for word in entry.words:
                 word = word.strip()
-                extracted_sentence = _extract_sentence(entry.sentence, word)
                 flat_entries.append({
                     "paragraph_index": entry.paragraph_index,
                     "word": word,
-                    "sentence": extracted_sentence,
+                    "sentence": entry.sentence,
                     "sentence_translation": None,  # Per-sentence translation not available
                 })
 
@@ -328,16 +247,15 @@ async def analyze_words_stream(
     # Resolve custom prompt from DB (if set), otherwise use defaults
     system_override, user_override = await resolve_prompt_overrides(db, "analyze_words")
 
-    # Flatten entries (same as /analyze)
+    # Flatten entries (same as /analyze) — full paragraph text as context
     flat_entries: list[dict] = []
     for entry in request.entries:
         for word in entry.words:
             word = word.strip()
-            extracted_sentence = _extract_sentence(entry.sentence, word)
             flat_entries.append({
                 "paragraph_index": entry.paragraph_index,
                 "word": word,
-                "sentence": extracted_sentence,
+                "sentence": entry.sentence,
                 "sentence_translation": None,
             })
 
@@ -358,6 +276,11 @@ async def analyze_words_stream(
                 system_prompt_override=system_override,
                 user_prompt_override=user_override,
             ):
+                if event["type"] == "heartbeat":
+                    # 保活心跳 — 前端据此重置读超时计时
+                    yield "data: " + json.dumps({"type": "heartbeat"}) + "\n\n"
+                    continue
+
                 if event["type"] == "chunk":
                     # Relay raw text chunk to frontend so user sees AI output in real time
                     yield (
@@ -400,6 +323,17 @@ async def analyze_words_stream(
                             "analyses": batch_analyses,
                             "words": event["words"],
                             "para_index": event["para_index"],
+                        }, ensure_ascii=False)
+                        + "\n\n"
+                    )
+
+                elif event["type"] == "incomplete":
+                    # 部分单词补偿后仍失败/超时早退 — 透传给前端提示用户
+                    yield (
+                        "data: "
+                        + json.dumps({
+                            "type": "incomplete",
+                            "words": event.get("words", []),
                         }, ensure_ascii=False)
                         + "\n\n"
                     )

@@ -28,6 +28,71 @@ class _SafeDict(dict):
         return "{" + key + "}"
 
 
+def _extract_json_span(text: str, start_ch: str) -> str | None:
+    """从 ``start_ch`` 起做括号匹配，提取配对的 JSON 片段。
+
+    处理字符串内的引号/转义，避免 ``\"}\"`` 被误判为闭合。
+    """
+    start = text.find(start_ch)
+    if start < 0:
+        return None
+    open_ch = start_ch
+    close_ch = "}" if start_ch == "{" else "]"
+    depth = 0
+    in_str = False
+    escape = False
+    for i in range(start, len(text)):
+        ch = text[i]
+        if in_str:
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch == open_ch:
+            depth += 1
+        elif ch == close_ch:
+            depth -= 1
+            if depth == 0:
+                return text[start : i + 1]
+    return None
+
+
+def _parse_json_content(content: str):
+    """解析模型输出为 JSON，容忍 markdown 代码块与推理文本前后包裹。
+
+    DeepSeek V4 系列（thinking 模式默认开启）可能在 JSON 前后附加
+    解释性文本（"以下是结果"等），直接 ``json.loads`` 会失败 —
+    用括号匹配提取完整 JSON 片段再解析。
+    """
+    text = (content or "").strip()
+
+    # Strip markdown code fences if present
+    if text.startswith("```"):
+        text = text.removeprefix("```json").removeprefix("```").strip()
+        if text.endswith("```"):
+            text = text[:-3].strip()
+
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        # 推理文本包裹：括号匹配提取完整片段。
+        # 先试 "[": prompt 要求输出 JSON 数组 — 从数组内第一个对象 "{"
+        # 提取会拿到单个对象 (合法 JSON 但缺外层数组), 导致结果丢失。
+        for start_ch in ("[", "{"):
+            span = _extract_json_span(text, start_ch)
+            if span:
+                try:
+                    return json.loads(span)
+                except json.JSONDecodeError:
+                    continue
+        raise
+
+
 def _is_fatal_error(exc: Exception) -> bool:
     """Check whether an exception should fail the entire batch.
 
@@ -121,6 +186,10 @@ class AIService:
 
     Uses the DeepSeek API.
     """
+
+    # 流式 SSE 无事件时的心跳间隔 (秒)。批次慢/排队时保证连接
+    # 持续有数据, 前端读超时不会误杀正在等待的长任务。
+    heartbeat_interval = 60.0
 
     def __init__(
         self,
@@ -402,6 +471,115 @@ class AIService:
         if not isinstance(r.get("plural_form"), str):
             r["plural_form"] = ""
 
+    @staticmethod
+    def _missing_words(requested: list[str], results: list[dict]) -> list[str]:
+        """返回请求了但在结果中缺失的单词。
+
+        AI 批次响应经常漏词(输出截断 / 忽略部分单词) —
+        这是"部分单词丢失"的首要原因, 调用方据此逐词补发。
+        """
+        got = {r.get("word", "").lower() for r in results}
+        return [w for w in requested if w.lower() not in got]
+
+    async def _request_word_batch(
+        self,
+        para_index: int,
+        words_batch: list[str],
+        sentence: str,
+        sentence_translation: str | None,
+        *,
+        system_prompt_override: str | None,
+        user_prompt_override: str | None,
+    ) -> list[dict] | None:
+        """发一个非流式单词分析请求 (JSON mode), 最多重试 3 次。
+
+        成功返回规范化结果列表; 彻底失败返回 ``None`` (调用方负责
+        补偿或上报)。认证/配置错误 (``_is_fatal_error``) 直接抛出。
+        """
+        words_list = ", ".join(words_batch)
+
+        messages = _resolve_prompt(
+            "analyze_words",
+            {
+                "words_list": words_list,
+                "sentence": sentence,  # 兼容旧自定义模板的占位符名
+                "paragraph": sentence,  # 完整段落原文
+                "sentence_translation": sentence_translation or "无",
+            },
+            system_override=system_prompt_override,
+            user_override=user_prompt_override,
+        )
+
+        # DeepSeek V4 系列默认开启 thinking 模式: 推理阶段静默无输出
+        # (前端表现为"等待 AI 响应"), 且已知会损坏严格 JSON 输出 —
+        # 单词分析是结构化提取任务, 显式禁用推理。
+        payload = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": 0.3,
+            "max_tokens": max(2048, min(len(words_batch) * 500, 4096)),
+            "thinking": {"type": "disabled"},
+            "response_format": {"type": "json_object"},
+        }
+
+        for attempt in range(3):
+            try:
+                response = await self.client.post(
+                    "/chat/completions", json=payload
+                )
+                response.raise_for_status()
+                data = response.json()
+
+                if "error" in data:
+                    err = data["error"]
+                    raise httpx.HTTPStatusError(
+                            f"API error ({self.model}): {err.get('message', str(err))}",
+                        request=response.request,
+                        response=response,
+                    )
+
+                content = data["choices"][0]["message"]["content"].strip()
+                if not content:
+                    logger.warning(
+                        "Empty AI content for words %s — 推理模型 reasoning 可能耗尽 max_tokens",
+                        words_batch,
+                    )
+                parsed = _parse_json_content(content)
+
+                # Handle both {"words": [...]} wrapper and bare array
+                if isinstance(parsed, dict):
+                    results = parsed.get("words", [])
+                elif isinstance(parsed, list):
+                    results = parsed
+                else:
+                    results = []
+
+                if not isinstance(results, list):
+                    results = []
+
+                # Normalize fields
+                for r in results:
+                    self._normalize_word_result(r, para_index)
+
+                return results
+
+            except (httpx.HTTPError, httpx.TimeoutException) as e:
+                if _is_fatal_error(e):
+                    raise  # Auth / config error → fail the whole batch
+                if attempt < 2:
+                    await asyncio.sleep(2 ** attempt)
+                else:
+                    logger.exception("Word analysis request failed (HTTP/timeout)")
+                    return None
+            except (json.JSONDecodeError, KeyError, TypeError):
+                if attempt < 2:
+                    await asyncio.sleep(2 ** attempt)
+                else:
+                    logger.exception("Word analysis request failed (JSON/decode)")
+                    return None
+
+        return None
+
     async def analyze_words(
         self,
         entries: list[dict],
@@ -428,6 +606,12 @@ class AIService:
                 "AI API Key 未配置。请点击页面右上角🔑图标设置。"
             )
 
+        # 记录实际使用的模板来源 — 排查"修改的 prompt 不生效"时看日志确认
+        logger.info(
+            "analyze_words %s prompt override",
+            "using DB" if (system_prompt_override or user_prompt_override) else "using factory default",
+        )
+
         # Group entries by paragraph_index to share sentence context
 
         batch_size = getattr(settings, "WORDS_BATCH_SIZE", 8)
@@ -441,96 +625,37 @@ class AIService:
             sentence_translation: str | None,
         ) -> list[dict]:
             async with semaphore:
-                words_list = ", ".join(words_batch)
-
-                messages = _resolve_prompt(
-                    "analyze_words",
-                    {
-                        "words_list": words_list,
-                        "sentence": sentence,
-                        "sentence_translation": sentence_translation or "无",
-                    },
-                    system_override=system_prompt_override,
-                    user_override=user_prompt_override,
+                results = await self._request_word_batch(
+                    para_index, words_batch, sentence, sentence_translation,
+                    system_prompt_override=system_prompt_override,
+                    user_prompt_override=user_prompt_override,
                 )
+                if results is None:
+                    results = []
 
-                payload = {
-                    "model": self.model,
-                    "messages": messages,
-                    "temperature": 0.3,
-                    "max_tokens": max(512, min(len(words_batch) * 500, 3072)),
-                    "response_format": {"type": "json_object"},
-                }
+                # ── 单词补偿: AI 返回不全时对缺失单词逐词补发 ──
+                # 单词级请求更小、失败率更低, 保证"选中即解析"不丢单词。
+                for w in self._missing_words(words_batch, results):
+                    one = await self._request_word_batch(
+                        para_index, [w], sentence, sentence_translation,
+                        system_prompt_override=system_prompt_override,
+                        user_prompt_override=user_prompt_override,
+                    )
+                    if one:
+                        results.extend(one)
 
-                for attempt in range(3):
-                    try:
-                        response = await self.client.post(
-                            "/chat/completions", json=payload
-                        )
-                        response.raise_for_status()
-                        data = response.json()
+                return results
 
-                        if "error" in data:
-                            err = data["error"]
-                            raise httpx.HTTPStatusError(
-                                    f"API error ({self.model}): {err.get('message', str(err))}",
-                                request=response.request,
-                                response=response,
-                            )
-
-                        content = data["choices"][0]["message"]["content"].strip()
-                        parsed = json.loads(content)
-
-                        # Handle both {"words": [...]} wrapper and bare array
-                        if isinstance(parsed, dict):
-                            results = parsed.get("words", [])
-                        elif isinstance(parsed, list):
-                            results = parsed
-                        else:
-                            results = []
-
-                        if not isinstance(results, list):
-                            results = []
-
-                        # Normalize fields
-                        for r in results:
-                            self._normalize_word_result(r, para_index)
-
-                        return results
-
-                    except (httpx.HTTPError, httpx.TimeoutException) as e:
-                        if attempt < 2 and not _is_fatal_error(e):
-                            await asyncio.sleep(2 ** attempt)
-                        else:
-                            if _is_fatal_error(e):
-                                raise  # Auth / config error → fail the whole batch
-                            logger.exception("Word analysis HTTP/timeout error")
-                            return []
-                    except (json.JSONDecodeError, KeyError, TypeError):
-                        if attempt < 2:
-                            await asyncio.sleep(2 ** attempt)
-                        else:
-                            logger.exception("Word analysis JSON/decode error")
-                            return []
-
-                return []
-
-        # Group entries by (paragraph_index, sentence) — words that share
-        # the same extracted sentence get batched together.  This ensures
-        # each batch's context sentence and its translation are correct
-        # for every word in that batch.
-        entries.sort(key=lambda e: (e["paragraph_index"], e.get("sentence", "")))
-        grouped: dict[tuple[int, str], list[dict]] = {}
+        # Group entries by paragraph — all words in the same paragraph share
+        # the full paragraph text as context (one prompt per batch).
+        grouped: dict[int, list[dict]] = {}
         for e in entries:
-            key = (e["paragraph_index"], e.get("sentence", ""))
-            if key not in grouped:
-                grouped[key] = []
-            grouped[key].append(e)
+            grouped.setdefault(e["paragraph_index"], []).append(e)
 
-        # Build tasks: for each (paragraph, sentence) group, split words
-        # into batches of batch_size
+        # Build tasks: for each paragraph group, split words into batches
         tasks = []
-        for (para_index, sentence), group_entries in grouped.items():
+        for para_index, group_entries in grouped.items():
+            sentence = group_entries[0].get("sentence", "")
             sentence_translation = group_entries[0].get("sentence_translation")
 
             # Split words into smaller batches
@@ -581,6 +706,12 @@ class AIService:
                 "AI API Key 未配置。请点击页面右上角🔑图标设置。"
             )
 
+        # 记录实际使用的模板来源 — 排查"修改的 prompt 不生效"时看日志确认
+        logger.info(
+            "analyze_words_stream %s prompt override",
+            "using DB" if (system_prompt_override or user_prompt_override) else "using factory default",
+        )
+
         batch_size = getattr(settings, "WORDS_BATCH_SIZE", 8)
         concurrency = getattr(settings, "AI_CONCURRENCY", 15)
         semaphore = asyncio.Semaphore(concurrency)
@@ -603,7 +734,29 @@ class AIService:
             IMPORTANT: Every code path MUST push a "batch" event to *queue*.
             If a task dies without doing so, the main event loop deadlocks
             waiting for ``completed_batches`` to reach ``total_batches``.
+
+            NEW: when the streamed batch returns fewer words than requested
+            (or fails entirely), the missing words are re-requested one-by-one
+            (non-streaming).  Words that STILL fail are listed in the batch
+            event's ``missing`` field so the main loop can report them —
+            selected words are never silently dropped.
             """
+            async def _push_batch(
+                results: list[dict], missing_words: list[str] | None = None
+            ) -> None:
+                if missing_words is None:
+                    missing_words = self._missing_words(words_batch, results)
+                await queue.put({
+                    "type": "batch",
+                    "batch_id": batch_id,
+                    "results": results,
+                    "words": words_batch,
+                    "para_index": para_index,
+                    "missing": [
+                        {"para_index": para_index, "word": w} for w in missing_words
+                    ],
+                })
+
             try:
                 async with semaphore:
                     words_list = ", ".join(words_batch)
@@ -612,7 +765,8 @@ class AIService:
                         "analyze_words",
                         {
                             "words_list": words_list,
-                            "sentence": sentence,
+                            "sentence": sentence,  # 兼容旧自定义模板的占位符名
+                            "paragraph": sentence,  # 完整段落原文
                             "sentence_translation": sentence_translation or "无",
                         },
                         system_override=system_prompt_override,
@@ -622,15 +776,19 @@ class AIService:
                     # NOTE: no response_format when streaming — JSON mode is
                     # incompatible with stream=True.  The prompt itself instructs
                     # the model to output JSON.
+                    # thinking 禁用: 消除推理阶段的静默等待 (首 token 更快),
+                    # 且避免推理文本损坏 JSON 输出。
                     payload = {
                         "model": self.model,
                         "messages": messages,
                         "temperature": 0.3,
-                        "max_tokens": max(512, min(len(words_batch) * 500, 3072)),
+                        "max_tokens": max(2048, min(len(words_batch) * 500, 4096)),
+                        "thinking": {"type": "disabled"},
                         "stream": True,
                     }
 
                     accumulated = ""
+                    stream_failed = False
 
                     for attempt in range(3):
                         try:
@@ -664,15 +822,8 @@ class AIService:
                                         continue
 
                             # ── Parse the accumulated text as JSON ──
-                            text = accumulated.strip()
-
-                            # Strip markdown code fences if present
-                            if text.startswith("```"):
-                                text = text.removeprefix("```json").removeprefix("```").strip()
-                                if text.endswith("```"):
-                                    text = text[:-3].strip()
-
-                            parsed = json.loads(text)
+                            # _parse_json_content 容忍推理文本包裹与代码块
+                            parsed = _parse_json_content(accumulated)
 
                             if isinstance(parsed, dict):
                                 results = parsed.get("words", [])
@@ -685,14 +836,7 @@ class AIService:
                                 results = []
 
                             results = _normalize_results(results, para_index)
-                            await queue.put({
-                                "type": "batch",
-                                "batch_id": batch_id,
-                                "results": results,
-                                "words": words_batch,
-                                "para_index": para_index,
-                            })
-                            return  # success — exit retry loop
+                            break  # success — exit retry loop
 
                         except (httpx.HTTPError, httpx.TimeoutException) as e:
                             if _is_fatal_error(e):
@@ -705,6 +849,7 @@ class AIService:
                                     "results": [{"__error__": err_msg}],
                                     "words": words_batch,
                                     "para_index": para_index,
+                                    "missing": [],
                                 })
                                 return
                             if attempt < 2:
@@ -714,14 +859,8 @@ class AIService:
                                 logger.exception(
                                     "Word analysis stream batch %d failed (HTTP/timeout)", batch_id
                                 )
-                                await queue.put({
-                                    "type": "batch",
-                                    "batch_id": batch_id,
-                                    "results": [],
-                                    "words": words_batch,
-                                    "para_index": para_index,
-                                })
-                                return
+                                stream_failed = True
+                                break
                         except (json.JSONDecodeError, KeyError, TypeError):
                             if attempt < 2:
                                 await asyncio.sleep(2 ** attempt)
@@ -730,23 +869,28 @@ class AIService:
                                 logger.exception(
                                     "Word analysis stream batch %d failed (JSON/decode)", batch_id
                                 )
-                                await queue.put({
-                                    "type": "batch",
-                                    "batch_id": batch_id,
-                                    "results": [],
-                                    "words": words_batch,
-                                    "para_index": para_index,
-                                })
-                                return
+                                stream_failed = True
+                                break
+                    else:
+                        # Shouldn't reach here
+                        stream_failed = True
 
-                    # Shouldn't reach here
-                    await queue.put({
-                        "type": "batch",
-                        "batch_id": batch_id,
-                        "results": [],
-                        "words": words_batch,
-                        "para_index": para_index,
-                    })
+                    # ── Compensate missing words (one-by-one, non-streaming) ──
+                    # The stream either failed entirely or returned fewer words
+                    # than requested — re-request each missing word as its own
+                    # small request (higher success rate than a big batch).
+                    if stream_failed:
+                        results = []  # 成功路径中 results 已在上方解析赋值
+                    for w in self._missing_words(words_batch, results):
+                        one = await self._request_word_batch(
+                            para_index, [w], sentence, sentence_translation,
+                            system_prompt_override=system_prompt_override,
+                            user_prompt_override=user_prompt_override,
+                        )
+                        if one:
+                            results.extend(one)
+
+                    await _push_batch(results)
             except Exception:
                 # ── Catch-all: prevent any unhandled exception from
                 # deadlocking the main event loop.  This must ALWAYS push a
@@ -760,21 +904,22 @@ class AIService:
                     "results": [],
                     "words": words_batch,
                     "para_index": para_index,
+                    "missing": [
+                        {"para_index": para_index, "word": w} for w in words_batch
+                    ],
                 })
 
-        # ── Group entries by (paragraph_index, sentence) ──────────
-        entries.sort(key=lambda e: (e["paragraph_index"], e.get("sentence", "")))
-        grouped: dict[tuple[int, str], list[dict]] = {}
+        # ── Group entries by paragraph — all words in the same paragraph
+        # share the full paragraph text as context (one prompt per batch). ──
+        grouped: dict[int, list[dict]] = {}
         for e in entries:
-            key = (e["paragraph_index"], e.get("sentence", ""))
-            if key not in grouped:
-                grouped[key] = []
-            grouped[key].append(e)
+            grouped.setdefault(e["paragraph_index"], []).append(e)
 
         # Build indexed batch list
         indexed_batches: list[tuple[int, int, list[str], str, str | None]] = []
         batch_id = 0
-        for (para_index, sentence), group_entries in grouped.items():
+        for para_index, group_entries in grouped.items():
+            sentence = group_entries[0].get("sentence", "")
             sentence_translation = group_entries[0].get("sentence_translation")
             for i in range(0, len(group_entries), batch_size):
                 chunk = group_entries[i : i + batch_size]
@@ -790,6 +935,9 @@ class AIService:
         queue: asyncio.Queue[dict] = asyncio.Queue()
         total_batches = len(indexed_batches)
         completed_batches = 0
+        # 收集各批次补偿后仍缺失的单词, 最后汇总为 incomplete 事件
+        all_missing: list[dict] = []
+        remaining_batch_ids = {b[0] for b in indexed_batches}
 
         # Launch all workers concurrently
         tasks = [
@@ -797,19 +945,15 @@ class AIService:
             for bid, pi, wb, s, st in indexed_batches
         ]
 
-        # Stream events as they arrive — chunks AND batch results
-        # Per-event timeout (seconds): if no event arrives within this window
-        # the loop aborts to prevent a deadlocked SSE connection.
-        EVENT_TIMEOUT = 180  # 3 min — generous for slow AI generation
+        # Stream events as they arrive — chunks AND batch results.
+        # 无事件时 (慢批次/排队) 发心跳保持 SSE 活跃 — 前端 120s 读超时
+        # 不会误杀长时间等待的长任务; 客户端断开时生成器自然终止。
         while completed_batches < total_batches:
             try:
-                event = await asyncio.wait_for(queue.get(), timeout=EVENT_TIMEOUT)
+                event = await asyncio.wait_for(queue.get(), timeout=self.heartbeat_interval)
             except asyncio.TimeoutError:
-                logger.error(
-                    "Word analysis stream timed out after %ds — %d/%d batches completed",
-                    EVENT_TIMEOUT, completed_batches, total_batches,
-                )
-                break
+                yield {"type": "heartbeat"}
+                continue
             if event.get("type") == "batch":
                 # Check for fatal error sentinel
                 if (
@@ -821,7 +965,28 @@ class AIService:
                         t.cancel()
                     raise ValueError(event["results"][0]["__error__"])
                 completed_batches += 1
+                remaining_batch_ids.discard(event.get("batch_id"))
+                all_missing.extend(event.get("missing", []))
             yield event
+
+        # 早退 (超时): 未完成批次的单词全部视为缺失, 并取消剩余任务
+        if completed_batches < total_batches:
+            for bid, pi, wb, s, st in indexed_batches:
+                if bid in remaining_batch_ids:
+                    all_missing.extend({"para_index": pi, "word": w} for w in wb)
+            for t in tasks:
+                t.cancel()
+
+        # 汇总缺失单词 → incomplete 事件 (去重, 前端据此提示用户)
+        if all_missing:
+            seen = set()
+            deduped: list[dict] = []
+            for m in all_missing:
+                key = (m.get("para_index"), m.get("word", "").lower())
+                if key not in seen:
+                    seen.add(key)
+                    deduped.append(m)
+            yield {"type": "incomplete", "words": deduped}
 
         # Ensure all tasks are done
         await asyncio.gather(*tasks, return_exceptions=True)
@@ -881,7 +1046,8 @@ class AIService:
                     "model": self.model,
                     "messages": messages,
                     "temperature": 0.3,
-                    "max_tokens": max(512, min(len(sentence_text) * 400, 4096)),
+                    "max_tokens": max(2048, min(len(sentence_text) * 400, 4096)),
+                    "thinking": {"type": "disabled"},
                 }
 
                 for attempt in range(3):
@@ -983,7 +1149,8 @@ class AIService:
                     "model": self.model,
                     "messages": messages,
                     "temperature": 0.3,
-                    "max_tokens": max(512, min(len(sentence_text) * 400, 4096)),
+                    "max_tokens": max(2048, min(len(sentence_text) * 400, 4096)),
+                    "thinking": {"type": "disabled"},
                     "stream": True,
                 }
 
@@ -1092,9 +1259,14 @@ class AIService:
         # Launch all workers concurrently
         tasks = [asyncio.create_task(_stream_one(e)) for e in entries]
 
-        # Stream events as they arrive — chunks AND batch results
+        # Stream events as they arrive — chunks AND batch results.
+        # 无事件时发心跳保活, 防止前端读超时误杀慢句子。
         while completed < total:
-            event = await queue.get()
+            try:
+                event = await asyncio.wait_for(queue.get(), timeout=self.heartbeat_interval)
+            except asyncio.TimeoutError:
+                yield {"type": "heartbeat"}
+                continue
             if event.get("type") == "batch":
                 results = event.get("results", [])
                 # Check for fatal error sentinel

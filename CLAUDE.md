@@ -194,6 +194,8 @@ stores/
 - Celery tasks 仅在 `celery_app is not None` 时动态定义
 - 所有 AI 端点接受可选 `api_key` + `system_prompt_override`/`user_prompt_override`
 - `_SafeDict` 使未知占位符保留原文; `_is_fatal_error()` 区分认证错误和瞬时错误
+- 单词分析防丢失: `_request_word_batch()` + `_missing_words()` 做单词级补偿 — AI 批次返回不全/失败时对缺失单词逐词补发; 补偿仍失败则通过 SSE `incomplete` 事件上报, 前端明确提示缺失单词(绝不静默丢弃)
+- 单词分析按**段落分组**(非句子): 同段落单词共享完整段落原文作为上下文 (`{paragraph}` 占位符), 每批 ≤8 词; 兼容旧自定义模板保留 `{sentence}` 占位符(同值填充)
 - 校对页 `updateParagraphs` 批量保存, `deleteParagraph`/`mergeParagraphs` 自动重排索引; `reorderParagraphs` 同步更新页码
 - `PromptEditorModal.tsx` 是死代码 — Prompt 编辑唯一入口在管理后台 `/admin/prompts`
 - 后端安装了但未实际使用的包: `python-docx`, `python-jose`/`passlib`(认证预留), `slowapi`(限流预留), `aiofiles`

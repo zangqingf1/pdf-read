@@ -372,6 +372,10 @@
   .word-token,
   .sentence-token {
     padding: 3px 4px;
+    /* Prevent native text selection/callout when long-pressing to select a sentence */
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
   }
 
   button[class*="h-8"],
