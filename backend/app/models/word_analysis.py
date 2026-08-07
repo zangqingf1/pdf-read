@@ -2,12 +2,16 @@
 
 import uuid
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from sqlalchemy import UniqueConstraint, ForeignKey, Text, Integer, String, DateTime
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 
 from app.database import Base
+
+if TYPE_CHECKING:
+    from app.models.document import Document
 
 
 class WordAnalysis(Base):

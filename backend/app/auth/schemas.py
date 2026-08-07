@@ -1,6 +1,5 @@
 """Auth schemas — Pydantic models for registration, login, and user responses."""
 
-import uuid
 from datetime import datetime
 
 from pydantic import BaseModel, EmailStr, Field

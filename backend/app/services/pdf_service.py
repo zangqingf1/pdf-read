@@ -6,7 +6,7 @@ Follows TECH_DESING.md section 3.2 — F01 PDF import and text extraction.
 import os
 import uuid
 import logging
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Optional
 
 from fastapi import UploadFile

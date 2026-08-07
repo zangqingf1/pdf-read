@@ -10,7 +10,10 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
 
 if TYPE_CHECKING:
+    from app.models.paragraph import Paragraph
+    from app.models.sentence_analysis import SentenceAnalysis
     from app.models.user import User
+    from app.models.word_analysis import WordAnalysis
 
 
 class Document(Base):

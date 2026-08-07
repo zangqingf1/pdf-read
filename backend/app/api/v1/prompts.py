@@ -220,7 +220,7 @@ async def promote_to_default(
 
     # Find the custom row
     stmt = select(PromptTemplate).where(
-        and_(PromptTemplate.name == name, PromptTemplate.is_default == False)
+        and_(PromptTemplate.name == name, ~PromptTemplate.is_default)
     )
     result = await db.execute(stmt)
     custom = result.scalars().first()
@@ -233,7 +233,7 @@ async def promote_to_default(
 
     # Upsert the default row with custom's content
     stmt2 = select(PromptTemplate).where(
-        and_(PromptTemplate.name == name, PromptTemplate.is_default == True)
+        and_(PromptTemplate.name == name, PromptTemplate.is_default)
     )
     result2 = await db.execute(stmt2)
     default_row = result2.scalars().first()
