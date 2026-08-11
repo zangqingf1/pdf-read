@@ -3,8 +3,8 @@ import { useState } from 'react';
 import { useDocumentStore } from '../../stores/documentStore';
 import { useReaderStore, BG_COLORS } from '../../stores/readerStore';
 import TypographyDrawer from './TypographyDrawer';
-import Button from '../ui/Button';
 import ExportButton from '../export/ExportButton';
+import Button from '../ui/Button';
 
 export default function ReaderHeader() {
   const navigate = useNavigate();
@@ -36,7 +36,7 @@ export default function ReaderHeader() {
         </h2>
       </div>
 
-      {/* Right: export + font size & typography (mobile only) */}
+      {/* Right: export + typography settings (mobile only) */}
       <div className="flex items-center gap-0.5 md:gap-1 flex-shrink-0">
         <ExportButton />
 

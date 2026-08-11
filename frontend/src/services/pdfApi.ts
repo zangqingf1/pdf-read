@@ -146,6 +146,12 @@ export async function fetchPDFBlob(taskId: string): Promise<Blob> {
   return data;
 }
 
+/** 导出 PDF：POST 序列化 HTML → 后端 Chrome 无头渲染 → 文件流 */
+export async function exportPdf(html: string): Promise<Blob> {
+  const { data } = await api.post('/pdf/export', { html }, { responseType: 'blob', timeout: 120000 });
+  return data;
+}
+
 export async function deleteDocument(taskId: string): Promise<void> {
   await api.delete(`/pdf/documents/${taskId}`);
 }

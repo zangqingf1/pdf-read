@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef, isValidElement } from 'react';
+import { useState, useCallback, useEffect, useRef, isValidElement, Fragment } from 'react';
 import { flushSync } from 'react-dom';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -7,6 +7,7 @@ import { useReaderStore, WORD_PANEL_FONT_SIZE_MIN, WORD_PANEL_FONT_SIZE_MAX, BG_
 import { deleteWordAnalysis, deleteAllWordAnalyses, WordAnalysisResult } from '../../services/wordAnalysisApi';
 import { deleteSentenceAnalysis, deleteAllSentenceAnalyses } from '../../services/sentenceAnalysisApi';
 import type { SentenceAnalysisResult } from '../../services/sentenceAnalysisApi';
+import { sentenceBodyMarkdown, sentenceBreakdownChunks } from '../../utils/sentenceSections';
 import EmptyState from '../ui/EmptyState';
 import Button from '../ui/Button';
 import PhoneticWithSpeakers from './PhoneticWithSpeakers';
@@ -394,6 +395,22 @@ function SentenceContent({ content }: { content: string }) {
   );
 }
 
+/** 句子卡标题：原句拆解直接作为标题（语块间高亮 / 分隔，完整显示）；旧数据回退原句纯文本 */
+function SentenceTitle({ analysis }: { analysis: SentenceAnalysisResult }) {
+  const chunks = sentenceBreakdownChunks(analysis.content);
+  if (!chunks) return <>{analysis.sentence_text}</>;
+  return (
+    <>
+      {chunks.map((chunk, i) => (
+        <Fragment key={i}>
+          {i > 0 && <span className="text-primary font-bold mx-0.5"> / </span>}
+          {chunk}
+        </Fragment>
+      ))}
+    </>
+  );
+}
+
 function SentenceCard({
   analysis,
   onScrollToParagraph,
@@ -426,11 +443,11 @@ function SentenceCard({
       {/* Header: sentence text + delete */}
       <div className="flex items-start justify-between mb-3">
         <span
-          className="font-semibold text-ink cursor-pointer hover:text-primary transition-colors leading-snug text-sm line-clamp-2 font-reading"
+          className="font-semibold text-ink cursor-pointer hover:text-primary transition-colors leading-snug text-sm font-reading"
           onClick={() => onScrollToParagraph(analysis.paragraph_index)}
           title="点击定位到原文位置"
         >
-          {analysis.sentence_text}
+          <SentenceTitle analysis={analysis} />
         </span>
 
         {confirming ? (
@@ -462,8 +479,8 @@ function SentenceCard({
         )}
       </div>
 
-      {/* Content: 原句拆解/理解拆解/阅读线索/地道翻译 */}
-      <SentenceContent content={analysis.content} />
+      {/* Content: 理解拆解/阅读线索/地道翻译（原句拆解已上移标题） */}
+      <SentenceContent content={sentenceBodyMarkdown(analysis.content)} />
     </div>
   );
 }

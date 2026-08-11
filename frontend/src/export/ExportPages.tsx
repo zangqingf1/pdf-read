@@ -1,0 +1,137 @@
+/**
+ * 分页文档 DOM：预览（ep-preview：多页纵向排列 + 纸张阴影）与
+ * 导出（无 ep-preview 类，@media print 每页 div 一页）共用同一实现。
+ * 每页 = 页眉（标题+日期）+ 页体（左右栏条目）+ 页脚（页码）。
+ */
+import type { CSSProperties, ReactNode } from 'react';
+import {
+  renderWholeBlock,
+  renderParagraphFrag,
+  renderSentenceFrag,
+  parseSentenceFragId,
+  wordCardFragRows,
+  type BlockCtx,
+} from './exportBlocks';
+import type { PageItem, PagePlan, ParagraphFragDef } from './paginate';
+import { PAPER_SIZES, mmToPx, PAGE_PADDING, COL_GAP } from './exportTypes';
+import type { ExportData } from './data';
+import type { ExportPreferences } from './exportTypes';
+
+interface ExportPagesProps {
+  data: ExportData;
+  prefs: ExportPreferences;
+  plan: PagePlan;
+  /** 预览模式：多页纵向排列 + 纸张外观（导出时无） */
+  preview?: boolean;
+}
+
+function renderPageItem(item: PageItem, ctx: BlockCtx, plan: PagePlan): ReactNode {
+  // 卡片碎片（句子卡/单词卡）
+  if (item.frag && 'fragId' in item.frag) {
+    const fragId = item.frag.fragId;
+    const parsed = parseSentenceFragId(fragId);
+    if (parsed) {
+      const analysis = ctx.data.sentences.find(
+        (s) => s.paragraph_index === parsed.pi && s.sentence_index === parsed.si
+      );
+      if (analysis) {
+        return (
+          <div key={fragId}>{renderSentenceFrag(analysis, fragId, plan.contBefore.has(fragId), ctx.prefs)}</div>
+        );
+      }
+      return null;
+    }
+    const wm = fragId.match(/^w:(\d+):(.+):f(\d+)$/);
+    if (wm) {
+      const pi = Number(wm[1]);
+      const analysis = ctx.data.words.find((w) => w.paragraph_index === pi && w.word === wm[2]);
+      if (analysis) {
+        const row = wordCardFragRows(analysis, ctx.prefs)[Number(wm[3])];
+        if (row) {
+          return (
+            <div key={fragId}>
+              {plan.contBefore.has(fragId) && <div className="ep-cont">— 续</div>}
+              <div className="ep-frag" id={fragId}>{row.node}</div>
+            </div>
+          );
+        }
+      }
+      return null;
+    }
+    return null;
+  }
+  // 段落碎片（跨页续排）
+  if (item.frag) {
+    const pm = item.blk.match(/^p:(\d+)$/);
+    if (pm) {
+      return (
+        <div key={item.blk}>{renderParagraphFrag(Number(pm[1]), item.frag as ParagraphFragDef, ctx)}</div>
+      );
+    }
+    return null;
+  }
+  // 解析组续页标记（装箱期合成：解析组跨页时续页顶部）
+  const gcm = item.blk.match(/^gcont:(\d+)$/);
+  if (gcm) {
+    return <div key={item.blk} className="ep-cont">第 {Number(gcm[1]) + 1} 段 · 续</div>;
+  }
+  // 整块（padTop 物化锚点对齐间隙：渲染 margin-top 后模型 y 与 DOM 几何一致）
+  return (
+    <div key={item.blk} style={item.padTop ? { marginTop: item.padTop } : undefined}>
+      {renderWholeBlock(item.blk, ctx)}
+    </div>
+  );
+}
+
+export default function ExportPages({ data, prefs, plan, preview = false }: ExportPagesProps) {
+  const paper = PAPER_SIZES[prefs.paperSize];
+  const ctx: BlockCtx = { data, prefs };
+  const exportedDate = new Date().toISOString().slice(0, 10);
+  const single = prefs.singleColumn;
+
+  // 左右栏宽度（与测量树一致：mm→px 页宽 - padding*2，按比例分配）
+  const contentW = mmToPx(paper.wMm) - PAGE_PADDING * 2;
+  const leftW = single ? contentW : Math.round((contentW - COL_GAP) * prefs.leftWidthRatio);
+  const rightW = single ? 0 : contentW - COL_GAP - leftW;
+
+  const style = {
+    '--fs-text': `${prefs.fontSizeText}px`,
+    '--fs-translation': `${prefs.fontSizeTranslation}px`,
+    '--fs-summary': `${prefs.fontSizeSummary}px`,
+    '--fs-word': `${prefs.fontSizeWord}px`,
+    '--fs-sentence': `${prefs.fontSizeSentence}px`,
+  } as CSSProperties;
+
+  return (
+    <div
+      className={`export-doc theme-${prefs.theme} export-doc-pages${preview ? ' ep-preview' : ''}`}
+      style={style}
+      data-page-count={plan.totalPages}
+    >
+      {plan.pages.map((p, i) => (
+        <div className={`ep-page ${prefs.paperSize}`} key={i}>
+          {/* 页眉：左标题 + 右日期 */}
+          <div className="ep-page-head">
+            <span className="ph-title">{data.title}</span>
+            <span className="ph-date">{exportedDate}</span>
+          </div>
+          {/* 页体：左右栏 */}
+          <div className="ep-page-body">
+            <div className="ep-left" style={{ width: leftW }}>
+              {p.left.map((it) => renderPageItem(it, ctx, plan))}
+            </div>
+            {!single && (
+              <div className="ep-right" style={{ width: rightW }}>
+                {p.right.map((it) => renderPageItem(it, ctx, plan))}
+              </div>
+            )}
+          </div>
+          {/* 页脚：页码 */}
+          <div className="ep-page-foot">
+            第 {i + 1} 页 · 共 {plan.totalPages} 页
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}

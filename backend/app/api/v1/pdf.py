@@ -1,12 +1,13 @@
 """F01: PDF upload and text extraction API routes."""
 
+import asyncio
 import json
 import logging
 import os
 import uuid
 
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Depends, BackgroundTasks
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -30,6 +31,7 @@ from app.schemas.pdf import (
     SelectPagesRequest,
     SelectPagesResponse,
     RetryDocumentRequest,
+    PDFExportRequest,
     UpdateParagraphsRequest,
     UpdateParagraphsResponse,
     DeleteParagraphResponse,
@@ -38,7 +40,15 @@ from app.schemas.pdf import (
     ReorderParagraphsRequest,
     ReorderParagraphsResponse,
 )
+from app.config import settings
 from app.services.pdf_service import pdf_service
+from app.services.export_service import (
+    ChromeRenderError,
+    ChromeTimeoutError,
+    ChromeUnavailableError,
+    pdf_render_semaphore,
+    render_html_to_pdf,
+)
 
 router = APIRouter()
 
@@ -825,4 +835,39 @@ async def retry_document(
     raise HTTPException(
         status_code=400,
         detail=f"Cannot retry document with status '{document.parse_status}'",
+    )
+
+
+@router.post("/export")
+async def export_pdf(
+    body: PDFExportRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """导出 PDF：接收序列化 HTML → Chrome 无头渲染 → 返回文件流。
+
+    纸张尺寸由 HTML 内 @page 规则控制；文件名由前端 <a download> 指定。
+    """
+    max_bytes = settings.PDF_EXPORT_HTML_MAX_MB * 1024 * 1024
+    if len(body.html.encode("utf-8")) > max_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail=f"导出内容过大（>{settings.PDF_EXPORT_HTML_MAX_MB}MB），请减少内容后重试",
+        )
+    try:
+        async with pdf_render_semaphore:
+            pdf_bytes = await asyncio.to_thread(render_html_to_pdf, body.html)
+    except ChromeUnavailableError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="服务器未安装 Chrome/Edge，无法生成 PDF。请联系管理员安装或配置 CHROME_PATH",
+        ) from exc
+    except ChromeTimeoutError as exc:
+        raise HTTPException(status_code=504, detail="PDF 生成超时，请重试或减少导出内容") from exc
+    except ChromeRenderError as exc:
+        _logger.exception("Chrome PDF render failed")
+        raise HTTPException(status_code=502, detail="PDF 生成失败，请稍后重试") from exc
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": 'attachment; filename="export.pdf"'},
     )

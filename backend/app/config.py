@@ -45,6 +45,13 @@ class Settings(BaseSettings):
     # Full-document summary
     SUMMARY_MAX_CHARS: int = 30000  # 拼装后的全文最大字符数（超出部分 head+tail 截断）
 
+    # Chrome headless PDF export（留空自动探测 PATH / 常见安装路径）
+    CHROME_PATH: str = ""
+    PDF_EXPORT_HTML_MAX_MB: int = 5
+    PDF_EXPORT_TIMEOUT_SECONDS: int = 45
+    PDF_EXPORT_CONCURRENCY: int = 2
+    PDF_EXPORT_VIRTUAL_TIME_MS: int = 5000
+
 
     class Config:
         env_file = ".env"

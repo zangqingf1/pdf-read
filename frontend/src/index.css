@@ -405,3 +405,491 @@
 .animate-slide-up {
   animation: slide-up 0.3s ease-out;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   导出 PDF 文档样式（.export-doc 作用域）
+   预览（modal 内 zoom 缩放实例）与打印（body 级 portal 实例）共用，
+   全部使用具体 hex 变量，不依赖 Tailwind 类。
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* ── 主题变量（三套）── */
+.export-doc.theme-warm {
+  --paper: #ffffff;
+  --card: #faf9f5;
+  --accent: #cc785c;
+  --ink: #141413;
+  --body: #3d3d3a;
+  --muted: #6c6a64;
+  --line: #e6dfd8;
+  --sec1: #fdf3ef; --sec1c: #b85c3a; --sec1b: #e8b4a0;
+  --sec2: #f0f7f1; --sec2c: #4a7c59; --sec2b: #a3d4a8;
+  --sec3: #eef2f8; --sec3c: #5a6d8a; --sec3b: #a8b8d4;
+  --sec4: #fdf6e3; --sec4c: #8a6d3b; --sec4b: #e6d5a0;
+  --tag-syn: #f0f7f1; --tag-synb: #c8e6c9; --tag-sync: #2e5e3c;
+  --tag-cog: #fdf3ef; --tag-cogb: #e8c4b0; --tag-cogc: #7a4228;
+  --hl-word: #5db872; --hl-word-bg: rgba(93, 184, 114, 0.18);
+  --hl-sent: #cc785c; --hl-sent-bg: #fdf3ef;
+}
+.export-doc.theme-bw {
+  --paper: #ffffff;
+  --card: #fafafa;
+  --accent: #111111;
+  --ink: #111111;
+  --body: #333333;
+  --muted: #888888;
+  --line: #dddddd;
+  --sec1: #f2f2f2; --sec1c: #555555; --sec1b: #d5d5d5;
+  --sec2: #f2f2f2; --sec2c: #555555; --sec2b: #d5d5d5;
+  --sec3: #f2f2f2; --sec3c: #555555; --sec3b: #d5d5d5;
+  --sec4: #f2f2f2; --sec4c: #555555; --sec4b: #d5d5d5;
+  --tag-syn: #f5f5f5; --tag-synb: #d9d9d9; --tag-sync: #4a4a4a;
+  --tag-cog: #f5f5f5; --tag-cogb: #d9d9d9; --tag-cogc: #4a4a4a;
+  --hl-word: #444444; --hl-word-bg: #f2f2f2;
+  --hl-sent: #444444; --hl-sent-bg: #f2f2f2;
+}
+.export-doc.theme-academic {
+  --paper: #ffffff;
+  --card: #f5f8fc;
+  --accent: #2e5e8e;
+  --ink: #16222e;
+  --body: #3a4a5a;
+  --muted: #6b7c8d;
+  --line: #d5e0ee;
+  --sec1: #fdf3ef; --sec1c: #b85c3a; --sec1b: #e8b4a0;
+  --sec2: #f0f7f1; --sec2c: #4a7c59; --sec2b: #a3d4a8;
+  --sec3: #eef2f8; --sec3c: #5a6d8a; --sec3b: #a8b8d4;
+  --sec4: #fdf6e3; --sec4c: #8a6d3b; --sec4b: #e6d5a0;
+  --tag-syn: #f0f7f1; --tag-synb: #c8e6c9; --tag-sync: #2e5e3c;
+  --tag-cog: #fdf3ef; --tag-cogb: #e8c4b0; --tag-cogc: #7a4228;
+  --hl-word: #4a7c59; --hl-word-bg: rgba(74, 124, 89, 0.15);
+  --hl-sent: #5a6d8a; --hl-sent-bg: rgba(90, 109, 138, 0.15);
+}
+
+/* ── 基础 ── */
+.export-doc,
+.export-doc * {
+  box-sizing: border-box;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+.export-doc {
+  background: var(--paper);
+  color: var(--body);
+  font-family: Georgia, 'Times New Roman', serif;
+  /* width/min-height 由组件 inline 设置 */
+}
+.export-doc .ep-pad {
+  padding: 32px;
+}
+.export-doc .ep-zh,
+.export-doc .ep-summary-body,
+.export-doc .s-body,
+.export-doc .ep-tag {
+  font-family: 'PingFang SC', 'Noto Sans SC', 'Microsoft YaHei', 'Hiragino Sans GB', sans-serif;
+}
+
+/* ── 版式 ── */
+.export-doc .ep-body {
+  display: flex;
+  gap: 20px;
+  align-items: flex-start;
+}
+.export-doc .ep-left,
+.export-doc .ep-right {
+  min-width: 0;
+}
+/* 单栏版式（打印兼容兜底） */
+.export-doc .ep-body.ep-single {
+  display: block;
+}
+
+/* ── 栏头 ── */
+.export-doc .ep-col-head {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 6px;
+  margin-bottom: 12px;
+  break-after: avoid;
+}
+
+/* ── 标题 ── */
+.export-doc .ep-title {
+  break-inside: avoid;
+  margin-bottom: 20px;
+}
+.export-doc .ep-title h1 {
+  margin: 0 0 4px;
+  font-size: calc(var(--fs-text) + 8px);
+  font-weight: 700;
+  color: var(--ink);
+  line-height: 1.3;
+}
+.export-doc .ep-source {
+  margin: 0 0 2px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--body);
+}
+.export-doc .ep-meta {
+  margin: 0;
+  font-size: 11px;
+  color: var(--muted);
+  letter-spacing: 0.04em;
+}
+
+/* ── 段落（原文 + 译文）── */
+.export-doc .ep-paragraph {
+  break-inside: avoid;
+  margin-bottom: 14px;
+}
+.export-doc .ep-en {
+  font-size: var(--fs-text);
+  line-height: 1.65;
+  color: var(--ink);
+  text-align: justify;
+  text-indent: 2em; /* 英文段落首行缩进 2 字符 */
+  orphans: 2;
+  widows: 2;
+}
+/* 续排片段非段首：不缩进 */
+.export-doc .ep-en-cont {
+  text-indent: 0;
+}
+.export-doc .ep-zh {
+  font-size: var(--fs-translation);
+  line-height: 1.7;
+  color: var(--body);
+  margin-top: 6px;
+  padding-left: 10px;
+  border-left: 2px solid var(--accent);
+  orphans: 2;
+  widows: 2;
+}
+
+/* ── 原文高亮（已解析单词/句子）── */
+.export-doc .ep-token-w {
+  border-bottom: 2px solid var(--hl-word);
+  font-weight: 600;
+  background: var(--hl-word-bg);
+  border-radius: 2px;
+}
+.export-doc .ep-token-s {
+  border-bottom: 2px dashed var(--hl-sent);
+  font-weight: 600;
+  background: var(--hl-sent-bg);
+  border-radius: 2px;
+}
+
+/* ── 卡片（单词/句子）── */
+.export-doc .ep-card {
+  break-inside: avoid;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 8px 10px;
+  margin-bottom: 10px;
+}
+
+/* ── 单词卡六行 ── */
+.export-doc .w-word {
+  font-size: calc(var(--fs-word) + 4px);
+  font-weight: 700;
+  color: var(--ink);
+  line-height: 1.4;
+}
+.export-doc .w-phon {
+  font-size: var(--fs-word);
+  color: var(--muted);
+  margin-top: 1px;
+  font-family: 'Segoe UI', 'Arial Unicode MS', Arial, sans-serif;
+}
+.export-doc .w-def {
+  font-size: var(--fs-word);
+  line-height: 1.55;
+  margin-top: 2px;
+}
+.export-doc .w-pos {
+  font-style: italic;
+  color: var(--accent);
+  margin-right: 3px;
+}
+.export-doc .w-def-en {
+  margin-left: 1px;
+}
+.export-doc .w-def-zh {
+  color: var(--muted);
+  margin-left: 5px;
+}
+.export-doc .w-base {
+  font-size: var(--fs-word);
+  margin-top: 3px;
+}
+.export-doc .w-tags {
+  font-size: var(--fs-word);
+  margin-top: 3px;
+  line-height: 1.7;
+}
+.export-doc .w-tag-lbl {
+  display: inline-block;
+  font-size: 0.9em;
+  font-weight: 600;
+  color: var(--muted);
+  margin-right: 5px;
+}
+.export-doc .ep-tag {
+  display: inline-block;
+  font-size: 0.9em;
+  border: 1px solid;
+  border-radius: 4px;
+  padding: 0 5px;
+  margin: 0 4px 3px 0;
+}
+.export-doc .ep-tag-syn {
+  background: var(--tag-syn);
+  border-color: var(--tag-synb);
+  color: var(--tag-sync);
+}
+.export-doc .ep-tag-cog {
+  background: var(--tag-cog);
+  border-color: var(--tag-cogb);
+  color: var(--tag-cogc);
+}
+
+/* ── 句子卡 ── */
+.export-doc .s-head {
+  border-left: 3px solid var(--accent);
+  padding-left: 8px;
+  margin-bottom: 6px;
+  font-size: var(--fs-sentence);
+  font-weight: 600;
+  color: var(--ink);
+  line-height: 1.5;
+}
+.export-doc .ep-chunk-sep {
+  color: var(--accent);
+  font-weight: 700;
+  margin: 0 2px;
+}
+.export-doc .s-body {
+  font-size: var(--fs-sentence);
+  line-height: 1.6;
+  color: var(--body);
+  orphans: 2;
+  widows: 2;
+}
+.export-doc .s-body p {
+  margin: 0 0 5px;
+}
+.export-doc .s-body p:last-child {
+  margin-bottom: 0;
+}
+.export-doc .s-body ul,
+.export-doc .s-body ol {
+  margin: 0 0 5px;
+  padding-left: 18px;
+}
+.export-doc .ep-sec-label {
+  display: inline-block;
+  font-size: 0.92em;
+  font-weight: 600;
+  padding: 0 6px;
+  border-radius: 4px;
+  border: 1px solid;
+  margin-right: 5px;
+  vertical-align: middle;
+}
+.export-doc .ep-sec-1 { background: var(--sec1); color: var(--sec1c); border-color: var(--sec1b); }
+.export-doc .ep-sec-2 { background: var(--sec2); color: var(--sec2c); border-color: var(--sec2b); }
+.export-doc .ep-sec-3 { background: var(--sec3); color: var(--sec3c); border-color: var(--sec3b); }
+.export-doc .ep-sec-4 { background: var(--sec4); color: var(--sec4c); border-color: var(--sec4b); }
+
+/* ── 右栏分组 ── */
+.export-doc .ep-group-head {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  border-bottom: 1px dashed var(--line);
+  padding-bottom: 4px;
+  margin: 14px 0 8px;
+  break-after: avoid;
+}
+.export-doc .ep-group-head:first-child {
+  margin-top: 0;
+}
+
+/* ── 全文总结 ── */
+.export-doc .ep-summary {
+  margin-top: 24px;
+  border-top: 2px solid var(--line);
+  padding-top: 14px;
+}
+.export-doc .ep-summary-title {
+  font-size: calc(var(--fs-summary) + 5px);
+  font-weight: 700;
+  color: var(--ink);
+  margin: 0 0 8px;
+  break-after: avoid;
+}
+.export-doc .ep-summary-body {
+  font-size: var(--fs-summary);
+  line-height: 1.75;
+  color: var(--body);
+  orphans: 2;
+  widows: 2;
+}
+.export-doc .ep-summary-body p {
+  margin: 0 0 8px;
+}
+.export-doc .ep-summary-body p:last-child {
+  margin-bottom: 0;
+}
+.export-doc .ep-summary-body ul,
+.export-doc .ep-summary-body ol {
+  margin: 0 0 8px;
+  padding-left: 20px;
+}
+.export-doc .ep-summary-body h1,
+.export-doc .ep-summary-body h2,
+.export-doc .ep-summary-body h3 {
+  font-size: 1.1em;
+  font-weight: 700;
+  color: var(--ink);
+  margin: 10px 0 6px;
+}
+.export-doc .ep-summary-body strong {
+  font-weight: 600;
+  color: var(--ink);
+}
+
+/* ── 分页（每页一张纸）── */
+.export-doc .ep-page {
+  display: flex;
+  flex-direction: column;
+  padding: 32px;
+  background: var(--paper);
+  overflow: hidden;
+  break-inside: avoid;
+}
+.export-doc .ep-page.a4 { width: 210mm; height: 297mm; }
+.export-doc .ep-page.a5 { width: 148mm; height: 210mm; }
+.export-doc .ep-page.letter { width: 215.9mm; height: 279.4mm; }
+
+/* ── 页眉：左标题 + 右日期 ── */
+.export-doc .ep-page-head {
+  flex-shrink: 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 11px;
+  color: var(--muted);
+  padding-bottom: 6px;
+  margin-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+}
+.export-doc .ph-title {
+  font-weight: 600;
+  color: var(--ink);
+  max-width: 70%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── 页体：左右栏 ── */
+.export-doc .ep-page-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  gap: 20px;
+}
+.export-doc .ep-page-body .ep-left,
+.export-doc .ep-page-body .ep-right {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.export-doc .ep-page-body > *:first-child {
+  margin-top: 0 !important;
+}
+/* 页尾条目去底距：分页按「行高」计账不预留条目尾 margin，
+   页尾条目的该 margin（折叠在包裹 div 上）形成文末到页脚的多余空白，这里裁掉 */
+.export-doc .ep-page-body .ep-left > :last-child > *,
+.export-doc .ep-page-body .ep-right > :last-child > * {
+  margin-bottom: 0;
+}
+
+/* ── 页脚：页码 ── */
+.export-doc .ep-page-foot {
+  flex-shrink: 0;
+  display: flex;
+  justify-content: center;
+  font-size: 11px;
+  color: var(--muted);
+  border-top: 1px solid var(--line);
+  padding-top: 5px;
+  margin-top: 10px;
+}
+
+/* ── 续排片段与碎片 ── */
+.export-doc .ep-cont {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent);
+  border-bottom: 1px dashed var(--line);
+  padding-bottom: 3px;
+  margin-bottom: 8px;
+}
+.export-doc .ep-frag {
+  margin: 0 0 7px;
+}
+.export-doc .ep-frag:last-child {
+  margin-bottom: 0;
+}
+.export-doc .ep-frag p {
+  margin: 0;
+}
+.export-doc .ep-card-split {
+  padding: 0 12px;
+}
+.export-doc .ep-empty {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.6;
+  border: 1px dashed var(--line);
+  border-radius: 6px;
+  padding: 10px;
+}
+.export-doc .ep-summary-title {
+  border-top: 2px solid var(--line);
+  padding-top: 14px;
+}
+
+/* ── 预览外观（多页纵向排列 + 纸张阴影；导出/打印时无）── */
+.export-doc-pages.ep-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+}
+.export-doc-pages.ep-preview .ep-page {
+  box-shadow: 0 2px 16px rgba(0, 0, 0, 0.12);
+  border-radius: 3px;
+}
+
+/* ── 打印：每页 div 恰好一页（页间严禁 margin/gap，会推动错页）── */
+@media print {
+  .export-doc-pages .ep-page {
+    break-after: page;
+  }
+  .export-doc-pages .ep-page:last-child {
+    break-after: auto;
+  }
+  body {
+    margin: 0;
+    padding: 0;
+  }
+}

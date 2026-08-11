@@ -1,10 +1,11 @@
-import { useState, useCallback, useEffect, isValidElement } from 'react';
+import { useState, useCallback, useEffect, isValidElement, Fragment } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useDocumentStore } from '../../stores/documentStore';
 import { useReaderStore } from '../../stores/readerStore';
 import { deleteWordAnalysis, type WordAnalysisResult } from '../../services/wordAnalysisApi';
 import { deleteSentenceAnalysis, type SentenceAnalysisResult } from '../../services/sentenceAnalysisApi';
+import { sentenceBodyMarkdown, sentenceBreakdownChunks } from '../../utils/sentenceSections';
 import PhoneticWithSpeakers from './PhoneticWithSpeakers';
 import { prefetchSpeak } from '../../utils/speak';
 
@@ -178,6 +179,22 @@ const SENTENCE_HEADER_STYLES: Record<string, string> = {
   译文: 'bg-[#eef2f8] text-[#5a6d8a] border border-[#a8b8d4]',
 };
 
+/** 句子卡标题：原句拆解直接作为标题（语块间高亮 / 分隔，完整显示）；旧数据回退原句纯文本 */
+function FocusedSentenceTitle({ analysis }: { analysis: SentenceAnalysisResult }) {
+  const chunks = sentenceBreakdownChunks(analysis.content);
+  if (!chunks) return <>{analysis.sentence_text}</>;
+  return (
+    <>
+      {chunks.map((chunk, i) => (
+        <Fragment key={i}>
+          {i > 0 && <span className="text-primary font-bold mx-0.5"> / </span>}
+          {chunk}
+        </Fragment>
+      ))}
+    </>
+  );
+}
+
 function FocusedSentenceCard({
   analysis,
 }: {
@@ -199,10 +216,10 @@ function FocusedSentenceCard({
 
   return (
     <div className="bg-surface-card border border-hairline rounded-lg p-4">
-      {/* Header: sentence text + delete */}
+      {/* Header: 原句拆解直接作为标题 + delete */}
       <div className="flex items-start justify-between mb-3">
-        <span className="font-semibold text-ink leading-snug text-base line-clamp-3 font-reading">
-          {analysis.sentence_text}
+        <span className="font-semibold text-ink leading-snug text-base font-reading">
+          <FocusedSentenceTitle analysis={analysis} />
         </span>
         {confirming ? (
           <div className="flex items-center gap-1 flex-shrink-0 ml-2">
@@ -229,7 +246,7 @@ function FocusedSentenceCard({
         )}
       </div>
 
-      {/* Content: AI analysis markdown */}
+      {/* Content: AI analysis markdown（原句拆解已上移标题） */}
       {analysis.content && (
         <div className="sentence-content text-body leading-relaxed text-sm font-chinese">
           <ReactMarkdown
@@ -283,7 +300,7 @@ function FocusedSentenceCard({
               ol: ({ children, ...props }: any) => <ol className="m-0 mb-1 pl-4 list-decimal" {...props}>{children}</ol>,
             }}
           >
-            {analysis.content}
+            {sentenceBodyMarkdown(analysis.content)}
           </ReactMarkdown>
         </div>
       )}

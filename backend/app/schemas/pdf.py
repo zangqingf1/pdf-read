@@ -142,3 +142,9 @@ class BatchDeleteResponse(BaseModel):
 
 class RetryDocumentRequest(BaseModel):
     mineru_token: str = ""  # User's MinerU token (from frontend localStorage)
+
+
+class PDFExportRequest(BaseModel):
+    """导出 PDF：前端序列化后的完整 HTML（含内联 CSS 与 @page 规则）。"""
+
+    html: str = Field(..., min_length=1)

@@ -5,6 +5,7 @@ import type { ParagraphResult } from '../../services/pdfApi';
 import { useReaderStore, FONT_FAMILIES, LINE_HEIGHTS } from '../../stores/readerStore';
 import { useDocumentStore } from '../../stores/documentStore';
 import { triggerScrollToAnalysis } from './StudyPanel';
+import { splitSentences, tokenizeWords, wordAnalysisKey, sentenceAnalysisKey } from '../../utils/textTokens';
 
 // ── Module-level callback: open focused analysis on mobile ──
 let _onOpenFocusedAnalysis: ((type: 'word' | 'sentence', key: string) => void) | null = null;
@@ -19,14 +20,6 @@ interface ParagraphBlockProps {
   translation?: string;
   isTranslating?: boolean;
   isTouchDevice?: boolean;
-}
-
-/** Split text into sentences. */
-function splitSentences(text: string): { text: string; index: number }[] {
-  const parts = text.split(/(?<=[.!?]["']?)\s+(?=[A-Z"'])/g);
-  return parts
-    .map((s, i) => ({ text: s.trim(), index: i }))
-    .filter((s) => s.text.length > 0);
 }
 
 /** A clickable word token. On mobile, long-press selects the parent sentence. */
@@ -52,10 +45,10 @@ function WordToken({
     toggleWordSelection,
     toggleSentenceSelection,
   } = useDocumentStore();
-  const key = `${paragraphIndex}:${word.toLowerCase()}`;
+  const key = wordAnalysisKey(paragraphIndex, word);
   const isSelected = !!selectedWords[key];
   const hasAnalysis = !!wordAnalyses[key];
-  const sentenceKey = `${paragraphIndex}:${sentenceIndex}`;
+  const sentenceKey = sentenceAnalysisKey(paragraphIndex, sentenceIndex);
   const sentenceHasAnalysis = !!sentenceAnalyses[sentenceKey];
 
   // ── Long press → select sentence or open analysis (mobile only) ──
@@ -149,26 +142,21 @@ function renderTokenizedText(
   sentenceText: string,
   isTouchDevice: boolean,
 ): React.ReactNode {
-  const parts = text.split(/(\s+)/g);
-  return parts.map((part, i) => {
-    if (/^\s+$/.test(part)) return part;
-    if (/[a-zA-Z]/.test(part)) {
-      const word = part.replace(/[^a-zA-Z'-]/g, '');
-      if (word.length > 0) {
-        return (
-          <WordToken
-            key={i}
-            text={part}
-            word={word}
-            paragraphIndex={paragraphIndex}
-            sentenceIndex={sentenceIndex}
-            sentenceText={sentenceText}
-            isTouchDevice={isTouchDevice}
-          />
-        );
-      }
+  return tokenizeWords(text).map((token, i) => {
+    if (token.stem) {
+      return (
+        <WordToken
+          key={i}
+          text={token.raw}
+          word={token.stem}
+          paragraphIndex={paragraphIndex}
+          sentenceIndex={sentenceIndex}
+          sentenceText={sentenceText}
+          isTouchDevice={isTouchDevice}
+        />
+      );
     }
-    return part;
+    return token.raw;
   });
 }
 
@@ -212,7 +200,7 @@ function SentenceToken({
     sentenceAnalyses,
     toggleSentenceSelection,
   } = useDocumentStore();
-  const key = `${paragraphIndex}:${sentence.index}`;
+  const key = sentenceAnalysisKey(paragraphIndex, sentence.index);
   const isSelected = !!selectedSentences[key];
   const hasAnalysis = !!sentenceAnalyses[key];
 
