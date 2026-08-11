@@ -39,4 +39,4 @@ echo "  ╚═══════════════════════
 echo ""
 log_info "如果前端代码也有改动，记得在本地执行 npm run build 后上传 dist:"
 echo "  cd frontend && npm run build"
-echo "  scp -r frontend/dist/ root@47.109.157.191:/opt/pdf-reader/frontend/dist/"
+echo "  scp -r frontend/dist/ root@47.109.147.248:/opt/pdf-reader/frontend/dist/"

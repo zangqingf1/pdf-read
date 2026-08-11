@@ -40,7 +40,7 @@
   --font-display: 'Cormorant Garamond', Garamond, 'Times New Roman', serif;
   --font-reading: Georgia, 'Times New Roman', serif;
   --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  --font-chinese: 'PingFang SC', 'Noto Sans SC', 'Microsoft YaHei', 'Hiragino Sans GB', sans-serif;
+  --font-chinese: 'Noto Sans CJK SC', 'WenQuanYi Zen Hei', 'PingFang SC', 'Noto Sans SC', 'Microsoft YaHei', 'Hiragino Sans GB', sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
 
   --radius-xs: 4px;
@@ -485,7 +485,7 @@
 .export-doc .ep-summary-body,
 .export-doc .s-body,
 .export-doc .ep-tag {
-  font-family: 'PingFang SC', 'Noto Sans SC', 'Microsoft YaHei', 'Hiragino Sans GB', sans-serif;
+  font-family: 'Noto Sans CJK SC', 'WenQuanYi Zen Hei', 'PingFang SC', 'Noto Sans SC', 'Microsoft YaHei', 'Hiragino Sans GB', sans-serif;
 }
 
 /* ── 版式 ── */
@@ -605,7 +605,7 @@
   font-size: var(--fs-word);
   color: var(--muted);
   margin-top: 1px;
-  font-family: 'Segoe UI', 'Arial Unicode MS', Arial, sans-serif;
+  font-family: 'Segoe UI', 'Arial Unicode MS', 'DejaVu Sans', Arial, sans-serif;
 }
 .export-doc .w-def {
   font-size: var(--fs-word);
