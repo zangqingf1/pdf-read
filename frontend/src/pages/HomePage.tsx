@@ -124,7 +124,7 @@ export default function HomePage() {
                   上传 PDF，即刻阅读
                 </h2>
                 <p className="text-base text-muted max-w-md mx-auto">
-                  导入英文 PDF，自动提取正文内容，AI 翻译 + 单词解析 + 长难句拆解，纯净阅读体验
+                  导入英文 PDF，自动提取正文内容，AI 翻译 + 单词解析 + 语意块拆分，纯净阅读体验
                 </p>
               </div>
             )}

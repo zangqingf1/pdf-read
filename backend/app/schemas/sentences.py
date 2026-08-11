@@ -26,7 +26,7 @@ class SentenceAnalysisResult(BaseModel):
     paragraph_index: int
     sentence_index: int
     sentence_text: str
-    content: str = ""  # Raw markdown from AI: 原文/主干/讲解/译文
+    content: str = ""  # Raw markdown from AI: 原句拆解/理解拆解/阅读线索/地道翻译
 
 
 class SentenceAnalysisResponse(BaseModel):

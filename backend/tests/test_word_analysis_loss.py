@@ -44,7 +44,7 @@ def _word_json(words: list[str]) -> str:
             "collocations": [],
             "example_sentence": f"Example for {w}.",
             "cognates": [],
-            "synonyms_antonyms": {"synonyms": [], "antonyms": []},
+            "synonyms_antonyms": {"synonyms": []},
         }
         for w in words
     ]

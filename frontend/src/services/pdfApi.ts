@@ -35,7 +35,6 @@ export interface WordAnalysisItem {
   cognates: Array<{ word: string; part_of_speech: string }>;
   synonyms_antonyms: {
     synonyms: Array<{ word: string; part_of_speech: string }>;
-    antonyms: Array<{ word: string; part_of_speech: string }>;
   };
   base_form: string;
   plural_form: string;
@@ -52,6 +51,8 @@ export interface PDFResultResponse {
   sentence_analyses: any[];
   page_count?: number | null;
   selected_pages?: number[] | null;
+  summary?: string | null;
+  summary_updated_at?: string | null;
 }
 
 export interface SelectPagesRequest {

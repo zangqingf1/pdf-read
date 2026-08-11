@@ -35,7 +35,7 @@ class WordAnalysis(Base):
     collocations: Mapped[str] = mapped_column(Text, default="[]")
     example_sentence: Mapped[str] = mapped_column(Text, default="")
     cognates: Mapped[str] = mapped_column(Text, default="[]")
-    synonyms_antonyms: Mapped[str] = mapped_column(Text, default='{"synonyms": [], "antonyms": []}')
+    synonyms_antonyms: Mapped[str] = mapped_column(Text, default='{"synonyms": []}')
     base_form: Mapped[str] = mapped_column(Text, default="")
     plural_form: Mapped[str] = mapped_column(Text, default="")
 

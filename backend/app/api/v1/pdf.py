@@ -206,9 +206,9 @@ async def get_parse_result(
         except (json.JSONDecodeError, TypeError):
             cognates = []
         try:
-            syn_ant = json.loads(wa.synonyms_antonyms) if wa.synonyms_antonyms else {"synonyms": [], "antonyms": []}
+            syn_ant = json.loads(wa.synonyms_antonyms) if wa.synonyms_antonyms else {"synonyms": []}
         except (json.JSONDecodeError, TypeError):
-            syn_ant = {"synonyms": [], "antonyms": []}
+            syn_ant = {"synonyms": []}
         word_analyses.append(
             WordAnalysisItem(
                 id=str(wa.id),
@@ -288,6 +288,8 @@ async def get_parse_result(
         sentence_analyses=sentence_analyses,
         page_count=document.page_count,
         selected_pages=document.selected_pages,
+        summary=document.summary,
+        summary_updated_at=document.summary_updated_at,
     )
 
 

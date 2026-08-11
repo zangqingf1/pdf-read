@@ -22,6 +22,11 @@ import { setOnOpenPanel } from '../components/reader/StudyPanel';
 import Button from '../components/ui/Button';
 import Spinner, { PageSpinner } from '../components/ui/Spinner';
 
+// Bounded automatic retries for paragraphs that come back untranslated
+// (e.g. a per-paragraph AI failure returns an empty result). Prevented from
+// looping forever by this cap; reset whenever a document is (re)loaded.
+const MAX_AUTO_RETRIES = 2;
+
 export default function ReaderPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -29,6 +34,7 @@ export default function ReaderPage() {
   const [error, setError] = useState<string | null>(null);
   const [parseStatus, setParseStatus] = useState<string>('');
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const autoRetryCountRef = useRef(0);
 
   const {
     setDocument,
@@ -227,6 +233,7 @@ export default function ReaderPage() {
     return () => {
       cancelled = true;
       if (pollRef.current) clearInterval(pollRef.current);
+      autoRetryCountRef.current = 0;
       reset();
     };
   }, [id]);
@@ -256,7 +263,12 @@ export default function ReaderPage() {
       return;
     }
 
-    const untranslated = paragraphs.filter((p) => !translations[p.index]);
+    // Only non-whitespace, not-yet-translated paragraphs are submitted.
+    // `indices` carries each paragraph's real index so the backend persists
+    // every translation to the correct paragraph even when this is a subset.
+    const untranslated = paragraphs.filter(
+      (p) => p.text.trim() && !translations[p.index]
+    );
     if (untranslated.length === 0) return;
 
     setTranslating(true);
@@ -264,6 +276,8 @@ export default function ReaderPage() {
 
     const abortController = new AbortController();
     const untranslatedTexts = untranslated.map((p) => p.text);
+    const indices = untranslated.map((p) => p.index);
+    let completedOk = false;
 
     translateParagraphsStream(
       untranslatedTexts,
@@ -274,15 +288,35 @@ export default function ReaderPage() {
       apiKey,
       documentId || undefined,
       selectedProvider,
+      indices,
       abortController.signal
     )
+      .then(() => {
+        completedOk = true;
+      })
       .catch((err: any) => {
         if (err.name !== 'AbortError') {
           const detail = err?.message || '翻译失败';
           setTranslationError(detail);
         }
       })
-      .finally(() => setTranslating(false));
+      .finally(() => {
+        setTranslating(false);
+        // Retry only when the stream completed normally but some paragraphs
+        // still came back untranslated (e.g. a per-paragraph failure). Reads
+        // the latest store state so already-translated paragraphs aren't sent
+        // again; bounded by MAX_AUTO_RETRIES so this can't loop forever.
+        if (completedOk && autoRetryCountRef.current < MAX_AUTO_RETRIES) {
+          const state = useDocumentStore.getState();
+          const stillMissing = state.paragraphs.filter(
+            (p) => p.text.trim() && !state.translations[p.index]
+          );
+          if (stillMissing.length > 0) {
+            autoRetryCountRef.current += 1;
+            setTranslationTrigger((n) => n + 1);
+          }
+        }
+      });
 
     return () => abortController.abort();
   }, [documentId, paragraphs.length, translationTrigger, selectedProvider]);
@@ -353,7 +387,7 @@ export default function ReaderPage() {
         collocations: [],
         example_sentence: '',
         cognates: [],
-        synonyms_antonyms: { synonyms: [], antonyms: [] },
+        synonyms_antonyms: { synonyms: [] },
         base_form: '',
         plural_form: '',
         _pending: true,
@@ -558,7 +592,9 @@ export default function ReaderPage() {
 
   // ── Main Reader ──
   const apiKey = getProviderApiKey(selectedProvider);
-  const hasUntranslated = paragraphs.some((p) => !translations[p.index]);
+  const hasUntranslated = paragraphs.some(
+    (p) => p.text.trim() && !translations[p.index]
+  );
 
   // Shared reading area content (used by both desktop and mobile paths)
   const readingAreaContent = (
@@ -594,7 +630,12 @@ export default function ReaderPage() {
           {sentenceAnalysisError}
         </div>
       )}
-      <ReadingArea isTouchDevice={isTouchDevice} />
+      <ReadingArea
+        isTouchDevice={isTouchDevice}
+        apiKey={apiKey}
+        onRequireApiKey={() => setShowApiKeyModal(true)}
+        provider={selectedProvider}
+      />
     </>
   );
 

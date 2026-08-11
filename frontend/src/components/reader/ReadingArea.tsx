@@ -1,14 +1,25 @@
 import { useState } from 'react';
 import { useDocumentStore } from '../../stores/documentStore';
 import ParagraphBlock from './ParagraphBlock';
+import DocumentSummary from './DocumentSummary';
+import type { AIProvider } from '../../services/translateApi';
 import { useReaderStore, FONT_SIZE_MIN, FONT_SIZE_MAX } from '../../stores/readerStore';
 import TypographyDrawer from './TypographyDrawer';
 
 interface ReadingAreaProps {
   isTouchDevice?: boolean;
+  /** 全文总结 — API Key 守卫透传 */
+  apiKey?: string | null;
+  onRequireApiKey?: () => void;
+  provider?: AIProvider;
 }
 
-export default function ReadingArea({ isTouchDevice = false }: ReadingAreaProps) {
+export default function ReadingArea({
+  isTouchDevice = false,
+  apiKey = null,
+  onRequireApiKey,
+  provider = 'deepseek',
+}: ReadingAreaProps) {
   const {
     title,
     paragraphs,
@@ -121,6 +132,13 @@ export default function ReadingArea({ isTouchDevice = false }: ReadingAreaProps)
           />
         ))}
       </div>
+
+      {/* ── 全文总结（文末）── */}
+      <DocumentSummary
+        apiKey={apiKey}
+        onRequireApiKey={onRequireApiKey ?? (() => {})}
+        provider={provider}
+      />
     </div>
   );
 }

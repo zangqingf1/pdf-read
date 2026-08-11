@@ -22,7 +22,6 @@ export interface WordAnalysisResult {
   cognates: Array<{ word: string; part_of_speech: string }>;
   synonyms_antonyms: {
     synonyms: Array<{ word: string; part_of_speech: string }>;
-    antonyms: Array<{ word: string; part_of_speech: string }>;
   };
   base_form: string;
   plural_form: string;

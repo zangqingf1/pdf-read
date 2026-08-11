@@ -9,6 +9,8 @@ interface ModalProps {
   footer?: ReactNode;
   width?: string;
   closable?: boolean;
+  /** 覆盖 body 默认样式（默认 px-6 py-5 overflow-y-auto flex-1） */
+  bodyClassName?: string;
 }
 
 export default function Modal({
@@ -19,6 +21,7 @@ export default function Modal({
   footer,
   width = '480px',
   closable = true,
+  bodyClassName,
 }: ModalProps) {
   const overlayRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
@@ -55,7 +58,7 @@ export default function Modal({
     >
       <div
         ref={contentRef}
-        className="bg-canvas rounded-t-xl md:rounded-lg shadow-modal animate-slide-up max-h-[90vh] md:max-h-[85vh] flex flex-col w-full md:w-auto"
+        className="bg-canvas rounded-t-xl md:rounded-lg shadow-modal animate-slide-up max-h-[92vh] md:max-h-[95vh] flex flex-col w-full md:w-auto"
         style={{ width: typeof window !== 'undefined' && window.innerWidth < 768 ? '100%' : `min(${width}, calc(100vw - 48px))` }}
       >
         {/* Header */}
@@ -79,7 +82,7 @@ export default function Modal({
         )}
 
         {/* Body */}
-        <div className="px-6 py-5 overflow-y-auto flex-1">{children}</div>
+        <div className={bodyClassName ?? 'px-6 py-5 overflow-y-auto flex-1'}>{children}</div>
 
         {/* Footer */}
         {footer && (

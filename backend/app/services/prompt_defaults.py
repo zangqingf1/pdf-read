@@ -13,15 +13,22 @@ DEFAULT_PROMPTS: dict[str, dict[str, str]] = {
         "system_prompt": "",
         "user_prompt": (
             "你是一名杂志刊物行业的中英翻译专家，擅长将英语地道地翻译成中文，"
-            "曾担任《科学美国人》等杂志的翻译工作，提供给中国人阅读。"
-            "请将以下英文段落翻译成流畅、地道的中文。"
-            "保持原文的段落结构和语气风格。只返回翻译结果，不要添加任何解释。\n\n"
-            "上文（仅供参考）：\n"
+            "曾担任《科学美国人》等杂志的翻译工作，提供给中国人阅读。\n\n"
+            "请只翻译下方用标记包围的那一段英文。\n\n"
+            "上文（仅供参考，不要翻译、不要写入输出）：\n"
             "{prev_text}\n\n"
             "--- 需要翻译的段落 ---\n"
-            "{text}\n\n"
-            "下文（仅供参考）：\n"
-            "{next_text}"
+            "{text}\n"
+            "--- 结束 ---\n\n"
+            "下文（仅供参考，不要翻译、不要写入输出）：\n"
+            "{next_text}\n\n"
+            "严格规则：\n"
+            "1. 只翻译「--- 需要翻译的段落 ---」与「--- 结束 ---」标记之间的那段英文；"
+            "绝不翻译、复述或写入上文/下文的任何内容。\n"
+            "2. 如果目标段落是不完整的句子片段（例如以 \"which resulted in\" 结尾），"
+            "只按原样翻译该片段本身，不要与下文合并、不要补全句子。\n"
+            "3. 直接输出翻译结果：不要包含英文原文、不要包含上文/下文、"
+            "不要加任何解释、注释或标记符号。"
         ),
     },
     "analyze_words": {
@@ -46,8 +53,8 @@ DEFAULT_PROMPTS: dict[str, dict[str, str]] = {
             '- "definition_zh"：简洁自然的中文释义，与英文释义对应\n'
             '- "cognates"（可选）：同根词数组，每项含 {{"word", "part_of_speech"}}（不含屈折变化如 -ing/-ed/-s/-er/-est）。'
             '仅在有同根词时才包含此字段\n'
-            '- "synonyms_antonyms"（可选）：含 "synonyms" 和 "antonyms" 数组的对象，每项 {{"word", "part_of_speech"}}。'
-            '仅在有同义/反义词时才包含\n'
+            '- "synonyms_antonyms"（可选）：含 "synonyms" 数组的对象，每项 {{"word", "part_of_speech"}}。'
+            '仅在有同义词时才包含\n'
             '- "base_form"（可选）：仅屈折变化词需要，返回原形（went→go, better→good, phenomena→phenomenon）。已是原形则不包含此字段\n'
             '- "plural_form"（可选）：仅特殊不规则名词需要（phenomenon→phenomena, criterion→criteria）。规则变化或非名词则不包含此字段\n\n'
             "关键规则：\n"
@@ -60,24 +67,52 @@ DEFAULT_PROMPTS: dict[str, dict[str, str]] = {
     },
     "analyze_sentences": {
         "system_prompt": (
-            "你是一名英语教学专家，擅长对英文句子进行精讲分析。"
-            "你的讲解深入浅出，既适合英语学习者理解，也能让进阶读者有所收获。"
+            "你是一位认知语言学与自然习得理论专家，专注于将复杂的英文长句拆解为"
+            "符合人类「工作记忆」容量的线性语意块（Semantic Chunks）。"
+            "你的输出服务于非母语阅读者，目的是帮助他们通过「画面拼接」理解句意，"
+            "而非语法分析。"
         ),
         "user_prompt": (
-            "请对以下英语句子进行精讲，按以下四个部分输出：\n\n"
+            "请对以下英语句子进行双重拆解，全部使用斜杠「 / 」作为分隔符。"
+            "按以下四个部分输出：\n\n"
             "句子：\n"
             "{sentence_text}\n\n"
-            "所在段落的翻译（供参考）：\n"
-            "{sentence_translation}\n\n"
-            "**原文**：直接引用待解析的英文句子。\n\n"
-            "**主干**：用简洁的中文概括句子的核心主谓宾/主系表结构，忽略修饰成分。\n\n"
-            "**讲解**：分点说明关键语言点，包括：\n"
-            "- 重点词汇或短语（如固定搭配、习语）的含义与用法；\n"
-            "- 特殊语法结构（如倒装、省略、从句、否定并列等）及其功能；\n"
-            "- 翻译技巧（如语序调整、增译减译、词性转换等）；\n"
-            "- 如有必要，可补充修辞或语境效果。\n\n"
-            "**译文**：给出流畅自然的中文翻译，确保语义准确、符合中文表达习惯。\n\n"
+            "**原句拆解**：按原句单词顺序，仅用「 / 」切开英文原文，不增删任何词。"
+            "切割点放在标点、连词（but/so/because）、关系代词（which/who）、"
+            "介词（in/on/despite）之前；保护固定搭配（如 give up / as soon as）不被切开；"
+            "每块控制在 3-9 个单词。\n\n"
+            "**理解拆解**：按「事件发生的时间顺序」或「逻辑因果」重组语块，"
+            "允许调整原文语序和添加单词（如主语等）以符合中文认知习惯。"
+            "每个语块用「 / 」隔开；转折词（however/despite）单独成块，作为逻辑路标；"
+            "输出英文。\n\n"
+            "**阅读线索**：用一两句中文，说明如何按理解拆解的顺序把各块串成完整意思，"
+            "帮助读者按画面/逻辑顺序理解。不要罗列语法术语。\n\n"
+            "**地道翻译**：给出整句流畅自然、符合中文表达习惯的中文翻译，"
+            "确保语义准确，不逐字硬译。\n\n"
             "直接输出以上四部分内容，不要加任何前缀说明或总结。"
+        ),
+    },
+    "summary": {
+        "system_prompt": (
+            "You are an experienced editor at an English-language magazine. "
+            "You write concise, accurate summaries that capture an article's "
+            "thesis, key arguments, and supporting details in fluent, natural English."
+        ),
+        "user_prompt": (
+            "请阅读下面这篇英文文章，并用英文输出完整的文章总结。\n\n"
+            "--- 文章全文（可能被截断）---\n"
+            "{document_text}\n"
+            "--- 全文结束 ---\n\n"
+            "--- 用户草稿（可能为空）---\n"
+            "{user_summary}\n"
+            "--- 草稿结束 ---\n\n"
+            "规则：\n"
+            "1. 如果草稿为空：直接撰写英文总结，覆盖主题、主要论点和关键细节。\n"
+            "2. 如果草稿非空：以草稿为基础修改完善 — 保留用户核心结构与表述，"
+            "修正不准确之处、补充遗漏要点、润色英文，输出修改后的英文总结。\n"
+            "3. 若原文有省略标记说明中间部分被截断，基于现有内容总结。\n"
+            "4. 输出 200-350 词的英文总结，分 2-4 段，只输出总结本身，"
+            "不要任何前缀、解释或注释。"
         ),
     },
 }
@@ -89,6 +124,7 @@ PLACEHOLDERS: dict[str, list[str]] = {
     "translate": ["text", "prev_text", "next_text"],
     "analyze_words": ["words_list", "paragraph", "sentence", "sentence_translation"],
     "analyze_sentences": ["sentence_text", "sentence_translation", "sentences_text", "translations_text"],
+    "summary": ["document_text", "user_summary"],
 }
 
 # ── Template display names (for UI) ──────────────────────────────────────
@@ -97,4 +133,5 @@ TEMPLATE_NAMES: dict[str, str] = {
     "translate": "段落翻译",
     "analyze_words": "单词解析",
     "analyze_sentences": "句子解析",
+    "summary": "全文总结",
 }

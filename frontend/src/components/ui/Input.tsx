@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { forwardRef } from 'react';
 
 interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> {
   label?: string;
@@ -47,29 +47,32 @@ interface TextAreaProps extends React.TextareaHTMLAttributes<HTMLTextAreaElement
   error?: string;
 }
 
-export function TextArea({ label, error, className = '', id, ...props }: TextAreaProps) {
-  const inputId = id || (label ? label.toLowerCase().replace(/\s+/g, '-') : undefined);
+export const TextArea = forwardRef<HTMLTextAreaElement, TextAreaProps>(
+  function TextArea({ label, error, className = '', id, ...props }, ref) {
+    const inputId = id || (label ? label.toLowerCase().replace(/\s+/g, '-') : undefined);
 
-  return (
-    <div className="flex flex-col gap-1.5">
-      {label && (
-        <label htmlFor={inputId} className="text-sm font-medium text-body-strong">
-          {label}
-        </label>
-      )}
-      <textarea
-        id={inputId}
-        className={[
-          'w-full min-h-[120px] px-3.5 py-2.5 rounded-md border text-sm font-sans text-ink bg-canvas resize-y',
-          'placeholder:text-muted-soft',
-          'transition-colors duration-150',
-          'focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/15',
-          error ? 'border-error' : 'border-hairline hover:border-muted-soft',
-          className,
-        ].join(' ')}
-        {...props}
-      />
-      {error && <p className="text-xs text-error">{error}</p>}
-    </div>
-  );
-}
+    return (
+      <div className="flex flex-col gap-1.5">
+        {label && (
+          <label htmlFor={inputId} className="text-sm font-medium text-body-strong">
+            {label}
+          </label>
+        )}
+        <textarea
+          ref={ref}
+          id={inputId}
+          className={[
+            'w-full min-h-[120px] px-3.5 py-2.5 rounded-md border text-sm font-sans text-ink bg-canvas resize-y',
+            'placeholder:text-muted-soft',
+            'transition-colors duration-150',
+            'focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/15',
+            error ? 'border-error' : 'border-hairline hover:border-muted-soft',
+            className,
+          ].join(' ')}
+          {...props}
+        />
+        {error && <p className="text-xs text-error">{error}</p>}
+      </div>
+    );
+  }
+);

@@ -14,7 +14,7 @@ export interface SentenceAnalysisResult {
   paragraph_index: number;
   sentence_index: number;
   sentence_text: string;
-  /** Raw markdown from AI: 原文/主干/讲解/译文 */
+  /** Raw markdown from AI: 原句拆解/理解拆解/阅读线索/地道翻译 */
   content: string;
   /** Frontend-only flag: true while waiting for streaming result */
   _pending?: boolean;

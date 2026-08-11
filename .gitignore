@@ -36,6 +36,9 @@ Thumbs.db
 uploads/
 backend/uploads/
 *.db
+
+# TTS disk cache
+backend/.tts_cache/
 # PaddleOCR models only (NOT app/models/)
 /paddleocr_models/
 /models/

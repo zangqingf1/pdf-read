@@ -70,12 +70,12 @@ async def _persist_analyses(
             )
             existing.example_sentence = entry.get("example_sentence", "")
             cognates = entry.get("cognates", [])
-            syn_ant = entry.get("synonyms_antonyms", {"synonyms": [], "antonyms": []})
+            syn_ant = entry.get("synonyms_antonyms", {"synonyms": []})
             existing.cognates = (
                 json.dumps(cognates, ensure_ascii=False) if cognates else "[]"
             )
             existing.synonyms_antonyms = (
-                json.dumps(syn_ant, ensure_ascii=False) if syn_ant else '{"synonyms": [], "antonyms": []}'
+                json.dumps(syn_ant, ensure_ascii=False) if syn_ant else '{"synonyms": []}'
             )
             existing.base_form = entry.get("base_form", "")
             existing.plural_form = entry.get("plural_form", "")
@@ -83,7 +83,7 @@ async def _persist_analyses(
             # Create new record
             collocations = entry.get("collocations", [])
             cognates = entry.get("cognates", [])
-            syn_ant = entry.get("synonyms_antonyms", {"synonyms": [], "antonyms": []})
+            syn_ant = entry.get("synonyms_antonyms", {"synonyms": []})
             new_analysis = WordAnalysis(
                 document_id=document_id,
                 paragraph_index=para_index,
@@ -95,7 +95,7 @@ async def _persist_analyses(
                 collocations=json.dumps(collocations, ensure_ascii=False) if collocations else "[]",
                 example_sentence=entry.get("example_sentence", ""),
                 cognates=json.dumps(cognates, ensure_ascii=False) if cognates else "[]",
-                synonyms_antonyms=json.dumps(syn_ant, ensure_ascii=False) if syn_ant else '{"synonyms": [], "antonyms": []}',
+                synonyms_antonyms=json.dumps(syn_ant, ensure_ascii=False) if syn_ant else '{"synonyms": []}',
                 base_form=entry.get("base_form", ""),
                 plural_form=entry.get("plural_form", ""),
             )
@@ -173,7 +173,7 @@ async def analyze_words(
                 collocations=r.get("collocations", []),
                 example_sentence=r.get("example_sentence", ""),
                 cognates=r.get("cognates", []),
-                synonyms_antonyms=r.get("synonyms_antonyms", {"synonyms": [], "antonyms": []}),
+                synonyms_antonyms=r.get("synonyms_antonyms", {"synonyms": []}),
                 base_form=r.get("base_form", ""),
                 plural_form=r.get("plural_form", ""),
             ))
@@ -312,7 +312,7 @@ async def analyze_words_stream(
                             "collocations": r.get("collocations", []),
                             "example_sentence": r.get("example_sentence", ""),
                             "cognates": r.get("cognates", []),
-                            "synonyms_antonyms": r.get("synonyms_antonyms", {"synonyms": [], "antonyms": []}),
+                            "synonyms_antonyms": r.get("synonyms_antonyms", {"synonyms": []}),
                             "base_form": r.get("base_form", ""),
                             "plural_form": r.get("plural_form", ""),
                         })
@@ -404,9 +404,9 @@ async def get_word_analyses(
         except (json.JSONDecodeError, TypeError):
             cognates = []
         try:
-            syn_ant = json.loads(wa.synonyms_antonyms) if wa.synonyms_antonyms else {"synonyms": [], "antonyms": []}
+            syn_ant = json.loads(wa.synonyms_antonyms) if wa.synonyms_antonyms else {"synonyms": []}
         except (json.JSONDecodeError, TypeError):
-            syn_ant = {"synonyms": [], "antonyms": []}
+            syn_ant = {"synonyms": []}
 
         analyses.append(WordAnalysisResult(
             id=str(wa.id),

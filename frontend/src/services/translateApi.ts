@@ -7,6 +7,7 @@ export interface TranslateRequest {
   paragraphs: string[];
   api_key?: string;
   document_id?: string;
+  indices?: number[];
   provider?: AIProvider;
 }
 
@@ -18,7 +19,8 @@ export async function translateParagraphs(
   paragraphs: string[],
   apiKey?: string,
   documentId?: string,
-  provider?: AIProvider
+  provider?: AIProvider,
+  indices?: number[]
 ): Promise<TranslateResponse> {
   const { data } = await api.post<TranslateResponse>(
     '/translate',
@@ -26,6 +28,7 @@ export async function translateParagraphs(
       paragraphs,
       api_key: apiKey || undefined,
       document_id: documentId || undefined,
+      indices: indices || undefined,
       provider: provider || undefined,
     },
     {
@@ -56,6 +59,7 @@ export async function translateParagraphsStream(
   apiKey?: string,
   documentId?: string,
   provider?: AIProvider,
+  indices?: number[],
   signal?: AbortSignal
 ): Promise<string[]> {
   const baseUrl = api.defaults.baseURL || '/api/v1';
@@ -76,6 +80,7 @@ export async function translateParagraphsStream(
       paragraphs,
       api_key: apiKey || undefined,
       document_id: documentId || undefined,
+      indices: indices || undefined,
       provider: provider || undefined,
     }),
     signal,

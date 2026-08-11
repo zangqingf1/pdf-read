@@ -40,7 +40,7 @@ class WordAnalysisResult(BaseModel):
     collocations: list[str] = Field(default_factory=list)
     example_sentence: str = ""
     cognates: list[dict] = Field(default_factory=list)
-    synonyms_antonyms: dict = Field(default_factory=lambda: {"synonyms": [], "antonyms": []})
+    synonyms_antonyms: dict = Field(default_factory=lambda: {"synonyms": []})
     base_form: str = ""
     plural_form: str = ""
 

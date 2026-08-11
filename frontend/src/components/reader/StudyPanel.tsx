@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useRef, isValidElement } from 'react';
 import { flushSync } from 'react-dom';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -9,6 +9,7 @@ import { deleteSentenceAnalysis, deleteAllSentenceAnalyses } from '../../service
 import type { SentenceAnalysisResult } from '../../services/sentenceAnalysisApi';
 import EmptyState from '../ui/EmptyState';
 import Button from '../ui/Button';
+import PhoneticWithSpeakers from './PhoneticWithSpeakers';
 
 // ── Module-level callback for reverse navigation ──
 let _scrollToAnalysis: ((key: string, tab: 'words' | 'sentences') => void) | null = null;
@@ -123,11 +124,7 @@ function WordCard({
           >
             {analysis.word}
           </span>
-          {analysis.phonetic && (
-            <span className="text-muted-soft" style={{ fontSize: '0.75em' }}>
-              {analysis.phonetic}
-            </span>
-          )}
+          <PhoneticWithSpeakers word={analysis.word} phonetic={analysis.phonetic} />
         </div>
 
         {confirming ? (
@@ -162,7 +159,7 @@ function WordCard({
       {/* Definition */}
       {analysis.definition && (
         <div className="mb-2">
-          <div className="flex items-center justify-between text-muted mb-0.5" style={{ fontSize: '0.85em' }}>
+          <div className="flex items-center justify-between text-muted mb-0.5" style={{ fontSize: '0.75em' }}>
             <span>释义</span>
             {analysis.definition_zh && (
               <button
@@ -180,7 +177,7 @@ function WordCard({
             {analysis.definition}
           </p>
           {showDefZh && analysis.definition_zh && (
-            <p className="mt-0.5 text-muted leading-relaxed m-0 font-chinese" style={{ fontSize: '0.85em' }}>
+            <p className="mt-0.5 text-muted leading-relaxed m-0 font-chinese" style={{ fontSize: '0.75em' }}>
               {analysis.definition_zh}
             </p>
           )}
@@ -189,7 +186,7 @@ function WordCard({
 
       {/* Base/Plural forms */}
       {(analysis.base_form || analysis.plural_form) && (
-        <div className="mb-2 flex items-center gap-3 text-muted text-xs">
+        <div className="mb-2 flex items-center gap-3 text-muted text-[0.75em]">
           {analysis.base_form && (
             <span>原形：<strong className="text-body-strong">{analysis.base_form}</strong></span>
           )}
@@ -199,10 +196,25 @@ function WordCard({
         </div>
       )}
 
+      {/* Synonyms */}
+      {(analysis.synonyms_antonyms?.synonyms?.length ?? 0) > 0 && (
+        <div className="mb-2">
+          <span className="text-success text-[0.75em] block mb-1">同义词</span>
+          <div className="flex flex-wrap gap-1.5">
+            {analysis.synonyms_antonyms.synonyms.map((s, i) => (
+              <span key={i} className="inline-flex items-center gap-1 bg-[#f0f7f1] border border-[#c8e6c9] rounded px-2 py-0.5 text-xs">
+                <span className="text-muted-soft">{s.part_of_speech}</span>
+                <span className="font-medium text-body-strong">{s.word}</span>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Cognates */}
       {analysis.cognates && analysis.cognates.length > 0 && (
         <div className="mb-2">
-          <span className="text-muted text-xs block mb-1">同根词</span>
+          <span className="text-muted text-[0.75em] block mb-1">同根词</span>
           <div className="flex flex-wrap gap-1.5">
             {analysis.cognates.map((c, i) => (
               <span key={i} className="inline-flex items-center gap-1 bg-surface-cream-strong rounded px-2 py-0.5 text-xs">
@@ -214,43 +226,10 @@ function WordCard({
         </div>
       )}
 
-      {/* Synonyms & Antonyms */}
-      {((analysis.synonyms_antonyms?.synonyms?.length ?? 0) > 0 ||
-        (analysis.synonyms_antonyms?.antonyms?.length ?? 0) > 0) && (
-        <div className="mb-2">
-          {analysis.synonyms_antonyms.synonyms.length > 0 && (
-            <div className="mb-1.5">
-              <span className="text-success text-xs block mb-1">近义词</span>
-              <div className="flex flex-wrap gap-1.5">
-                {analysis.synonyms_antonyms.synonyms.map((s, i) => (
-                  <span key={i} className="inline-flex items-center gap-1 bg-[#f0f7f1] border border-[#c8e6c9] rounded px-2 py-0.5 text-xs">
-                    <span className="text-muted-soft">{s.part_of_speech}</span>
-                    <span className="font-medium text-body-strong">{s.word}</span>
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
-          {analysis.synonyms_antonyms.antonyms.length > 0 && (
-            <div>
-              <span className="text-error text-xs block mb-1">反义词</span>
-              <div className="flex flex-wrap gap-1.5">
-                {analysis.synonyms_antonyms.antonyms.map((a, i) => (
-                  <span key={i} className="inline-flex items-center gap-1 bg-[#fdf0f0] border border-[#f5c6c6] rounded px-2 py-0.5 text-xs">
-                    <span className="text-muted-soft">{a.part_of_speech}</span>
-                    <span className="font-medium text-body-strong">{a.word}</span>
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
       {/* Collocations */}
       {analysis.collocations && analysis.collocations.length > 0 && (
         <div className="mb-2">
-          <span className="text-muted text-xs block mb-1">常见搭配</span>
+          <span className="text-muted text-[0.75em] block mb-1">常见搭配</span>
           <div className="flex flex-wrap gap-1.5">
             {analysis.collocations.map((c, i) => (
               <span key={i} className="inline-flex items-center bg-[#eef4fa] border border-[#c8ddf0] rounded px-2 py-0.5 text-xs font-reading">
@@ -264,7 +243,7 @@ function WordCard({
       {/* Example Sentence */}
       {analysis.example_sentence && (
         <div className="mb-2 pt-2 border-t border-hairline">
-          <span className="text-muted text-xs block mb-1">例句</span>
+          <span className="text-muted text-[0.75em] block mb-1">例句</span>
           <p className="text-body leading-relaxed italic text-xs m-0 font-reading">
             {analysis.example_sentence}
           </p>
@@ -331,6 +310,19 @@ function StreamingSentenceCard({
 
 // ── Sentence Card ──────────────────────────────────────────────────
 
+// Section header label styles for sentence-analysis markdown (标题名 → 标签配色)
+const SENTENCE_HEADER_STYLES: Record<string, string> = {
+  原句拆解: 'bg-[#fdf3ef] text-[#b85c3a] border border-[#e8b4a0]',
+  理解拆解: 'bg-[#f0f7f1] text-[#4a7c59] border border-[#a3d4a8]',
+  阅读线索: 'bg-[#eef2f8] text-[#5a6d8a] border border-[#a8b8d4]',
+  地道翻译: 'bg-[#fdf6e3] text-[#8a6d3b] border border-[#e6d5a0]',
+  // 旧数据兼容
+  原文: 'bg-[#eef2f8] text-[#5a6d8a] border border-[#a8b8d4]',
+  主干: 'bg-[#fdf3ef] text-[#b85c3a] border border-[#e8b4a0]',
+  讲解: 'bg-[#f0f7f1] text-[#4a7c59] border border-[#a3d4a8]',
+  译文: 'bg-[#eef2f8] text-[#5a6d8a] border border-[#a8b8d4]',
+};
+
 /** Render AI analysis content using react-markdown with styled section headers. */
 function SentenceContent({ content }: { content: string }) {
   if (!content) return null;
@@ -340,25 +332,17 @@ function SentenceContent({ content }: { content: string }) {
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
-          // Style bold headers (**原文**：, **主干**：, etc.) with colored labels
+          // Style sentence-analysis section headers (**原句拆解**：, **理解拆解**：, etc.)
           strong: ({ children, ...props }) => {
             const text = String(children);
-            // Match section headers like "原文", "主干", "讲解", "译文"
-            const headerMatch = text.match(/^(.+?)[：:]\s*/);
-            if (headerMatch) {
-              const header = headerMatch[1].trim();
-              const after = text.slice(headerMatch[0].length);
-              const isCore = header.includes('主干');
-              const isExplain = header.includes('讲解');
+            // 兼容旧数据：**主干：**content —— 冒号在 strong 内部
+            const colonMatch = text.match(/^(.+?)[：:]\s*/);
+            if (colonMatch && SENTENCE_HEADER_STYLES[colonMatch[1].trim()]) {
+              const header = colonMatch[1].trim();
+              const after = text.slice(colonMatch[0].length);
               return (
-                <span className="block mt-3 first:mt-0 mb-1.5">
-                  <span className={[
-                    'inline-block text-xs font-semibold px-2 py-0.5 rounded mr-1.5 align-middle',
-                    isCore ? 'bg-[#fdf3ef] text-[#b85c3a] border border-[#e8b4a0]' :
-                    isExplain ? 'bg-[#f0f7f1] text-[#4a7c59] border border-[#a3d4a8]' :
-                    'bg-[#eef2f8] text-[#5a6d8a] border border-[#a8b8d4]',
-                  ].join(' ')}
-                  >
+                <span className="inline-block">
+                  <span className={`inline-block text-xs font-semibold px-2 py-0.5 rounded mr-1.5 align-middle ${SENTENCE_HEADER_STYLES[header]}`}>
                     {header}
                   </span>
                   {after && <span className="align-middle">{after}</span>}
@@ -367,10 +351,31 @@ function SentenceContent({ content }: { content: string }) {
             }
             return <strong {...props}>{children}</strong>;
           },
-          // Style paragraphs
-          p: ({ children, ...props }) => (
-            <p className="m-0 mb-1 last:mb-0" {...props}>{children}</p>
-          ),
+          // Style paragraphs. **原句拆解**：content 中冒号在 <strong> 外，
+          // 因此在 p 层识别「已知标题 strong + 前导冒号文本」并渲染为彩色标签 + 内容。
+          p: ({ children }) => {
+            const arr = Array.isArray(children) ? children : [children];
+            const first = arr[0];
+            const firstChildren =
+              isValidElement(first) ? (first.props as { children?: unknown }).children : undefined;
+            const headerName = typeof firstChildren === 'string' ? firstChildren.trim() : '';
+            const style = SENTENCE_HEADER_STYLES[headerName];
+            if (style && typeof arr[1] === 'string') {
+              const after = arr[1].replace(/^[：:]\s*/, '');
+              // 标签与内容同为 <p> 的内联子节点：句子含 markdown 强调等产生额外子节点时，
+              // 也会与标签同行，不会因 block 包装被推到下一行。
+              return (
+                <p className="m-0 mb-1.5 last:mb-0">
+                  <span className={`inline-block text-xs font-semibold px-2 py-0.5 rounded mr-1.5 align-middle ${style}`}>
+                    {headerName}
+                  </span>
+                  {after && <span className="align-middle">{after}</span>}
+                  {arr.slice(2)}
+                </p>
+              );
+            }
+            return <p className="m-0 mb-1 last:mb-0">{children}</p>;
+          },
           // Style list items
           li: ({ children, ...props }) => (
             <li className="mb-0.5 last:mb-0 text-body" {...props}>{children}</li>
@@ -457,7 +462,7 @@ function SentenceCard({
         )}
       </div>
 
-      {/* Content: 原文/主干/讲解/译文 */}
+      {/* Content: 原句拆解/理解拆解/阅读线索/地道翻译 */}
       <SentenceContent content={analysis.content} />
     </div>
   );
@@ -839,7 +844,7 @@ export default function StudyPanel({
             {sentenceList.length === 0 && !isAnalyzingSentences && !sentenceAnalysisError && !clearError && (
               <EmptyState
                 title="选中原文句子后点击解析"
-                description="点击文章中的任意句子，然后点击底部「解析句子」按钮获取结构拆解和翻译"
+                description="点击文章中的任意句子，然后点击底部「解析句子」按钮获取语意块拆分"
               />
             )}
 

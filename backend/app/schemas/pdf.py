@@ -39,7 +39,7 @@ class WordAnalysisItem(BaseModel):
     collocations: list[str] = Field(default_factory=list)
     example_sentence: str = ""
     cognates: list[dict] = Field(default_factory=list)
-    synonyms_antonyms: dict = Field(default_factory=lambda: {"synonyms": [], "antonyms": []})
+    synonyms_antonyms: dict = Field(default_factory=lambda: {"synonyms": []})
     base_form: str = ""
     plural_form: str = ""
 
@@ -55,6 +55,8 @@ class PDFResultResponse(BaseModel):
     sentence_analyses: list = Field(default_factory=list)
     page_count: int | None = None
     selected_pages: list[int] | None = None
+    summary: Optional[str] = None
+    summary_updated_at: Optional[datetime] = None
 
 
 class SelectPagesRequest(BaseModel):

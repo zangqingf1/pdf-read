@@ -30,7 +30,8 @@
       "Bash(python -m uvicorn app.main:app --host 0.0.0.0 --port 8000)",
       "Bash(python -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(f'Documents: {d[\\\\\"total\\\\\"]} total, first: {d[\\\\\"documents\\\\\"][0][\\\\\"title\\\\\"]}'\\)\")",
       "Skill(run)",
-      "Bash(pip list *)"
+      "Bash(pip list *)",
+      "Bash(python -m uvicorn app.main:app --port 8000)"
     ]
   },
   "enableAllProjectMcpServers": true,

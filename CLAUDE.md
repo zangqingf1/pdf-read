@@ -82,12 +82,15 @@ app/
 | POST | `/api/v1/pdf/documents/{task_id}/paragraphs/merge` | 合并段落 |
 | PUT | `/api/v1/pdf/documents/{task_id}/paragraphs/reorder` | 拖拽重排 |
 | POST | `/api/v1/translate` | 翻译段落 (SSE) |
+| POST | `/api/v1/summary/stream` | 全文总结/修改 (SSE) |
+| PUT | `/api/v1/summary/draft` | 保存总结草稿（空白=清空） |
 | POST | `/api/v1/words/analyze` | 单词解析 (upsert) |
 | GET | `/api/v1/words/list/{document_id}` | 单词解析列表 |
 | DELETE | `/api/v1/words/{analysis_id}` | 删除单词解析 |
 | POST | `/api/v1/sentences/analyze` | 句子解析 (upsert) |
 | GET | `/api/v1/sentences/list/{document_id}` | 句子解析列表 |
 | DELETE | `/api/v1/sentences/{analysis_id}` | 删除句子解析 |
+| GET | `/api/v1/tts` | 单词发音合成 (edge-tts, 需鉴权) |
 | GET | `/api/v1/prompts` | 列出所有 Prompt 模板 |
 | GET | `/api/v1/prompts/{name}` | 查看单个 Prompt |
 | PUT | `/api/v1/prompts/{name}` | 修改 Prompt |
@@ -102,12 +105,12 @@ app/
 | DELETE | `/api/v1/admin/documents/{doc_id}` | 删除单个文档 |
 | GET | `/health` | 健康检查 |
 
-**Prompt 模板**: 三种 (`translate`, `analyze_words`, `analyze_sentences`) 全部可通过 API 编辑。`_VALID_NAMES` 从 `DEFAULT_PROMPTS.keys()` 动态派生。
+**Prompt 模板**: 四种 (`translate`, `analyze_words`, `analyze_sentences`, `summary`) 全部可通过 API 编辑。`_VALID_NAMES` 从 `DEFAULT_PROMPTS.keys()` 动态派生。
 
 ### 数据模型
 
 - **User**: `email`(unique), `nickname`, `password_hash`, `is_superuser`, `is_active`, `created_at`
-- **Document**: UUID 主键, `parse_status` (pending→awaiting_selection→processing→completed/failed), cascade delete
+- **Document**: UUID 主键, `parse_status` (pending→awaiting_selection→processing→completed/failed), cascade delete。含 `summary` + `summary_updated_at`（全文总结，草稿与 AI 结果共用一列）
 - **Paragraph**: `(document_id, index)` 唯一索引, `text_en`, `text_zh`, `page_number`
 - **WordAnalysis**: `(document_id, paragraph_index, word)` 唯一, upsert。含 phonetic, definition, cognates, synonyms_antonyms 等
 - **SentenceAnalysis**: `(document_id, paragraph_index, sentence_index)` 唯一, upsert。含 structure_json
@@ -196,6 +199,7 @@ stores/
 - `_SafeDict` 使未知占位符保留原文; `_is_fatal_error()` 区分认证错误和瞬时错误
 - 单词分析防丢失: `_request_word_batch()` + `_missing_words()` 做单词级补偿 — AI 批次返回不全/失败时对缺失单词逐词补发; 补偿仍失败则通过 SSE `incomplete` 事件上报, 前端明确提示缺失单词(绝不静默丢弃)
 - 单词分析按**段落分组**(非句子): 同段落单词共享完整段落原文作为上下文 (`{paragraph}` 占位符), 每批 ≤8 词; 兼容旧自定义模板保留 `{sentence}` 占位符(同值填充)
+- 全文总结: `POST /summary/stream` 后端自取段落全文（超 `SUMMARY_MAX_CHARS` 按 head 60% + tail 40% 截断），`mode=generate/revise` 区分一键总结与 AI 修改；`summarize_stream` 仅首 chunk 前重试（中途断流重试会重复文本）；草稿由前端 1s 防抖 + 失焦/卸载 flush 到 `PUT /summary/draft`（空白=清空），生成期间暂停保存
 - 校对页 `updateParagraphs` 批量保存, `deleteParagraph`/`mergeParagraphs` 自动重排索引; `reorderParagraphs` 同步更新页码
 - `PromptEditorModal.tsx` 是死代码 — Prompt 编辑唯一入口在管理后台 `/admin/prompts`
 - 后端安装了但未实际使用的包: `python-docx`, `python-jose`/`passlib`(认证预留), `slowapi`(限流预留), `aiofiles`

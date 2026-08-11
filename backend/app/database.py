@@ -173,6 +173,18 @@ async def run_migrations():
             "ALTER TABLE _prompt_templates_v2 RENAME TO prompt_templates",
         )
 
+        # ═══════════════════════════════════════════════════════════════
+        # Migration 005: documents — full-document summary
+        # ═══════════════════════════════════════════════════════════════
+        await _apply(
+            "005a_documents_summary",
+            "ALTER TABLE documents ADD COLUMN summary TEXT",
+        )
+        await _apply(
+            "005b_documents_summary_updated_at",
+            "ALTER TABLE documents ADD COLUMN summary_updated_at TIMESTAMP",
+        )
+
 
 async def close_db():
     """Dispose the database engine."""

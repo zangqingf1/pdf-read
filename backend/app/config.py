@@ -42,6 +42,9 @@ class Settings(BaseSettings):
     DEEPSEEK_BASE_URL: str = "https://api.deepseek.com/v1"
     DEEPSEEK_MODEL: str = "deepseek-v4-flash"
 
+    # Full-document summary
+    SUMMARY_MAX_CHARS: int = 30000  # 拼装后的全文最大字符数（超出部分 head+tail 截断）
+
 
     class Config:
         env_file = ".env"

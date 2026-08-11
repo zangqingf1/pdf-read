@@ -13,6 +13,11 @@ class TranslateRequest(BaseModel):
     document_id: str | None = Field(
         default=None, description="If set, save translations to DB for this document"
     )
+    indices: list[int] | None = Field(
+        default=None,
+        description="Real paragraph indices, positionally aligned with `paragraphs`. "
+        "When omitted, positions are treated as indices (legacy behavior).",
+    )
     provider: Literal["deepseek"] | None = Field(
         default=None, description="AI provider: deepseek"
     )

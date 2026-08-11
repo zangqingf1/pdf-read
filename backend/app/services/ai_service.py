@@ -259,13 +259,15 @@ class AIService:
             user_override=user_prompt_override,
         )
 
-        # Use a high floor for max_tokens — reasoning models consume tokens
-        # for internal reasoning, so we need ample headroom.
+        # Thinking mode is disabled so the whole token budget goes to the
+        # translation itself (reasoning otherwise burns max_tokens and can
+        # return an empty answer on long paragraphs).
         payload = {
             "model": self.model,
             "messages": messages,
             "temperature": 0.3,
-            "max_tokens": max(1024, min(len(text) * 3, 4096)),
+            "max_tokens": max(2048, min(len(text) * 3, 8192)),
+            "thinking": {"type": "disabled"},
         }
 
         for attempt in range(3):
@@ -284,7 +286,22 @@ class AIService:
                         response=response,
                     )
 
-                return data["choices"][0]["message"]["content"].strip()
+                content = data["choices"][0]["message"]["content"].strip()
+                if not content:
+                    # Model returned nothing (e.g. reasoning consumed the
+                    # whole budget) — treat as a retryable failure. Must be a
+                    # RuntimeError, NOT ValueError: _is_fatal_error() treats
+                    # ValueError as a fatal config error and skips retries.
+                    logger.warning(
+                        "AI returned empty translation content (attempt %d/3) — retrying",
+                        attempt + 1,
+                    )
+                    if attempt < 2:
+                        await asyncio.sleep(2 ** attempt)
+                        continue
+                    raise RuntimeError("AI 返回空内容，翻译失败")
+
+                return content
 
             except (httpx.HTTPError, httpx.TimeoutException) as e:
                 if _is_fatal_error(e):
@@ -444,6 +461,135 @@ class AIService:
         # Ensure all tasks are done
         await asyncio.gather(*tasks, return_exceptions=True)
 
+    async def summarize_stream(
+        self,
+        document_text: str,
+        user_summary: str | None = None,
+        *,
+        system_prompt_override: str | None = None,
+        user_prompt_override: str | None = None,
+    ) -> AsyncGenerator[dict, None]:
+        """Stream a full-document summary (or revision of a user draft).
+
+        Yields tagged dicts:
+          ``{"type": "chunk", "text": str}`` — raw text delta as the AI types.
+          ``{"type": "heartbeat"}``         — keepalive while waiting for the AI.
+          ``{"type": "done", "summary": str}`` — final accumulated summary.
+
+        Retries happen only *before* the first chunk: once any text has been
+        streamed to the client, a mid-stream failure propagates immediately
+        (retrying would replay duplicate text to the client).
+        """
+        if not self.api_key or not self.api_key.strip():
+            raise ValueError(
+                "AI API Key 未配置。请点击页面右上角🔑图标设置。"
+            )
+
+        messages = _resolve_prompt(
+            "summary",
+            {"document_text": document_text, "user_summary": user_summary or ""},
+            system_override=system_prompt_override,
+            user_override=user_prompt_override,
+        )
+
+        payload = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": 0.3,
+            "max_tokens": 2048,
+            "thinking": {"type": "disabled"},
+            "stream": True,
+        }
+
+        queue: asyncio.Queue[dict] = asyncio.Queue()
+
+        async def _reader() -> None:
+            """Read the SSE stream, pushing chunk deltas into the queue."""
+            accumulated = ""
+            for attempt in range(3):
+                try:
+                    async with self.client.stream(
+                        "POST", "/chat/completions", json=payload
+                    ) as response:
+                        response.raise_for_status()
+                        async for line in response.aiter_lines():
+                            if not line.startswith("data: "):
+                                continue
+                            data_str = line[6:]
+                            if data_str.strip() == "[DONE]":
+                                break
+                            try:
+                                chunk_data = json.loads(data_str)
+                                choices = chunk_data.get("choices", [])
+                                if choices:
+                                    delta = choices[0].get("delta", {})
+                                    content = delta.get("content", "")
+                                    if content:
+                                        accumulated += content
+                                        await queue.put({"type": "chunk", "text": content})
+                            except (json.JSONDecodeError, KeyError, IndexError):
+                                continue
+
+                    # Stream finished — empty content is retried like a failure
+                    if not accumulated.strip():
+                        if attempt < 2:
+                            logger.warning(
+                                "Summary stream attempt %d returned empty content, retrying",
+                                attempt + 1,
+                            )
+                            await asyncio.sleep(2 ** attempt)
+                            continue
+                        await queue.put({"type": "error", "message": "AI 返回空内容，总结失败"})
+                        return
+                    await queue.put({"type": "done", "summary": accumulated.strip()})
+                    return
+
+                except (httpx.HTTPError, httpx.TimeoutException) as e:
+                    if _is_fatal_error(e):
+                        # Auth/config errors — propagate raw message so the
+                        # endpoint can map 401 → actionable Chinese hint.
+                        await queue.put({"type": "error", "message": str(e)})
+                        return
+                    if accumulated:
+                        # Mid-stream failure — cannot retry without duplicating text
+                        logger.warning(
+                            "Summary stream dropped after %d chars: %s",
+                            len(accumulated), e,
+                        )
+                        await queue.put({"type": "error", "message": f"总结生成中断: {e}"})
+                        return
+                    if attempt < 2:
+                        logger.warning(
+                            "Summary stream attempt %d failed, retrying: %s",
+                            attempt + 1, e,
+                        )
+                        await asyncio.sleep(2 ** attempt)
+                        continue
+                    logger.exception("Summary stream failed after 3 attempts")
+                    await queue.put({"type": "error", "message": f"总结失败: {e}"})
+                    return
+
+        task = asyncio.create_task(_reader())
+
+        try:
+            while True:
+                try:
+                    event = await asyncio.wait_for(
+                        queue.get(), timeout=self.heartbeat_interval
+                    )
+                except asyncio.TimeoutError:
+                    yield {"type": "heartbeat"}
+                    continue
+                if event.get("type") == "error":
+                    raise RuntimeError(event.get("message", "总结失败"))
+                yield event
+                if event.get("type") == "done":
+                    break
+        finally:
+            if not task.done():
+                task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
     @staticmethod
     def _normalize_word_result(r: dict, para_index: int) -> None:
         """Normalize fields in a single word analysis result (mutates dict in place)."""
@@ -460,12 +606,10 @@ class AIService:
             r["cognates"] = []
         sa = r.get("synonyms_antonyms")
         if not isinstance(sa, dict):
-            r["synonyms_antonyms"] = {"synonyms": [], "antonyms": []}
+            r["synonyms_antonyms"] = {"synonyms": []}
         else:
             if "synonyms" not in sa or not isinstance(sa["synonyms"], list):
                 sa["synonyms"] = []
-            if "antonyms" not in sa or not isinstance(sa["antonyms"], list):
-                sa["antonyms"] = []
         if not isinstance(r.get("base_form"), str):
             r["base_form"] = ""
         if not isinstance(r.get("plural_form"), str):
@@ -1000,8 +1144,8 @@ class AIService:
     ) -> list[dict]:
         """Analyze sentences with AI — one sentence per API call, high concurrency.
 
-        Each sentence gets its own API call with the detailed-analysis prompt
-        (原文/主干/讲解/译文).  Results are returned as raw markdown text.
+        Each sentence gets its own API call with the semantic-chunk prompt
+        (原句拆解/理解拆解/阅读线索/地道翻译).  Results are returned as raw markdown text.
 
         entries: [
             {"paragraph_index": 0, "sentence_index": 0, "sentence_text": "...",

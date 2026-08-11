@@ -7,7 +7,7 @@ import uuid
 
 from fastapi import APIRouter, HTTPException, Depends
 from fastapi.responses import StreamingResponse
-from sqlalchemy import select
+from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.deps import get_current_user
@@ -33,22 +33,61 @@ async def _verify_document_ownership(
 
 
 async def _save_translations(
-    document_id: str, translations: list[str], db: AsyncSession
+    document_id: str, translations: dict[int, str], db: AsyncSession
 ):
-    """Save translations to the paragraphs table."""
-    stmt = (
-        select(Paragraph)
-        .where(Paragraph.document_id == uuid.UUID(document_id))
-        .order_by(Paragraph.index)
-    )
-    result = await db.execute(stmt)
-    paragraphs = result.scalars().all()
+    """Save translations keyed by real paragraph index.
 
-    for i, para in enumerate(paragraphs):
-        if i < len(translations) and translations[i]:
-            para.text_zh = translations[i]
-
+    Only non-empty texts are written; paragraphs that don't exist for this
+    document are skipped silently (the UPDATE matches 0 rows).
+    """
+    if not translations:
+        return
+    doc_uuid = uuid.UUID(document_id)
+    for index, text in translations.items():
+        if not text or not text.strip():
+            continue
+        await db.execute(
+            update(Paragraph)
+            .where(Paragraph.document_id == doc_uuid, Paragraph.index == index)
+            .values(text_zh=text)
+            .execution_options(synchronize_session=False)
+        )
     await db.commit()
+
+
+def _map_positions_to_indices(
+    request: TranslateRequest, count: int
+) -> list[int]:
+    """Map submitted-list positions to real paragraph indices.
+
+    When ``request.indices`` is provided it is used positionally (so a
+    translation for submitted position ``i`` lands on the paragraph whose
+    real index is ``indices[i]``). When omitted, positions are treated as
+    indices (legacy behavior).
+    """
+    if request.indices is not None:
+        return request.indices
+    return list(range(count))
+
+
+async def _persist_translations_by_index(
+    document_id: str,
+    indexed: list[tuple[int, str]],
+    real_indices: list[int],
+    db: AsyncSession,
+) -> None:
+    """Build a {real_index: text} map from position-indexed results and save.
+
+    ``indexed`` is a list of (position, text) — e.g. ``enumerate(translations)``
+    or an ``ordered`` list rebuilt from a stream dict. ``real_indices[pos]`` is
+    the real paragraph index for submitted position ``pos``.
+    """
+    index_map: dict[int, str] = {}
+    for pos, text in indexed:
+        if not text or not text.strip():
+            continue
+        index_map[real_indices[pos]] = text
+    await _save_translations(document_id, index_map, db)
 
 
 @router.post("", response_model=TranslateResponse)
@@ -69,6 +108,13 @@ async def translate_paragraphs(
     # Verify document ownership if document_id is provided
     if request.document_id:
         await _verify_document_ownership(request.document_id, current_user, db)
+
+    # Validate indices alignment
+    if request.indices is not None and len(request.indices) != len(request.paragraphs):
+        raise HTTPException(
+            status_code=400,
+            detail="indices length must match paragraphs length",
+        )
 
     provider = request.provider or "deepseek"
     ai = create_ai_service(provider=provider, api_key=request.api_key)
@@ -93,7 +139,13 @@ async def translate_paragraphs(
         # Persist translations if document_id is provided
         if request.document_id and translations:
             try:
-                await _save_translations(request.document_id, translations, db)
+                real_indices = _map_positions_to_indices(request, len(paragraphs))
+                await _persist_translations_by_index(
+                    request.document_id,
+                    list(enumerate(translations)),
+                    real_indices,
+                    db,
+                )
             except Exception:
                 _logger.exception("Failed to persist translations for document %s", request.document_id)
 
@@ -153,6 +205,13 @@ async def translate_stream(
     if request.document_id:
         await _verify_document_ownership(request.document_id, current_user, db)
 
+    # Validate indices alignment
+    if request.indices is not None and len(request.indices) != len(request.paragraphs):
+        raise HTTPException(
+            status_code=400,
+            detail="indices length must match paragraphs length",
+        )
+
     provider = request.provider or "deepseek"
     ai = create_ai_service(provider=provider, api_key=request.api_key)
 
@@ -183,7 +242,13 @@ async def translate_stream(
                         translations.get(i, "")
                         for i in range(len(paragraphs))
                     ]
-                    await _save_translations(request.document_id, ordered, db)
+                    real_indices = _map_positions_to_indices(request, len(paragraphs))
+                    await _persist_translations_by_index(
+                        request.document_id,
+                        list(enumerate(ordered)),
+                        real_indices,
+                        db,
+                    )
                 except Exception:
                     _logger.exception("Failed to persist stream translations for document %s", request.document_id)
 

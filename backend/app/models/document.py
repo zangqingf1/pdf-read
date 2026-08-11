@@ -35,6 +35,12 @@ class Document(Base):
     page_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     selected_pages: Mapped[list[int] | None] = mapped_column(JSON, nullable=True)
 
+    # 全文总结 — 该字段 = 最近一次保存的文本框内容，用户草稿与 AI 结果共用
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    summary_updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True
+    )
+
     # User ownership
     user_id: Mapped[uuid.UUID | None] = mapped_column(
         Uuid, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True

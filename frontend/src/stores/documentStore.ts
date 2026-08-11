@@ -40,6 +40,16 @@ interface DocumentState {
   /** Raw AI streaming text per sentence key — shown while generation is in flight */
   sentenceStreamingTexts: Record<string, string>;
 
+  // Full-document summary state
+  /** 持久化的总结文本（用户草稿或 AI 结果，恢复/展示来源） */
+  summary: string | null;
+  /** 输入框实时值（草稿） */
+  summaryDraft: string;
+  isSummarizing: boolean;
+  summaryError: string | null;
+  /** 生成中的原始流式文本 */
+  summaryStreamingText: string;
+
   // Reverse navigation: highlight a specific analysis card in the panel
   highlightedAnalysisKey: string | null;
   highlightedAnalysisTab: 'words' | 'sentences' | null;
@@ -76,6 +86,14 @@ interface DocumentState {
   appendSentenceStreamingText: (key: string, text: string) => void;
   clearSentenceStreamingTexts: () => void;
 
+  // Summary actions
+  setSummary: (summary: string | null) => void;
+  setSummaryDraft: (draft: string) => void;
+  setSummarizing: (summarizing: boolean) => void;
+  setSummaryError: (error: string | null) => void;
+  appendSummaryStreamingText: (text: string) => void;
+  clearSummaryStreamingText: () => void;
+
   // Reverse navigation
   setHighlightedAnalysis: (key: string | null, tab: 'words' | 'sentences' | null) => void;
 }
@@ -107,6 +125,12 @@ export const useDocumentStore = create<DocumentState>((set) => ({
   isAnalyzingSentences: false,
   sentenceAnalysisError: null,
   sentenceStreamingTexts: {},
+
+  summary: null,
+  summaryDraft: '',
+  isSummarizing: false,
+  summaryError: null,
+  summaryStreamingText: '',
 
   highlightedAnalysisKey: null,
   highlightedAnalysisTab: null,
@@ -170,6 +194,8 @@ export const useDocumentStore = create<DocumentState>((set) => ({
         translations,
         wordAnalyses,
         sentenceAnalyses,
+        summary: data.summary ?? null,
+        summaryDraft: data.summary ?? '',
         // Don't reset isTranslating or translationError on re-fetch
       };
     });
@@ -202,6 +228,11 @@ export const useDocumentStore = create<DocumentState>((set) => ({
       isAnalyzingSentences: false,
       sentenceAnalysisError: null,
       sentenceStreamingTexts: {},
+      summary: null,
+      summaryDraft: '',
+      isSummarizing: false,
+      summaryError: null,
+      summaryStreamingText: '',
       highlightedAnalysisKey: null,
       highlightedAnalysisTab: null,
     }),
@@ -331,6 +362,23 @@ export const useDocumentStore = create<DocumentState>((set) => ({
     })),
 
   clearSentenceStreamingTexts: () => set({ sentenceStreamingTexts: {} }),
+
+  // ── Summary actions ─────────────────────────────────────────
+
+  setSummary: (summary) => set({ summary }),
+
+  setSummaryDraft: (draft) => set({ summaryDraft: draft }),
+
+  setSummarizing: (summarizing) => set({ isSummarizing: summarizing }),
+
+  setSummaryError: (error) => set({ summaryError: error }),
+
+  appendSummaryStreamingText: (text) =>
+    set((state) => ({
+      summaryStreamingText: state.summaryStreamingText + text,
+    })),
+
+  clearSummaryStreamingText: () => set({ summaryStreamingText: '' }),
 
   // ── Reverse navigation ──────────────────────────────────────
 
