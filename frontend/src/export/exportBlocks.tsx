@@ -19,7 +19,10 @@ import { splitMarkdownBlocks } from './markdown';
 export const blockIds = {
   title: 't-title',
   colHeadL: 'colhead-l',
+  colHeadR: 'colhead-r',
   empty: 't-empty',
+  /** 行带短侧空白占位（装箱期合成块，渲染为带高度的空 div） */
+  blank: 'b-blank',
   sumHead: 'sum-head',
   p: (i: number) => `p:${i}`,
   pFrag: (i: number, n: number) => `p:${i}:c${n}`,
@@ -190,12 +193,15 @@ export function renderWholeBlock(id: string, ctx: BlockCtx): React.ReactNode {
       return (
         <div className="ep-title">
           <h1>{data.title}</h1>
+          {data.titleZh && <p className="ep-title-zh">{data.titleZh}</p>}
           {prefs.source.trim() && <p className="ep-source">来源：{prefs.source.trim()}</p>}
           <p className="ep-meta">Exported on {new Date().toISOString().slice(0, 10)}</p>
         </div>
       );
     case blockIds.colHeadL:
       return <div className="ep-col-head">原文{prefs.includeTranslation ? ' · 译文' : ''}</div>;
+    case blockIds.colHeadR:
+      return <div className="ep-col-head">解析</div>;
     case blockIds.empty:
       return (
         <div className="ep-empty">暂无可导出的单词 / 句子解析。请在阅读页选中单词、句子并解析后再导出。</div>
@@ -329,9 +335,12 @@ export function renderParagraphFrag(
   const zh = data.translations[pIndex] ?? '';
   const zhSlice = zh.slice(frag.zhFrom, frag.zhTo);
 
+  // 首片段（enFrom=0）是段落真正的段首，保留首行缩进；仅续排片段不缩进
+  const enCls = frag.enFrom === 0 ? 'ep-en' : 'ep-en ep-en-cont';
+
   return (
     <div className="ep-paragraph">
-      <div className="ep-en ep-en-cont">{highlightTokens(enSlice, p.index, wordAnalyses, false, {})}</div>
+      <div className={enCls}>{highlightTokens(enSlice, p.index, wordAnalyses, false, {})}</div>
       {prefs.includeTranslation && zhSlice && <div className="ep-zh ep-zh-cont">{zhSlice}</div>}
     </div>
   );
@@ -463,6 +472,8 @@ export function collectLeftBlocks(data: ExportData, prefs: ExportPreferences): B
 
 export function collectRightBlocks(data: ExportData, prefs: ExportPreferences): BlockDef[] {
   const blocks: BlockDef[] = [];
+  // 右栏栏头（与左栏「原文 · 译文」对称）；双栏严格对齐时位于栏头行带
+  blocks.push({ id: blockIds.colHeadR, kind: 'atomic', keepNext: true });
   const grouped = new Map<number, { words: WordAnalysisResult[]; sentences: SentenceAnalysisResult[] }>();
   if (prefs.includeWords) {
     for (const w of data.words) {
@@ -485,7 +496,8 @@ export function collectRightBlocks(data: ExportData, prefs: ExportPreferences): 
     for (const w of g.words) blocks.push({ id: blockIds.w(pi, w.word), kind: 'word-card' });
     for (const s of g.sentences) blocks.push({ id: blockIds.s(pi, s.sentence_index), kind: 'sentence-card' });
   }
-  if (blocks.length === 0) blocks.push({ id: blockIds.empty, kind: 'atomic' });
+  // 全文档零解析：栏头下保留提示（位于栏头行带，紧随栏头）
+  if (blocks.length === 1) blocks.push({ id: blockIds.empty, kind: 'atomic' });
   return blocks;
 }
 

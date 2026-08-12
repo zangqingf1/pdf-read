@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import mimetypes
 import os
 import uuid
 
@@ -28,10 +29,13 @@ from app.schemas.pdf import (
     WordAnalysisItem,
     DocumentListResponse,
     DocumentListItem,
+    ParseUrlRequest,
     SelectPagesRequest,
     SelectPagesResponse,
     RetryDocumentRequest,
     PDFExportRequest,
+    UpdateTitleRequest,
+    UpdateTitleResponse,
     UpdateParagraphsRequest,
     UpdateParagraphsResponse,
     DeleteParagraphResponse,
@@ -90,22 +94,19 @@ async def upload_pdf(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Upload a PDF file for parsing.
+    """Upload a document file for parsing (any MinerU-supported type).
 
-    Validates the file (PDF format, ≤50MB), saves it, and starts
+    Validates the file (whitelist extension, ≤50MB), saves it, and starts
     an async parsing task. Returns a task_id for status polling.
 
-    Request: multipart/form-data with 'file' field and optional 'mineru_token'.
-    Response: {task_id, status: "processing"}
-    """
-    # Validate content type
-    if file.content_type != "application/pdf":
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid content type: {file.content_type}. Only PDF is accepted.",
-        )
+    PDF files go through page selection (awaiting_selection); other file
+    types parse immediately.
 
-    # Create document record and save file
+    Request: multipart/form-data with 'file' field and optional 'mineru_token'.
+    Response: {task_id, status, page_count, source_type, file_ext}
+    """
+    # Create document record and save file (file-type whitelist is validated
+    # inside pdf_service.upload_and_save)
     try:
         document = await pdf_service.upload_and_save(
             file, db, user_id=current_user.id
@@ -116,7 +117,7 @@ async def upload_pdf(
 
     task_id = str(document.id)
 
-    # If page count is available, always let user select pages first
+    # If page count is available, always let user select pages first (PDF only)
     if document.page_count is not None and document.page_count >= 1:
         document.parse_status = "awaiting_selection"
         await db.commit()
@@ -124,15 +125,55 @@ async def upload_pdf(
             task_id=task_id,
             status="awaiting_selection",
             page_count=document.page_count,
+            source_type=document.source_type,
+            file_ext=document.file_ext,
         )
 
-    # Unknown page count: parse immediately (legacy behavior)
+    # Unknown page count (non-PDF files): parse immediately
     background_tasks.add_task(
         _parse_in_background, document.id, document.file_path, mineru_token
     )
 
     return PDFUploadResponse(
-        task_id=task_id, status="processing", page_count=document.page_count
+        task_id=task_id,
+        status="processing",
+        page_count=document.page_count,
+        source_type=document.source_type,
+        file_ext=document.file_ext,
+    )
+
+
+@router.post("/parse-url", response_model=PDFUploadResponse)
+async def parse_url_document(
+    background_tasks: BackgroundTasks,
+    body: ParseUrlRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Parse a URL — a file link (.pdf/.docx/image…) or an HTML web page.
+
+    The server downloads a copy (file-type URLs are parsed via the MinerU
+    batch flow; HTML pages via MinerU-HTML server-side fetch) and returns a
+    task_id for status polling. URL sources always skip page selection.
+    """
+    try:
+        document = await pdf_service.save_url_document(
+            body.url, db, user_id=current_user.id
+        )
+        await db.commit()
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    background_tasks.add_task(
+        _parse_in_background, document.id, document.file_path or "", body.mineru_token
+    )
+
+    return PDFUploadResponse(
+        task_id=str(document.id),
+        status="processing",
+        page_count=None,
+        source_type=document.source_type,
+        file_ext=document.file_ext,
     )
 
 
@@ -159,6 +200,8 @@ async def get_parse_status(
         error=document.error_message if document.parse_status == "failed" else None,
         page_count=document.page_count,
         selected_pages=document.selected_pages,
+        source_type=document.source_type,
+        file_ext=document.file_ext,
     )
 
 
@@ -290,6 +333,7 @@ async def get_parse_result(
     return PDFResultResponse(
         document_id=str(document.id),
         title=document.title,
+        title_zh=document.title_zh,
         source=document.source,
         paragraphs=paragraphs,
         word_count=document.word_count or 0,
@@ -298,6 +342,8 @@ async def get_parse_result(
         sentence_analyses=sentence_analyses,
         page_count=document.page_count,
         selected_pages=document.selected_pages,
+        source_type=document.source_type,
+        file_ext=document.file_ext,
         summary=document.summary,
         summary_updated_at=document.summary_updated_at,
     )
@@ -309,18 +355,51 @@ async def get_pdf_file(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Serve the original PDF file for client-side preview rendering.
+    """Serve the original source file for client-side preview rendering.
 
-    Used by the PageSelector component to render page thumbnails
-    via react-pdf (PDF.js).
+    Used by the PageSelector component (PDF via react-pdf/PDF.js).
     """
     document = await _get_owned_document(task_id, current_user, db)
 
     file_path = document.file_path
     if not file_path or not os.path.exists(file_path):
-        raise HTTPException(status_code=404, detail="PDF file not found on disk")
+        raise HTTPException(status_code=404, detail="源文件不存在")
 
-    return FileResponse(file_path, media_type="application/pdf")
+    media_type = mimetypes.guess_type(file_path)[0] or "application/octet-stream"
+    return FileResponse(file_path, media_type=media_type)
+
+
+@router.put("/documents/{task_id}/title", response_model=UpdateTitleResponse)
+async def update_document_title(
+    task_id: str,
+    body: UpdateTitleRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """修改文档大标题。
+
+    阅读页点击标题即可编辑。英文标题变更后清空旧的中文翻译
+    （与段落编辑一致：英文变更使翻译失效，重进阅读页随翻译流程自动重译）。
+
+    Args:
+        task_id: Document UUID.
+        body: {title} — 新标题（1–500 字符）。
+    """
+    document = await _get_owned_document(task_id, current_user, db)
+
+    new_title = body.title.strip()
+    if not new_title:
+        raise HTTPException(status_code=400, detail="标题不能为空")
+
+    document.title = new_title
+    document.title_zh = None  # 旧中文翻译失效，随翻译流程重译
+    await db.commit()
+
+    return UpdateTitleResponse(
+        document_id=task_id,
+        title=document.title,
+        title_zh=document.title_zh,
+    )
 
 
 @router.put("/documents/{task_id}/paragraphs", response_model=UpdateParagraphsResponse)
@@ -694,6 +773,8 @@ async def list_documents(
             source=d.source,
             word_count=d.word_count,
             parse_status=d.parse_status,
+            source_type=d.source_type,
+            file_ext=d.file_ext,
             created_at=d.created_at,
         )
         for d in docs
@@ -804,6 +885,8 @@ async def retry_document(
             task_id=task_id,
             status="awaiting_selection",
             page_count=document.page_count,
+            source_type=document.source_type,
+            file_ext=document.file_ext,
         )
 
     if document.parse_status in ("failed", "processing"):
@@ -815,6 +898,8 @@ async def retry_document(
                 task_id=task_id,
                 status="awaiting_selection",
                 page_count=document.page_count,
+                source_type=document.source_type,
+                file_ext=document.file_ext,
             )
         else:
             document.parse_status = "processing"
@@ -824,7 +909,11 @@ async def retry_document(
                 _parse_in_background, document.id, document.file_path, body.mineru_token
             )
             return PDFUploadResponse(
-                task_id=task_id, status="processing", page_count=document.page_count
+                task_id=task_id,
+                status="processing",
+                page_count=document.page_count,
+                source_type=document.source_type,
+                file_ext=document.file_ext,
             )
 
     if document.parse_status == "completed":

@@ -4,6 +4,8 @@ export interface PDFUploadResponse {
   task_id: string;
   status: string;
   page_count?: number | null;
+  source_type?: string | null;  // "upload" | "url"
+  file_ext?: string | null;     // ".pdf" ".docx" ".html" ...
 }
 
 export interface PDFStatusResponse {
@@ -13,6 +15,8 @@ export interface PDFStatusResponse {
   error?: string;
   page_count?: number | null;
   selected_pages?: number[] | null;
+  source_type?: string | null;
+  file_ext?: string | null;
 }
 
 export interface ParagraphResult {
@@ -43,6 +47,8 @@ export interface WordAnalysisItem {
 export interface PDFResultResponse {
   document_id: string;
   title?: string;
+  /** 大标题中文翻译（段落翻译流程持久化） */
+  title_zh?: string | null;
   source?: string;
   paragraphs: ParagraphResult[];
   word_count: number;
@@ -51,8 +57,15 @@ export interface PDFResultResponse {
   sentence_analyses: any[];
   page_count?: number | null;
   selected_pages?: number[] | null;
+  source_type?: string | null;
+  file_ext?: string | null;
   summary?: string | null;
   summary_updated_at?: string | null;
+}
+
+export interface ParseUrlRequest {
+  url: string;
+  mineru_token?: string;
 }
 
 export interface SelectPagesRequest {
@@ -74,6 +87,8 @@ export interface DocumentListItem {
   source?: string;
   word_count?: number;
   parse_status: string;
+  source_type?: string | null;
+  file_ext?: string | null;
   created_at: string;
 }
 
@@ -85,6 +100,24 @@ export interface DocumentListResponse {
 export interface UpdateParagraphsResponse {
   document_id: string;
   updated_count: number;
+}
+
+export interface UpdateTitleResponse {
+  document_id: string;
+  title: string;
+  title_zh?: string | null;
+}
+
+/** 修改文档大标题（后端同时清空旧的中文翻译，随翻译流程自动重译） */
+export async function updateDocumentTitle(
+  taskId: string,
+  title: string
+): Promise<UpdateTitleResponse> {
+  const { data } = await api.put<UpdateTitleResponse>(
+    `/pdf/documents/${taskId}/title`,
+    { title }
+  );
+  return data;
 }
 
 export async function uploadPDF(
@@ -105,6 +138,21 @@ export async function uploadPDF(
 
 export async function getPDFStatus(taskId: string): Promise<PDFStatusResponse> {
   const { data } = await api.get<PDFStatusResponse>(`/pdf/status/${taskId}`);
+  return data;
+}
+
+/** 提交 URL 解析（文件链接或 HTML 网页），后端下载后走 MinerU。 */
+export async function parseUrl(
+  url: string,
+  mineruToken?: string
+): Promise<PDFUploadResponse> {
+  const body: ParseUrlRequest = { url };
+  if (mineruToken) {
+    body.mineru_token = mineruToken;
+  }
+  const { data } = await api.post<PDFUploadResponse>('/pdf/parse-url', body, {
+    timeout: 120000,
+  });
   return data;
 }
 

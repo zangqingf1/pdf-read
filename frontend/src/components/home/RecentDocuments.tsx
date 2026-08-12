@@ -152,7 +152,7 @@ export default function RecentDocuments({ refreshKey = 0, sidebar = false }: Rec
     return (
       <EmptyState
         title="还没有处理过文档"
-        description="上传一篇英文 PDF 开始阅读吧"
+        description="上传文档或粘贴链接开始阅读吧"
       />
     );
   }

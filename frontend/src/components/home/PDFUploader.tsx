@@ -1,12 +1,16 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { uploadPDF, getPDFStatus, selectPages } from '../../services/pdfApi';
+import { uploadPDF, getPDFStatus, selectPages, parseUrl } from '../../services/pdfApi';
 import { getStoredMineruToken } from '../common/ApiKeyModal';
 import PageSelector from './PageSelector';
 import Button from '../ui/Button';
 import Spinner from '../ui/Spinner';
 
 type UploadPhase = 'idle' | 'uploading' | 'selection' | 'parsing' | 'completed' | 'failed';
+
+/** MinerU 支持的上传扩展名白名单（与后端 SUPPORTED_UPLOAD_EXTENSIONS 保持一致） */
+const SUPPORTED_ACCEPT = '.pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.png,.jpg,.jpeg,.jp2,.webp,.gif,.bmp,.html';
+const SUPPORTED_EXTS = new Set(SUPPORTED_ACCEPT.split(','));
 
 interface PDFUploaderProps {
   resumeTaskId?: string | null;
@@ -33,6 +37,8 @@ export default function PDFUploader({
   const [pageCount, setPageCount] = useState<number>(0);
   const [docTitle, setDocTitle] = useState<string>('');
   const [dragOver, setDragOver] = useState(false);
+  const [inputMode, setInputMode] = useState<'file' | 'url'>('file');
+  const [urlInput, setUrlInput] = useState('');
   const navigate = useNavigate();
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -72,7 +78,7 @@ export default function PDFUploader({
           onDocumentChanged?.();
           if (pollRef.current) clearInterval(pollRef.current);
         } else if (result.status === 'failed') {
-          toast(result.error || 'PDF 解析失败');
+          toast(result.error || '文档解析失败');
           setPhase('failed');
           onDocumentChanged?.();
           if (pollRef.current) clearInterval(pollRef.current);
@@ -90,7 +96,7 @@ export default function PDFUploader({
   const handleFile = useCallback(async (file: File) => {
     setPhase('uploading');
     setParseProgress(0);
-    setDocTitle(file.name.replace(/\.pdf$/i, ''));
+    setDocTitle(file.name.replace(/\.[^.]+$/, ''));
 
     try {
       const result = await uploadPDF(file, getStoredMineruToken() || undefined);
@@ -116,14 +122,40 @@ export default function PDFUploader({
       e.preventDefault();
       setDragOver(false);
       const file = e.dataTransfer.files[0];
-      if (file && file.name.toLowerCase().endsWith('.pdf')) {
-        handleFile(file);
-      } else {
-        toast('请上传 PDF 文件');
+      if (file) {
+        const dot = file.name.lastIndexOf('.');
+        const ext = dot >= 0 ? file.name.slice(dot).toLowerCase() : '';
+        if (SUPPORTED_EXTS.has(ext)) {
+          handleFile(file);
+          return;
+        }
       }
+      toast('请上传支持的文件（PDF、Word、PPT、Excel、图片或 HTML）');
     },
     [handleFile]
   );
+
+  const handleUrlSubmit = useCallback(async () => {
+    const url = urlInput.trim();
+    if (!/^https?:\/\/.+/i.test(url)) {
+      toast('请输入以 http:// 或 https:// 开头的链接');
+      return;
+    }
+    setPhase('uploading');
+    setParseProgress(0);
+    setDocTitle(url.replace(/^https?:\/\//i, '').split('/')[0]);
+    try {
+      const result = await parseUrl(url, getStoredMineruToken() || undefined);
+      setTaskId(result.task_id);
+      setParseStatus('processing');
+      setPhase('parsing');
+      onDocumentChanged?.();
+    } catch (err: any) {
+      const errorMsg = err?.response?.data?.detail || '链接解析失败，请重试';
+      toast(errorMsg);
+      setPhase('idle');
+    }
+  }, [urlInput]);
 
   const handleInputChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -183,6 +215,7 @@ export default function PDFUploader({
     setParseStatus('');
     setDocTitle('');
     setPageCount(0);
+    setUrlInput('');
   };
 
   // ── Page Selection Phase ──
@@ -207,7 +240,7 @@ export default function PDFUploader({
             <path d="M20 6L9 17l-5-5" />
           </svg>
         </div>
-        <h3 className="text-display-sm font-display text-ink mb-2">PDF 解析完成！</h3>
+        <h3 className="text-display-sm font-display text-ink mb-2">文档解析完成！</h3>
         <p className="text-muted mb-8 max-w-sm mx-auto">
           文档 <strong className="text-body-strong">{docTitle}</strong> 已准备就绪
         </p>
@@ -236,7 +269,7 @@ export default function PDFUploader({
             <path d="M15 9l-6 6M9 9l6 6" />
           </svg>
         </div>
-        <h3 className="text-display-sm font-display text-ink mb-2">PDF 解析失败</h3>
+        <h3 className="text-display-sm font-display text-ink mb-2">文档解析失败</h3>
         <p className="text-muted mb-6">{parseStatus || '请检查文件格式后重试'}</p>
         <Button variant="primary" onClick={handleReset}>
           重新上传
@@ -250,39 +283,94 @@ export default function PDFUploader({
 
   return (
     <div>
-      {/* Upload Zone */}
-      <div
-        onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-        onDragLeave={() => setDragOver(false)}
-        onDrop={handleDrop}
-        onClick={() => !isBusy && fileInputRef.current?.click()}
-        className={[
-          'upload-zone flex flex-col items-center justify-center p-6 md:p-10 rounded-lg border-2 border-dashed cursor-pointer transition-colors',
-          dragOver ? 'upload-zone-dragover' : 'border-hairline bg-surface-card',
-          isBusy ? 'opacity-50 pointer-events-none' : '',
-        ].join(' ')}
-      >
-        {/* Upload icon */}
-        <div className="w-14 h-14 mb-4 rounded-full bg-canvas flex items-center justify-center">
-          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" strokeWidth="1.5" strokeLinecap="round">
-            <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
-            <path d="M14 2v6h6M12 18v-6M9 15l3-3 3 3" />
-          </svg>
-        </div>
-        <p className="text-base text-body-strong mb-1">
-          点击或拖拽 PDF 文件到此区域上传
-        </p>
-        <p className="text-sm text-muted">
-          支持英文 PDF，最大 50MB
-        </p>
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept=".pdf"
-          className="hidden"
-          onChange={handleInputChange}
-        />
+      {/* 输入方式切换：上传文件 / 粘贴链接 */}
+      <div className="flex gap-1 mb-4 bg-canvas p-1 rounded-lg w-fit">
+        <button
+          type="button"
+          onClick={() => setInputMode('file')}
+          className={[
+            'px-4 py-1.5 text-sm font-medium rounded-md transition-colors',
+            inputMode === 'file'
+              ? 'bg-surface-card text-ink shadow-sm'
+              : 'text-muted hover:text-body',
+          ].join(' ')}
+        >
+          上传文件
+        </button>
+        <button
+          type="button"
+          onClick={() => setInputMode('url')}
+          className={[
+            'px-4 py-1.5 text-sm font-medium rounded-md transition-colors',
+            inputMode === 'url'
+              ? 'bg-surface-card text-ink shadow-sm'
+              : 'text-muted hover:text-body',
+          ].join(' ')}
+        >
+          粘贴链接
+        </button>
       </div>
+
+      {inputMode === 'file' ? (
+        /* Upload Zone */
+        <div
+          onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+          onDragLeave={() => setDragOver(false)}
+          onDrop={handleDrop}
+          onClick={() => !isBusy && fileInputRef.current?.click()}
+          className={[
+            'upload-zone flex flex-col items-center justify-center p-6 md:p-10 rounded-lg border-2 border-dashed cursor-pointer transition-colors',
+            dragOver ? 'upload-zone-dragover' : 'border-hairline bg-surface-card',
+            isBusy ? 'opacity-50 pointer-events-none' : '',
+          ].join(' ')}
+        >
+          {/* Upload icon */}
+          <div className="w-14 h-14 mb-4 rounded-full bg-canvas flex items-center justify-center">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" strokeWidth="1.5" strokeLinecap="round">
+              <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
+              <path d="M14 2v6h6M12 18v-6M9 15l3-3 3 3" />
+            </svg>
+          </div>
+          <p className="text-base text-body-strong mb-1">
+            点击或拖拽文件到此区域上传
+          </p>
+          <p className="text-sm text-muted">
+            支持 PDF、Word、PPT、Excel、图片与 HTML，最大 50MB
+          </p>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept={SUPPORTED_ACCEPT}
+            className="hidden"
+            onChange={handleInputChange}
+          />
+        </div>
+      ) : (
+        /* URL Zone */
+        <div className="p-6 rounded-lg border border-hairline bg-surface-card">
+          <div className="flex flex-col sm:flex-row gap-3">
+            <input
+              type="text"
+              value={urlInput}
+              onChange={(e) => setUrlInput(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter' && !isBusy) handleUrlSubmit(); }}
+              placeholder="https:// 粘贴文件或网页链接"
+              disabled={isBusy}
+              className="flex-1 px-3 py-2 text-sm rounded-md border border-hairline bg-canvas focus:outline-none focus:border-primary"
+            />
+            <Button
+              variant="primary"
+              onClick={handleUrlSubmit}
+              disabled={isBusy || !urlInput.trim()}
+            >
+              解析链接
+            </Button>
+          </div>
+          <p className="text-sm text-muted mt-3">
+            支持文件链接（.pdf/.docx/.pptx/图片等）与网页文章链接，最大 50MB
+          </p>
+        </div>
+      )}
 
       {/* Progress */}
       {isBusy && (
@@ -293,7 +381,7 @@ export default function PDFUploader({
               <path d="M14 2v6h6" />
             </svg>
             <span className="text-sm font-medium text-body-strong">
-              {phase === 'uploading' ? '正在上传文件...' : '正在解析 PDF 正文...'}
+              {phase === 'uploading' ? '正在上传文件...' : '正在解析文档正文...'}
             </span>
           </div>
 

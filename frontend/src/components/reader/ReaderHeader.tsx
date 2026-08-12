@@ -1,14 +1,13 @@
 import { useNavigate } from 'react-router-dom';
 import { useState } from 'react';
-import { useDocumentStore } from '../../stores/documentStore';
 import { useReaderStore, BG_COLORS } from '../../stores/readerStore';
 import TypographyDrawer from './TypographyDrawer';
+import EditableTitle from './EditableTitle';
 import ExportButton from '../export/ExportButton';
 import Button from '../ui/Button';
 
 export default function ReaderHeader() {
   const navigate = useNavigate();
-  const { title } = useDocumentStore();
   const { bgColor } = useReaderStore();
   const bgColorValue = BG_COLORS.find(c => c.key === bgColor)?.value ?? BG_COLORS[0].value;
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -31,9 +30,12 @@ export default function ReaderHeader() {
         >
           返回
         </Button>
-        <h2 className="text-base font-display font-medium text-ink truncate max-w-[100px] md:max-w-md m-0">
-          {title || 'Untitled'}
-        </h2>
+        <EditableTitle
+          headingClassName="text-base font-display font-medium text-ink truncate max-w-[100px] md:max-w-md m-0"
+          inputClassName="text-base font-display font-medium max-w-[100px] md:max-w-md"
+          hint="点击修改标题"
+          fallback="Untitled"
+        />
       </div>
 
       {/* Right: export + typography settings (mobile only) */}

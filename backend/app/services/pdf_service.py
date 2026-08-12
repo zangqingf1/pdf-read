@@ -8,6 +8,7 @@ import uuid
 import logging
 from datetime import datetime
 from typing import Optional
+from urllib.parse import urlparse
 
 from fastapi import UploadFile
 from sqlalchemy import select
@@ -16,6 +17,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.models.document import Document
 from app.models.paragraph import Paragraph
+from app.services.file_types import (
+    PAGE_BASED_EXTENSIONS,
+    SUPPORTED_UPLOAD_EXTENSIONS,
+    normalize_ext,
+)
 from app.services.ocr_engine import OCREngine, ParsedDocument, ocr_engine
 from app.services.page_utils import count_pdf_pages
 
@@ -43,8 +49,11 @@ class PDFService:
     ) -> Document:
         """Validate, save, and create a Document record in the database.
 
+        Accepts any MinerU-supported file type (PDF / Word / PPT / Excel /
+        images / HTML).
+
         Args:
-            file: The uploaded PDF file.
+            file: The uploaded document file.
             db: Database session.
             user_id: The owning user's ID (required for data isolation).
 
@@ -66,36 +75,89 @@ class PDFService:
                 f"maximum ({settings.MAX_UPLOAD_SIZE_MB}MB)"
             )
 
-        # Validate PDF magic number
-        if not content.startswith(b"%PDF"):
-            raise ValueError("File is not a valid PDF (missing PDF header)")
+        # Extension whitelist (replaces the PDF-only content-type gate)
+        filename = file.filename or "untitled"
+        ext = normalize_ext(filename)
+        if ext not in SUPPORTED_UPLOAD_EXTENSIONS:
+            raise ValueError(
+                f"不支持的文件类型：{ext or '无扩展名'}。"
+                "支持的格式：PDF、Word、PPT、Excel、图片与 HTML"
+            )
 
-        # Save to disk
+        # Keep the PDF magic-number check so a renamed docx isn't accepted as
+        # PDF (page-count and page-selection flows depend on real PDFs).
+        if ext == ".pdf" and not content.startswith(b"%PDF"):
+            raise ValueError("扩展名为 .pdf 但内容不是有效 PDF 文件")
+
+        # Save to disk with the real extension
         os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
         file_id = uuid.uuid4()
-        file_path = os.path.join(settings.UPLOAD_DIR, f"{file_id}.pdf")
+        file_path = os.path.join(settings.UPLOAD_DIR, f"{file_id}{ext}")
 
         with open(file_path, "wb") as f:
             f.write(content)
 
-        # Count pages using pypdf (fast local read)
+        # Count pages only for PDF (other types have no page concept)
         page_count = None
-        try:
-            page_count = count_pdf_pages(file_path)
-        except Exception as e:
-            logger.warning("Could not count PDF pages: %s", e)
+        if ext in PAGE_BASED_EXTENSIONS:
+            try:
+                page_count = count_pdf_pages(file_path)
+            except Exception as e:
+                logger.warning("Could not count PDF pages: %s", e)
 
         # Create document record
-        safe_filename = file.filename or "untitled.pdf"
         document = Document(
             id=file_id,
-            title=safe_filename.replace(".pdf", ""),
+            title=os.path.splitext(filename)[0],
             file_path=file_path,
             original_text="",  # Will be filled after parsing
             parse_status="pending",
             page_count=page_count,
+            source_type="upload",
+            file_ext=ext,
             user_id=user_id,
             created_at=datetime.now(),  # Use local time, not SQLite UTC default
+        )
+        db.add(document)
+        await db.flush()
+
+        return document
+
+    async def save_url_document(
+        self, url: str, db: AsyncSession, user_id: uuid.UUID | None = None
+    ) -> Document:
+        """Register a URL (file link or web page) for parsing.
+
+        The URL is handed to MinerU's /extract/task directly — MinerU fetches it
+        server-side (file URLs use vlm, HTML pages use MinerU-HTML). No local
+        copy is downloaded; `source_url` is stored for retries.
+
+        Raises:
+            ValueError: If the URL scheme is not http/https.
+        """
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https") or not parsed.hostname:
+            raise ValueError("仅支持 http/https 链接")
+
+        # Extension for display/model hint; unknown suffix → treat as web page.
+        ext = normalize_ext(url) or ".html"
+
+        # Title: URL basename without extension, else hostname
+        base = os.path.basename(parsed.path)
+        title = os.path.splitext(base)[0] or (parsed.netloc or "untitled")
+
+        document = Document(
+            id=uuid.uuid4(),
+            title=title,
+            file_path=None,  # URL 源不留本地副本，MinerU 直接抓取
+            original_text="",
+            parse_status="pending",
+            page_count=None,  # URL sources skip page selection
+            source_type="url",
+            file_ext=ext,
+            source_url=url,
+            user_id=user_id,
+            created_at=datetime.now(),
         )
         db.add(document)
         await db.flush()
@@ -125,12 +187,20 @@ class PDFService:
         await db.flush()
 
         try:
-            # Run OCR via MinerU Cloud API
-            parsed: ParsedDocument = await self.ocr.parse_pdf(
-                document.file_path,
-                api_token=mineru_token,
-                selected_pages=document.selected_pages,
-            )
+            # Run OCR via MinerU Cloud API.
+            # URL sources (file link OR web page) are fetched by MinerU itself
+            # via /extract/task; uploaded files go through the batch flow.
+            if document.source_type == "url" and document.source_url:
+                parsed: ParsedDocument = await self.ocr.parse_url(
+                    document.source_url,
+                    api_token=mineru_token,
+                )
+            else:
+                parsed: ParsedDocument = await self.ocr.parse_file(
+                    document.file_path,
+                    api_token=mineru_token,
+                    selected_pages=document.selected_pages,
+                )
 
             # Update document metadata
             document.title = parsed.title or document.title

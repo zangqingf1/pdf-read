@@ -185,6 +185,39 @@ async def run_migrations():
             "ALTER TABLE documents ADD COLUMN summary_updated_at TIMESTAMP",
         )
 
+        # ═══════════════════════════════════════════════════════════════
+        # Migration 006: documents — 大标题中文翻译
+        # ═══════════════════════════════════════════════════════════════
+        await _apply(
+            "006a_documents_title_zh",
+            "ALTER TABLE documents ADD COLUMN title_zh TEXT",
+        )
+
+        # ═══════════════════════════════════════════════════════════════
+        # Migration 007: documents — 多类型源（非 PDF 文件 + URL 链接）
+        # ═══════════════════════════════════════════════════════════════
+        await _apply(
+            "007a_documents_source_type",
+            "ALTER TABLE documents ADD COLUMN source_type VARCHAR(20)",
+        )
+        await _apply(
+            "007b_documents_file_ext",
+            "ALTER TABLE documents ADD COLUMN file_ext VARCHAR(20)",
+        )
+        await _apply(
+            "007c_documents_source_url",
+            "ALTER TABLE documents ADD COLUMN source_url VARCHAR(2000)",
+        )
+        # 回填历史数据：旧文档全部是 PDF 上传
+        await _apply(
+            "007d_backfill_source_type",
+            "UPDATE documents SET source_type='upload' WHERE source_type IS NULL",
+        )
+        await _apply(
+            "007e_backfill_file_ext",
+            "UPDATE documents SET file_ext='.pdf' WHERE file_ext IS NULL",
+        )
+
 
 async def close_db():
     """Dispose the database engine."""

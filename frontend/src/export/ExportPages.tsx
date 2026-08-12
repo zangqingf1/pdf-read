@@ -13,6 +13,7 @@ import {
   type BlockCtx,
 } from './exportBlocks';
 import type { PageItem, PagePlan, ParagraphFragDef } from './paginate';
+import { BLANK } from './paginate';
 import { PAPER_SIZES, mmToPx, PAGE_PADDING, COL_GAP } from './exportTypes';
 import type { ExportData } from './data';
 import type { ExportPreferences } from './exportTypes';
@@ -25,7 +26,23 @@ interface ExportPagesProps {
   preview?: boolean;
 }
 
-function renderPageItem(item: PageItem, ctx: BlockCtx, plan: PagePlan): ReactNode {
+/** 条目补距样式：padTop/margin-top（锚点/续页让位），padBottom/margin-bottom（行带短侧补齐） */
+function padStyle(item: PageItem): CSSProperties | undefined {
+  if (!item.padTop && !item.padBottom) return undefined;
+  return {
+    ...(item.padTop ? { marginTop: item.padTop } : {}),
+    ...(item.padBottom ? { marginBottom: item.padBottom } : {}),
+  };
+}
+
+function renderPageItem(item: PageItem, ctx: BlockCtx, plan: PagePlan, idx: number): ReactNode {
+  // 行带空白占位（短侧补齐：高度 = padBottom）
+  if (item.blk === BLANK) {
+    return (
+      <div key={idx} className="ep-blank" data-blk={BLANK} style={{ height: item.padBottom ?? 0 }} />
+    );
+  }
+  const pad = padStyle(item);
   // 卡片碎片（句子卡/单词卡）
   if (item.frag && 'fragId' in item.frag) {
     const fragId = item.frag.fragId;
@@ -36,7 +53,9 @@ function renderPageItem(item: PageItem, ctx: BlockCtx, plan: PagePlan): ReactNod
       );
       if (analysis) {
         return (
-          <div key={fragId}>{renderSentenceFrag(analysis, fragId, plan.contBefore.has(fragId), ctx.prefs)}</div>
+          <div key={idx} style={pad} data-blk={item.blk} data-frag={fragId}>
+            {renderSentenceFrag(analysis, fragId, plan.contBefore.has(fragId), ctx.prefs)}
+          </div>
         );
       }
       return null;
@@ -49,7 +68,7 @@ function renderPageItem(item: PageItem, ctx: BlockCtx, plan: PagePlan): ReactNod
         const row = wordCardFragRows(analysis, ctx.prefs)[Number(wm[3])];
         if (row) {
           return (
-            <div key={fragId}>
+            <div key={idx} style={pad} data-blk={item.blk} data-frag={fragId}>
               {plan.contBefore.has(fragId) && <div className="ep-cont">— 续</div>}
               <div className="ep-frag" id={fragId}>{row.node}</div>
             </div>
@@ -60,12 +79,14 @@ function renderPageItem(item: PageItem, ctx: BlockCtx, plan: PagePlan): ReactNod
     }
     return null;
   }
-  // 段落碎片（跨页续排）
+  // 段落碎片（跨页续排；padTop 预留续页 gcont 让位，padBottom 补齐行带短侧）
   if (item.frag) {
     const pm = item.blk.match(/^p:(\d+)$/);
     if (pm) {
       return (
-        <div key={item.blk}>{renderParagraphFrag(Number(pm[1]), item.frag as ParagraphFragDef, ctx)}</div>
+        <div key={idx} style={pad} data-blk={item.blk}>
+          {renderParagraphFrag(Number(pm[1]), item.frag as ParagraphFragDef, ctx)}
+        </div>
       );
     }
     return null;
@@ -73,11 +94,15 @@ function renderPageItem(item: PageItem, ctx: BlockCtx, plan: PagePlan): ReactNod
   // 解析组续页标记（装箱期合成：解析组跨页时续页顶部）
   const gcm = item.blk.match(/^gcont:(\d+)$/);
   if (gcm) {
-    return <div key={item.blk} className="ep-cont">第 {Number(gcm[1]) + 1} 段 · 续</div>;
+    return (
+      <div key={idx} className="ep-cont" data-blk={item.blk}>
+        第 {Number(gcm[1]) + 1} 段 · 续
+      </div>
+    );
   }
   // 整块（padTop 物化锚点对齐间隙：渲染 margin-top 后模型 y 与 DOM 几何一致）
   return (
-    <div key={item.blk} style={item.padTop ? { marginTop: item.padTop } : undefined}>
+    <div key={idx} style={pad} data-blk={item.blk}>
       {renderWholeBlock(item.blk, ctx)}
     </div>
   );
@@ -118,11 +143,11 @@ export default function ExportPages({ data, prefs, plan, preview = false }: Expo
           {/* 页体：左右栏 */}
           <div className="ep-page-body">
             <div className="ep-left" style={{ width: leftW }}>
-              {p.left.map((it) => renderPageItem(it, ctx, plan))}
+              {p.left.map((it, i) => renderPageItem(it, ctx, plan, i))}
             </div>
             {!single && (
               <div className="ep-right" style={{ width: rightW }}>
-                {p.right.map((it) => renderPageItem(it, ctx, plan))}
+                {p.right.map((it, i) => renderPageItem(it, ctx, plan, i))}
               </div>
             )}
           </div>

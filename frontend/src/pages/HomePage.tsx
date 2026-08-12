@@ -53,7 +53,7 @@ export default function HomePage() {
             <path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z" />
           </svg>
           <h1 className="text-base font-display font-medium text-ink tracking-tight m-0">
-            PDF 外刊阅读
+            外刊阅读
           </h1>
         </div>
 
@@ -121,10 +121,10 @@ export default function HomePage() {
             {!isSelecting && !resumeTaskId && (
               <div className="text-center mb-12">
                 <h2 className="text-display-md font-display text-ink mb-3">
-                  上传 PDF，即刻阅读
+                  上传文档或粘贴链接，即刻阅读
                 </h2>
                 <p className="text-base text-muted max-w-md mx-auto">
-                  导入英文 PDF，自动提取正文内容，AI 翻译 + 单词解析 + 语意块拆分，纯净阅读体验
+                  导入英文文档或网页链接，自动提取正文内容，AI 翻译 + 单词解析 + 语意块拆分，纯净阅读体验
                 </p>
               </div>
             )}

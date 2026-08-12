@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useDocumentStore } from '../../stores/documentStore';
 import ParagraphBlock from './ParagraphBlock';
 import DocumentSummary from './DocumentSummary';
+import EditableTitle from './EditableTitle';
 import type { AIProvider } from '../../services/translateApi';
 import { useReaderStore, FONT_SIZE_MIN, FONT_SIZE_MAX } from '../../stores/readerStore';
 import TypographyDrawer from './TypographyDrawer';
@@ -21,7 +22,7 @@ export default function ReadingArea({
   provider = 'deepseek',
 }: ReadingAreaProps) {
   const {
-    title,
+    titleZh,
     paragraphs,
     wordCount,
     paragraphCount,
@@ -40,9 +41,12 @@ export default function ReadingArea({
     <div>
       {/* ── Document header ── */}
       <div className="hidden md:block mb-10 pb-6 border-b border-hairline">
-        <h2 className="text-display-md font-display text-ink mb-2">
-          {title || 'Untitled Document'}
-        </h2>
+        <EditableTitle headingClassName="text-display-md font-display text-ink mb-1" />
+        {titleZh && (
+          <p className="text-lg font-display text-body mb-2">
+            {titleZh}
+          </p>
+        )}
         <div className="flex items-center justify-between flex-wrap gap-3">
           <div className="flex items-center gap-4 text-sm text-muted">
             <span className="flex items-center gap-1.5">

@@ -22,6 +22,8 @@ export default function ReviewPage() {
   const [error, setError] = useState<string | null>(null);
   const [title, setTitle] = useState('');
   const [selectedPages, setSelectedPages] = useState<number[] | null>(null);
+  // 非 PDF 源（Word/PPT/图片/网页）没有 react-pdf 原稿预览，隐藏左栏
+  const [isPdfSource, setIsPdfSource] = useState(true);
 
   // ── Editing state ──
   const [paragraphs, setParagraphs] = useState<ParagraphData[]>([]);
@@ -71,6 +73,8 @@ export default function ReviewPage() {
 
         setTitle(result.title || result.source || '未命名文档');
         setSelectedPages(result.selected_pages ?? null);
+        // 旧文档 file_ext 为空 → 默认 PDF 源
+        setIsPdfSource((result.file_ext ?? '.pdf') === '.pdf');
 
         const paras: ParagraphData[] = result.paragraphs.map((p) => ({
           cid: generateUUID(),
@@ -524,39 +528,54 @@ export default function ReviewPage() {
 
       {/* Main content */}
       {isMobile ? (
-        /* ── Mobile: tab toggle layout ── */
+        /* ── Mobile: tab toggle layout (non-PDF sources hide the preview tab) ── */
         <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
-          {/* Tab bar */}
-          <div className="flex border-b border-hairline bg-canvas flex-shrink-0">
-            <button
-              onClick={() => setMobileTab('pdf')}
-              className={[
-                'flex-1 py-2.5 text-sm font-medium text-center transition-colors border-b-2',
-                mobileTab === 'pdf'
-                  ? 'border-primary text-primary'
-                  : 'border-transparent text-muted hover:text-body',
-              ].join(' ')}
-            >
-              PDF 预览
-            </button>
-            <button
-              onClick={() => setMobileTab('editor')}
-              className={[
-                'flex-1 py-2.5 text-sm font-medium text-center transition-colors border-b-2',
-                mobileTab === 'editor'
-                  ? 'border-primary text-primary'
-                  : 'border-transparent text-muted hover:text-body',
-              ].join(' ')}
-            >
-              编辑段落
-            </button>
-          </div>
+          {isPdfSource ? (
+            <>
+              {/* Tab bar */}
+              <div className="flex border-b border-hairline bg-canvas flex-shrink-0">
+                <button
+                  onClick={() => setMobileTab('pdf')}
+                  className={[
+                    'flex-1 py-2.5 text-sm font-medium text-center transition-colors border-b-2',
+                    mobileTab === 'pdf'
+                      ? 'border-primary text-primary'
+                      : 'border-transparent text-muted hover:text-body',
+                  ].join(' ')}
+                >
+                  PDF 预览
+                </button>
+                <button
+                  onClick={() => setMobileTab('editor')}
+                  className={[
+                    'flex-1 py-2.5 text-sm font-medium text-center transition-colors border-b-2',
+                    mobileTab === 'editor'
+                      ? 'border-primary text-primary'
+                      : 'border-transparent text-muted hover:text-body',
+                  ].join(' ')}
+                >
+                  编辑段落
+                </button>
+              </div>
 
-          {/* Tab content */}
-          <div className="flex-1 min-h-0 overflow-hidden">
-            {mobileTab === 'pdf' ? (
-              id && <PDFViewerPanel taskId={id} width={window.innerWidth} selectedPages={selectedPages} />
-            ) : (
+              {/* Tab content */}
+              <div className="flex-1 min-h-0 overflow-hidden">
+                {mobileTab === 'pdf' ? (
+                  id && <PDFViewerPanel taskId={id} width={window.innerWidth} selectedPages={selectedPages} />
+                ) : (
+                  <EditableParagraphPanel
+                    paragraphs={paragraphs}
+                    dirtySet={dirtySet}
+                    onParagraphChange={handleParagraphChange}
+                    onDelete={handleDelete}
+                    onMergeDown={handleMergeDown}
+                    onReorder={handleReorder}
+                  />
+                )}
+              </div>
+            </>
+          ) : (
+            <div className="flex-1 min-h-0 overflow-hidden">
               <EditableParagraphPanel
                 paragraphs={paragraphs}
                 dirtySet={dirtySet}
@@ -565,8 +584,8 @@ export default function ReviewPage() {
                 onMergeDown={handleMergeDown}
                 onReorder={handleReorder}
               />
-            )}
-          </div>
+            </div>
+          )}
         </div>
       ) : (
         /* ── Desktop: split pane layout ── */
@@ -577,23 +596,27 @@ export default function ReviewPage() {
             userSelect: isDragging ? 'none' : undefined,
           }}
         >
-          {/* Left: PDF viewer */}
-          <div className="h-full flex-shrink-0" style={{ width: leftWidth }}>
-            {id && <PDFViewerPanel taskId={id} width={leftWidth} selectedPages={selectedPages} />}
-          </div>
+          {/* Left: PDF viewer (PDF sources only; others hide the panel) */}
+          {isPdfSource && (
+            <>
+              <div className="h-full flex-shrink-0" style={{ width: leftWidth }}>
+                {id && <PDFViewerPanel taskId={id} width={leftWidth} selectedPages={selectedPages} />}
+              </div>
 
-          {/* Divider */}
-          <div
-            onMouseDown={handleDividerMouseDown}
-            onTouchStart={handleDividerTouchStart}
-            className="w-[6px] cursor-col-resize flex-shrink-0 flex items-center justify-center transition-colors touch-action-none"
-            style={{ background: isDragging ? 'var(--primary)' : 'var(--hairline)' }}
-          >
-            <div
-              className="w-0.5 h-10 rounded-sm"
-              style={{ background: isDragging ? '#fff' : '#c4bfb0' }}
-            />
-          </div>
+              {/* Divider */}
+              <div
+                onMouseDown={handleDividerMouseDown}
+                onTouchStart={handleDividerTouchStart}
+                className="w-[6px] cursor-col-resize flex-shrink-0 flex items-center justify-center transition-colors touch-action-none"
+                style={{ background: isDragging ? 'var(--primary)' : 'var(--hairline)' }}
+              >
+                <div
+                  className="w-0.5 h-10 rounded-sm"
+                  style={{ background: isDragging ? '#fff' : '#c4bfb0' }}
+                />
+              </div>
+            </>
+          )}
 
           {/* Right: editable paragraphs */}
           <div className="flex-1 h-full overflow-hidden">

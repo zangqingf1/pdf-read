@@ -53,6 +53,7 @@ export default function ExportSettingsModal({
   const sentenceAnalyses = useDocumentStore((s) => s.sentenceAnalyses);
   const summary = useDocumentStore((s) => s.summary);
   const title = useDocumentStore((s) => s.title);
+  const titleZh = useDocumentStore((s) => s.titleZh);
   const prefsStore = useExportPreferences();
   const prefs = useMemo(() => pickExportPrefs(prefsStore), [prefsStore]);
 
@@ -60,13 +61,14 @@ export default function ExportSettingsModal({
     () =>
       buildExportData({
         title: title || '',
+        titleZh,
         paragraphs,
         translations,
         wordAnalyses,
         sentenceAnalyses,
         summary,
       }),
-    [paragraphs, translations, wordAnalyses, sentenceAnalyses, summary, title]
+    [paragraphs, translations, wordAnalyses, sentenceAnalyses, summary, title, titleZh]
   );
 
   const [exporting, setExporting] = useState(false);

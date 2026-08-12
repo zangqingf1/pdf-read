@@ -49,3 +49,22 @@ logs/
 
 # Alembic
 backend/alembic/versions/*.pyc
+
+# Local debug / test artifacts (probes, dumps, repros)
+backend/_recovered.txt
+frontend/debug_bundle.js
+frontend/dom_dump.txt
+frontend/e2e_dump.txt
+frontend/export_e2e.cjs
+frontend/export_preview_shots/
+frontend/export_probe.bundle.mjs
+frontend/export_render_probe.bundle.mjs
+frontend/export_render_probe.tsx
+frontend/paginate_align_test.mjs
+frontend/paginate_align_test.ts
+frontend/paginate_assert.bundle.mjs
+frontend/repro.js
+frontend/repro_bundle.js
+frontend/run_debug*.cjs
+frontend/run_render_probe.cjs
+frontend/spacing_sample.json

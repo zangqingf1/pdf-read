@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef, isValidElement, Fragment } from 'react';
+import { useState, useCallback, useEffect, useMemo, useRef, isValidElement, Fragment } from 'react';
 import { flushSync } from 'react-dom';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -8,6 +8,7 @@ import { deleteWordAnalysis, deleteAllWordAnalyses, WordAnalysisResult } from '.
 import { deleteSentenceAnalysis, deleteAllSentenceAnalyses } from '../../services/sentenceAnalysisApi';
 import type { SentenceAnalysisResult } from '../../services/sentenceAnalysisApi';
 import { sentenceBodyMarkdown, sentenceBreakdownChunks } from '../../utils/sentenceSections';
+import { wordPositionMap } from '../../utils/textTokens';
 import EmptyState from '../ui/EmptyState';
 import Button from '../ui/Button';
 import PhoneticWithSpeakers from './PhoneticWithSpeakers';
@@ -498,6 +499,7 @@ export default function StudyPanel({
 }) {
   const {
     documentId,
+    paragraphs,
     wordAnalyses,
     sentenceAnalyses,
     removeWordAnalysis,
@@ -526,11 +528,44 @@ export default function StudyPanel({
   const [activeTab, setActiveTab] = useState<'words' | 'sentences'>('words');
   const [clearConfirming, setClearConfirming] = useState(false);
 
-  const wordList = Object.values(wordAnalyses);
-  wordList.sort((a, b) => a.paragraph_index - b.paragraph_index);
+  // 段落 index → 英文原文（单词卡片按原文出现顺序定位的依据）
+  const paragraphTextByIdx = useMemo(() => {
+    const m = new Map<number, string>();
+    for (const p of paragraphs) m.set(p.index, p.text);
+    return m;
+  }, [paragraphs]);
 
-  const sentenceList = Object.values(sentenceAnalyses);
-  sentenceList.sort((a, b) => a.paragraph_index - b.paragraph_index);
+  // 单词卡：先按段落，段内按词干在原文 token 流中的首次出现下标（原文顺序）
+  const wordList = useMemo(() => {
+    const list = Object.values(wordAnalyses);
+    const posCache = new Map<number, Map<string, number>>();
+    const rank = (pi: number, word: string): number => {
+      let m = posCache.get(pi);
+      if (!m) {
+        m = wordPositionMap(paragraphTextByIdx.get(pi) ?? '');
+        posCache.set(pi, m);
+      }
+      // 词不在段内 / 段不存在 → 排末尾（稳定兜底，不抖动）
+      return m.get(word.toLowerCase()) ?? Number.MAX_SAFE_INTEGER;
+    };
+    list.sort((a, b) =>
+      a.paragraph_index !== b.paragraph_index
+        ? a.paragraph_index - b.paragraph_index
+        : rank(a.paragraph_index, a.word) - rank(b.paragraph_index, b.word)
+    );
+    return list;
+  }, [wordAnalyses, paragraphTextByIdx]);
+
+  // 句子卡：先按段落，段内按 sentence_index（原文句子顺序）
+  const sentenceList = useMemo(() => {
+    const list = Object.values(sentenceAnalyses);
+    list.sort((a, b) =>
+      a.paragraph_index !== b.paragraph_index
+        ? a.paragraph_index - b.paragraph_index
+        : a.sentence_index - b.sentence_index
+    );
+    return list;
+  }, [sentenceAnalyses]);
 
   const pendingWordCount = Object.keys(selectedWords).length;
   const pendingSentenceCount = Object.keys(selectedSentences).length;

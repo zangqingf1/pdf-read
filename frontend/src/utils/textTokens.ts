@@ -30,6 +30,18 @@ export function tokenizeWords(text: string): WordToken[] {
   });
 }
 
+/** 词干 → 在文本 token 流中的首次出现下标；未找到返回 -1（纯标点/空白不计） */
+export function wordPositionMap(text: string): Map<string, number> {
+  const m = new Map<string, number>();
+  tokenizeWords(text).forEach((t, i) => {
+    if (t.stem !== null) {
+      const k = t.stem.toLowerCase();
+      if (!m.has(k)) m.set(k, i);
+    }
+  });
+  return m;
+}
+
 /** 单词解析 key：`${paragraphIndex}:${word.toLowerCase()}` */
 export function wordAnalysisKey(paragraphIndex: number, word: string): string {
   return `${paragraphIndex}:${word.toLowerCase()}`;

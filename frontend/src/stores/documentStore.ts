@@ -7,6 +7,8 @@ interface DocumentState {
   // Document data
   documentId: string | null;
   title: string | null;
+  /** 大标题中文翻译（随段落翻译流程自动翻译并持久化；阅读页大标题下方 + 导出首页展示） */
+  titleZh: string;
   source: string | null;
   paragraphs: ParagraphResult[];
   wordCount: number;
@@ -57,6 +59,10 @@ interface DocumentState {
   // Actions
   setDocument: (data: PDFResultResponse) => void;
   setLoading: (loading: boolean) => void;
+  /** 设置大标题（英文变更时清空旧中文翻译，随翻译流程自动重译） */
+  setTitle: (v: string) => void;
+  /** 设置大标题中文翻译 */
+  setTitleZh: (v: string) => void;
   reset: () => void;
   updateTranslations: (items: Array<{ index: number; text: string }>) => void;
   setTranslating: (translating: boolean) => void;
@@ -101,6 +107,7 @@ interface DocumentState {
 export const useDocumentStore = create<DocumentState>((set) => ({
   documentId: null,
   title: null,
+  titleZh: '',
   source: null,
   paragraphs: [],
   wordCount: 0,
@@ -182,9 +189,16 @@ export const useDocumentStore = create<DocumentState>((set) => ({
         }
       }
 
+      // 切换文档时清空标题翻译；同文档重新拉取优先用 DB 持久化的 title_zh，
+      // 无则保留会话内已翻译值（避免覆盖流式翻译结果）
+      const titleZh =
+        state.documentId === data.document_id
+          ? (data.title_zh ?? state.titleZh)
+          : (data.title_zh ?? '');
       return {
         documentId: data.document_id,
         title: data.title || 'Untitled',
+        titleZh,
         source: data.source || null,
         paragraphs: data.paragraphs,
         wordCount: data.word_count,
@@ -203,10 +217,15 @@ export const useDocumentStore = create<DocumentState>((set) => ({
 
   setLoading: (loading) => set({ isLoading: loading }),
 
+  setTitle: (v) => set({ title: v, titleZh: '' }),
+
+  setTitleZh: (v) => set({ titleZh: v }),
+
   reset: () =>
     set({
       documentId: null,
       title: null,
+      titleZh: '',
       source: null,
       paragraphs: [],
       wordCount: 0,

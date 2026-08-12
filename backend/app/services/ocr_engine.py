@@ -21,6 +21,11 @@ from typing import Optional
 import httpx
 
 from app.config import settings
+from app.services.file_types import (
+    PAGE_BASED_EXTENSIONS,
+    infer_model_version,
+    normalize_ext,
+)
 
 
 @dataclass
@@ -241,23 +246,24 @@ class OCREngine:
             "Content-Type": "application/json",
         }
 
-    async def parse_pdf(
-        self, pdf_path: str, api_token: str = "", selected_pages: list[int] | None = None
+    async def parse_file(
+        self, file_path: str, api_token: str = "", selected_pages: list[int] | None = None
     ) -> ParsedDocument:
-        """Parse a PDF file using MinerU Cloud API (batch file upload flow).
+        """Parse a document file (PDF or any MinerU-supported type) using the
+        MinerU Cloud batch file-upload flow.
 
         Args:
-            pdf_path: Local path to the PDF file.
+            file_path: Local path to the file.
             api_token: MinerU API token (required — from frontend localStorage).
-            selected_pages: Optional list of 1-based page numbers to include.
-                If None, all pages are included.
+            selected_pages: Optional list of 1-based page numbers to include
+                (PDF only). If None, all pages are included.
 
         Returns:
             ParsedDocument with structured content.
 
         Raises:
             MinerUAPIError: If the API returns an error or times out.
-            FileNotFoundError: If the PDF file doesn't exist.
+            FileNotFoundError: If the file doesn't exist.
             ValueError: If no API token is configured.
         """
         token = (api_token or "").strip()
@@ -266,21 +272,23 @@ class OCREngine:
                 "MinerU API Token 未配置。请点击页面右上角🔑图标设置。"
             )
 
-        if not os.path.exists(pdf_path):
-            raise FileNotFoundError(f"PDF file not found: {pdf_path}")
+        if not os.path.exists(file_path):
+            raise FileNotFoundError(f"Document file not found: {file_path}")
 
         base_url = settings.MINERU_API_BASE.rstrip("/")
-        file_name = os.path.basename(pdf_path)
+        file_name = os.path.basename(file_path)
+        ext = normalize_ext(file_name)
+        model_version = infer_model_version(file_name)
 
-        # ── Extract selected pages locally before uploading ──
+        # ── Extract selected pages locally before uploading (PDF only) ──
         # Saves MinerU time/credits: only the requested pages are uploaded.
         orig_selected_pages = selected_pages
         temp_pdf_path = None
-        if selected_pages:
+        if selected_pages and ext in PAGE_BASED_EXTENSIONS:
             from app.services.page_utils import extract_pdf_pages
             import logging as _logging
             _log = _logging.getLogger(__name__)
-            temp_pdf_path = extract_pdf_pages(pdf_path, selected_pages)
+            temp_pdf_path = extract_pdf_pages(file_path, selected_pages)
             _log.info(
                 "Page selection: %d pages extracted → uploading subset to MinerU",
                 len(selected_pages),
@@ -291,12 +299,12 @@ class OCREngine:
             # the markdown fallback also benefits).
             selected_pages = None
         else:
-            upload_path = pdf_path
+            upload_path = file_path
 
-        # Read PDF bytes (from extracted temp file or original)
+        # Read file bytes (from extracted temp file or original)
         try:
             with open(upload_path, "rb") as f:
-                pdf_bytes = f.read()
+                file_bytes = f.read()
         finally:
             if temp_pdf_path and os.path.exists(temp_pdf_path):
                 os.unlink(temp_pdf_path)
@@ -305,7 +313,7 @@ class OCREngine:
         batch_url = f"{base_url}/api/v4/file-urls/batch"
         batch_payload = {
             "files": [{"name": file_name}],
-            "model_version": "vlm",  # 使用 VLM 视觉语言模型（推荐）
+            "model_version": model_version,  # vlm 或 MinerU-HTML
             "language": "en",        # 文档语言：英文
         }
 
@@ -329,19 +337,76 @@ class OCREngine:
         if not upload_url:
             raise MinerUAPIError("MinerU did not return a pre-signed upload URL")
 
-        # ── Step 2: Upload PDF to pre-signed URL ──
+        # ── Step 2: Upload to pre-signed URL ──
         # Per API docs: "上传文件时，无须设置 Content-Type 请求头"
-        put_resp = await self.client.put(upload_url, content=pdf_bytes)
+        put_resp = await self.client.put(upload_url, content=file_bytes)
         if put_resp.status_code not in (200, 201, 204):
             raise MinerUAPIError(
-                f"Failed to upload PDF to MinerU (HTTP {put_resp.status_code}): "
+                f"Failed to upload file to MinerU (HTTP {put_resp.status_code}): "
                 f"{put_resp.text[:300]}"
             )
 
         # ── Step 3: Poll batch results for parsing completion ──
         full_md, content_list = await self._poll_batch(batch_id, token, base_url)
 
-        # ── Step 4: Parse using content_list.json (with type labels) or fallback to markdown ──
+        # ── Step 4: Build structured document ──
+        return self._build_document(
+            full_md, content_list, selected_pages, orig_selected_pages
+        )
+
+    async def parse_pdf(
+        self, pdf_path: str, api_token: str = "", selected_pages: list[int] | None = None
+    ) -> ParsedDocument:
+        """Backward-compatible alias for parse_file (PDF input)."""
+        return await self.parse_file(
+            pdf_path, api_token=api_token, selected_pages=selected_pages
+        )
+
+    async def parse_url(self, url: str, api_token: str = "") -> ParsedDocument:
+        """Parse a URL (file URL or HTML web page) via MinerU /extract/task.
+
+        File-type URLs (ending in .pdf/.doc/.png etc.) are parsed with vlm;
+        everything else (HTML web pages) uses the MinerU-HTML model.
+        """
+        token = (api_token or "").strip()
+        if not token:
+            raise ValueError(
+                "MinerU API Token 未配置。请点击页面右上角🔑图标设置。"
+            )
+
+        base_url = settings.MINERU_API_BASE.rstrip("/")
+        model_version = infer_model_version(url)
+
+        resp = await self.client.post(
+            f"{base_url}/api/v4/extract/task",
+            headers=self._auth_headers(token),
+            json={"url": url, "model_version": model_version},
+        )
+        data = self._check_response(resp, "submitting URL parse task")
+
+        inner = data.get("data", data)
+        task_id = inner.get("task_id")
+        if not task_id:
+            raise MinerUAPIError(
+                f"MinerU did not return task_id for URL. Response: {data}"
+            )
+
+        full_md, content_list = await self._poll_task(task_id, token, base_url)
+        return self._build_document(full_md, content_list, None, None)
+
+    def _build_document(
+        self,
+        full_md: str,
+        content_list: list[dict] | None,
+        selected_pages: list[int] | None,
+        orig_selected_pages: list[int] | None = None,
+    ) -> ParsedDocument:
+        """Convert MinerU raw output (full.md + content_list.json) into a
+        ParsedDocument. Shared by parse_file and parse_url.
+
+        Uses content_list.json block types to filter headers/footers/page
+        numbers; falls back to markdown when content_list is unavailable.
+        """
         if content_list:
             paragraphs, page_numbers, title = _content_list_to_paragraphs(
                 content_list, selected_pages
@@ -426,6 +491,43 @@ class OCREngine:
             f"MinerU parsing timed out after {POLL_TIMEOUT}s"
         )
 
+    async def _poll_task(
+        self, task_id: str, token: str, base_url: str
+    ) -> tuple[str, list[dict] | None]:
+        """Poll a URL extract task until done, then download the result zip.
+
+        Returns (full_md_text, content_list_or_none).
+        """
+        headers = self._auth_headers(token)
+        url = f"{base_url}/api/v4/extract/task/{task_id}"
+        elapsed = 0
+
+        while elapsed < POLL_TIMEOUT:
+            await asyncio.sleep(POLL_INTERVAL)
+            elapsed += POLL_INTERVAL
+
+            resp = await self.client.get(url, headers=headers)
+            data = self._check_response(resp, "polling URL parse task")
+
+            inner = data.get("data", data)
+            state = inner.get("state", "")
+
+            if state == "done":
+                zip_url = inner.get("full_zip_url", "")
+                if not zip_url:
+                    raise MinerUAPIError(
+                        "MinerU task completed but no result URL returned"
+                    )
+                return await self._download_and_extract(zip_url)
+
+            elif state == "failed":
+                err = inner.get("err_msg", "Unknown error")
+                raise MinerUAPIError(f"MinerU parsing failed: {err}")
+
+        raise MinerUAPIError(
+            f"MinerU parsing timed out after {POLL_TIMEOUT}s"
+        )
+
     async def _download_and_extract(
         self, zip_url: str
     ) -> tuple[str, list[dict] | None]:
@@ -456,14 +558,22 @@ class OCREngine:
             full_md = zf.read(md_name).decode("utf-8")
 
             # ── Find content_list.json ──
+            # NOTE: MinerU-HTML results use a different content_list schema
+            # (elements are pairs/lists, not block dicts). Only treat it as
+            # usable when it is a non-empty list of block dicts; otherwise fall
+            # back to parsing full.md.
             content_list = None
             for name in all_names:
                 if name.endswith("content_list.json"):
                     try:
                         raw = zf.read(name).decode("utf-8")
-                        content_list = json_mod.loads(raw)
-                        if not isinstance(content_list, list):
-                            content_list = None
+                        parsed = json_mod.loads(raw)
+                        if (
+                            isinstance(parsed, list)
+                            and parsed
+                            and all(isinstance(b, dict) for b in parsed)
+                        ):
+                            content_list = parsed
                     except (json_mod.JSONDecodeError, UnicodeDecodeError):
                         pass
                     break

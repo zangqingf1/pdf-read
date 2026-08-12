@@ -10,6 +10,8 @@ class PDFUploadResponse(BaseModel):
     task_id: str
     status: str = "processing"
     page_count: int | None = None
+    source_type: str | None = None  # "upload" | "url"
+    file_ext: str | None = None  # ".pdf" ".docx" ".html" ...
 
 
 class PDFStatusResponse(BaseModel):
@@ -19,6 +21,8 @@ class PDFStatusResponse(BaseModel):
     error: Optional[str] = None
     page_count: int | None = None
     selected_pages: list[int] | None = None
+    source_type: str | None = None
+    file_ext: str | None = None
 
 
 class ParagraphResult(BaseModel):
@@ -47,6 +51,7 @@ class WordAnalysisItem(BaseModel):
 class PDFResultResponse(BaseModel):
     document_id: str
     title: Optional[str] = None
+    title_zh: Optional[str] = None
     source: Optional[str] = None
     paragraphs: list[ParagraphResult]
     word_count: int
@@ -55,8 +60,17 @@ class PDFResultResponse(BaseModel):
     sentence_analyses: list = Field(default_factory=list)
     page_count: int | None = None
     selected_pages: list[int] | None = None
+    source_type: str | None = None
+    file_ext: str | None = None
     summary: Optional[str] = None
     summary_updated_at: Optional[datetime] = None
+
+
+class ParseUrlRequest(BaseModel):
+    """提交 URL 解析（文件链接或 HTML 网页）。"""
+
+    url: str = Field(..., min_length=1, max_length=2000)
+    mineru_token: str = ""  # User's MinerU token (from frontend localStorage)
 
 
 class SelectPagesRequest(BaseModel):
@@ -80,12 +94,26 @@ class DocumentListItem(BaseModel):
     source: Optional[str] = None
     word_count: Optional[int] = None
     parse_status: str
+    source_type: Optional[str] = None
+    file_ext: Optional[str] = None
     created_at: datetime
 
 
 class DocumentListResponse(BaseModel):
     documents: list[DocumentListItem]
     total: int
+
+
+class UpdateTitleRequest(BaseModel):
+    """修改文档大标题。"""
+
+    title: str = Field(..., min_length=1, max_length=500)
+
+
+class UpdateTitleResponse(BaseModel):
+    document_id: str
+    title: str
+    title_zh: str | None = None
 
 
 class UpdateParagraphItem(BaseModel):

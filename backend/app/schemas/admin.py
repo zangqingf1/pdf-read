@@ -68,6 +68,8 @@ class AdminDocumentItem(BaseModel):
     parse_status: str
     page_count: int | None = None
     word_count: int | None = None
+    source_type: str | None = None
+    file_ext: str | None = None
     created_at: datetime
 
     @classmethod
@@ -80,6 +82,8 @@ class AdminDocumentItem(BaseModel):
             parse_status=doc.parse_status,
             page_count=doc.page_count,
             word_count=doc.word_count,
+            source_type=doc.source_type,
+            file_ext=doc.file_ext,
             created_at=doc.created_at,
         )
 

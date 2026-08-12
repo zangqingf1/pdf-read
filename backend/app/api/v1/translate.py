@@ -90,6 +90,36 @@ async def _persist_translations_by_index(
     await _save_translations(document_id, index_map, db)
 
 
+async def _translate_and_persist_title(
+    ai,
+    title: str,
+    document_id: str | None,
+    system_prompt_override: str | None,
+    user_prompt_override: str | None,
+    db: AsyncSession,
+) -> str | None:
+    """翻译大标题并持久化到 documents.title_zh（失败不阻断段落翻译）。"""
+    try:
+        clean = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]", "", title).strip()
+        if not clean:
+            return None
+        result = await ai.translate_batch(
+            [clean],
+            system_prompt_override=system_prompt_override,
+            user_prompt_override=user_prompt_override,
+        )
+        title_zh = (result[0] if result else "").strip() or None
+        if title_zh and document_id:
+            doc = await db.get(Document, uuid.UUID(document_id))
+            if doc is not None:
+                doc.title_zh = title_zh
+                await db.commit()
+        return title_zh
+    except Exception:
+        _logger.exception("Failed to translate/persist title for document %s", document_id)
+        return None
+
+
 @router.post("", response_model=TranslateResponse)
 async def translate_paragraphs(
     request: TranslateRequest,
@@ -101,9 +131,11 @@ async def translate_paragraphs(
     Accepts a list of English paragraphs and returns Chinese translations
     in the same order. Uses parallel batch processing for speed.
     If document_id is provided, saves translations to DB for future reuse.
+
+    Optional ``title``: 大标题原文，随段落一并翻译，持久化到 documents.title_zh。
     """
-    if not request.paragraphs:
-        raise HTTPException(status_code=400, detail="No paragraphs to translate")
+    if not request.paragraphs and not request.title:
+        raise HTTPException(status_code=400, detail="Nothing to translate")
 
     # Verify document ownership if document_id is provided
     if request.document_id:
@@ -149,7 +181,16 @@ async def translate_paragraphs(
             except Exception:
                 _logger.exception("Failed to persist translations for document %s", request.document_id)
 
-        return TranslateResponse(translations=translations)
+        # 大标题翻译：随段落一并翻译并持久化（不占 paragraphs 索引）
+        title_translation: str | None = None
+        if request.title and request.title.strip():
+            title_translation = await _translate_and_persist_title(
+                ai, request.title, request.document_id, system_override, user_override, db
+            )
+
+        return TranslateResponse(
+            translations=translations, title_translation=title_translation
+        )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
@@ -192,14 +233,18 @@ async def translate_stream(
     Each completed translation is sent as a Server-Sent Event:
     ``data: {"index": 0, "translation": "中文..."}``
 
+    Optional ``title``: 大标题原文，翻译后先发一条
+    ``data: {"type": "title", "translation": "中文..."}`` 事件并持久化到
+    documents.title_zh，再开始段落流。
+
     A final event signals completion:
     ``data: {"type": "done"}``
 
     The frontend can render each translation as it arrives instead of
     waiting for the entire batch.
     """
-    if not request.paragraphs:
-        raise HTTPException(status_code=400, detail="No paragraphs to translate")
+    if not request.paragraphs and not request.title:
+        raise HTTPException(status_code=400, detail="Nothing to translate")
 
     # Verify document ownership if document_id is provided
     if request.document_id:
@@ -227,6 +272,15 @@ async def translate_stream(
     async def event_generator():
         translations: dict[int, str] = {}
         try:
+            # 大标题翻译：先出标题事件，再流式段落
+            if request.title and request.title.strip():
+                title_zh = await _translate_and_persist_title(
+                    ai, request.title, request.document_id,
+                    system_override, user_override, db,
+                )
+                if title_zh:
+                    yield f"data: {json.dumps({'type': 'title', 'translation': title_zh}, ensure_ascii=False)}\n\n"
+
             async for index, translation in ai.translate_batch_stream(
                 paragraphs,
                 system_prompt_override=system_override,

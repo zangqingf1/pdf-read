@@ -85,11 +85,16 @@ function collectLines(el: HTMLElement): LineInfo | undefined {
     if (gap >= 0 && gap < 100) zhGap = gap; // 实测优先，异常值回退常量
   }
   const zh = zhEl ? computeLines(zhEl) : null;
+  // 单行译文（不换行 → computeLines 返回 null，但 zhEl 存在即译文真实非空）：
+  // 记作单个完整「行」，否则行拆分逻辑不会为它分配行，译文被静默丢弃。
+  const zhSingle = zhEl && !zh
+    ? { lineH: zhEl.getBoundingClientRect().height, ends: [(zhEl.textContent ?? '').length] }
+    : null;
   return {
     enEnds: en.ends,
     hEn: en.lineH,
-    zhEnds: zh?.ends ?? [],
-    hZh: zh?.lineH ?? 0,
+    zhEnds: zh?.ends ?? zhSingle?.ends ?? [],
+    hZh: zh?.lineH ?? zhSingle?.lineH ?? 0,
     zhGap,
   };
 }

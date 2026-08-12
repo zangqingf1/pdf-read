@@ -23,6 +23,8 @@ class Document(Base):
         Uuid, primary_key=True, default=uuid.uuid4
     )
     title: Mapped[str | None] = mapped_column(String(500))
+    # 大标题中文翻译（段落翻译流程一并翻译并持久化）
+    title_zh: Mapped[str | None] = mapped_column(Text, nullable=True)
     source: Mapped[str | None] = mapped_column(String(200))
     original_text: Mapped[str] = mapped_column(Text)
     paragraph_count: Mapped[int | None] = mapped_column(Integer)
@@ -34,6 +36,11 @@ class Document(Base):
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     page_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     selected_pages: Mapped[list[int] | None] = mapped_column(JSON, nullable=True)
+
+    # 源类型与扩展名 — 支持 PDF 之外的文件（Word/PPT/图片/HTML）与 URL 链接
+    source_type: Mapped[str | None] = mapped_column(String(20), nullable=True)  # "upload" | "url"
+    file_ext: Mapped[str | None] = mapped_column(String(20), nullable=True)  # ".pdf" ".docx" ".html" ...
+    source_url: Mapped[str | None] = mapped_column(String(2000), nullable=True)  # URL 源保留原链接
 
     # 全文总结 — 该字段 = 最近一次保存的文本框内容，用户草稿与 AI 结果共用
     summary: Mapped[str | None] = mapped_column(Text, nullable=True)

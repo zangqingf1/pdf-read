@@ -3,28 +3,26 @@
 from fastapi import File, UploadFile, HTTPException
 
 from app.config import settings
+from app.services.file_types import SUPPORTED_UPLOAD_EXTENSIONS, normalize_ext
 
 
 MAX_UPLOAD_SIZE = settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024  # Convert to bytes
 
 
-async def validate_pdf_upload(file: UploadFile = File(...)) -> UploadFile:
-    """Validate PDF upload: check content type and file size.
+async def validate_document_upload(file: UploadFile = File(...)) -> UploadFile:
+    """Validate document upload: check the extension against the MinerU
+    whitelist and the size limit.
 
-    Returns the validated UploadFile or raises HTTPException.
+    Note: Not currently wired to any route — upload validation lives in
+    pdf_service.upload_and_save. Kept here as a reusable dependency.
     """
-    # Check Content-Type
-    if file.content_type != "application/pdf":
+    # Check extension
+    ext = normalize_ext(file.filename or "")
+    if ext not in SUPPORTED_UPLOAD_EXTENSIONS:
         raise HTTPException(
             status_code=400,
-            detail=f"Invalid file type: {file.content_type}. Only PDF files are accepted.",
-        )
-
-    # Check file extension
-    if not file.filename or not file.filename.lower().endswith(".pdf"):
-        raise HTTPException(
-            status_code=400,
-            detail="File extension must be .pdf",
+            detail=f"不支持的文件类型：{ext or '无扩展名'}。"
+            "支持的格式：PDF、Word、PPT、Excel、图片与 HTML",
         )
 
     return file

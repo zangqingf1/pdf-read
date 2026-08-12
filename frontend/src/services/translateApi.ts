@@ -5,6 +5,8 @@ export type AIProvider = 'deepseek';
 
 export interface TranslateRequest {
   paragraphs: string[];
+  /** 大标题原文，随段落一并翻译并持久化到 documents.title_zh */
+  title?: string;
   api_key?: string;
   document_id?: string;
   indices?: number[];
@@ -13,6 +15,8 @@ export interface TranslateRequest {
 
 export interface TranslateResponse {
   translations: string[];
+  /** 大标题中文翻译（请求带 title 时返回） */
+  title_translation?: string;
 }
 
 export async function translateParagraphs(
@@ -20,12 +24,14 @@ export async function translateParagraphs(
   apiKey?: string,
   documentId?: string,
   provider?: AIProvider,
-  indices?: number[]
+  indices?: number[],
+  title?: string
 ): Promise<TranslateResponse> {
   const { data } = await api.post<TranslateResponse>(
     '/translate',
     {
       paragraphs,
+      title: title || undefined,
       api_key: apiKey || undefined,
       document_id: documentId || undefined,
       indices: indices || undefined,
@@ -40,7 +46,7 @@ export async function translateParagraphs(
 
 /** SSE event from the streaming translate endpoint */
 export interface TranslateSSEEvent {
-  type?: 'done' | 'error';
+  type?: 'done' | 'error' | 'title';
   index?: number;
   translation?: string;
   code?: number;
@@ -60,7 +66,9 @@ export async function translateParagraphsStream(
   documentId?: string,
   provider?: AIProvider,
   indices?: number[],
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  title?: string,
+  onTitle?: (translation: string) => void
 ): Promise<string[]> {
   const baseUrl = api.defaults.baseURL || '/api/v1';
   const url = `${baseUrl}/translate/stream`;
@@ -78,6 +86,7 @@ export async function translateParagraphsStream(
     headers,
     body: JSON.stringify({
       paragraphs,
+      title: title || undefined,
       api_key: apiKey || undefined,
       document_id: documentId || undefined,
       indices: indices || undefined,
@@ -120,6 +129,11 @@ export async function translateParagraphsStream(
         }
         if (event.type === 'error') {
           throw new Error(event.message || '翻译失败');
+        }
+        // 大标题翻译事件（先于段落事件到达）
+        if (event.type === 'title' && event.translation !== undefined) {
+          onTitle?.(event.translation);
+          continue;
         }
         if (event.index !== undefined && event.translation !== undefined) {
           translations[event.index] = event.translation;

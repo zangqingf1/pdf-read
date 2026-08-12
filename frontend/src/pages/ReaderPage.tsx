@@ -39,6 +39,9 @@ export default function ReaderPage() {
   const {
     setDocument,
     reset,
+    title,
+    titleZh,
+    setTitleZh,
     paragraphs,
     documentId,
     translations,
@@ -269,7 +272,10 @@ export default function ReaderPage() {
     const untranslated = paragraphs.filter(
       (p) => p.text.trim() && !translations[p.index]
     );
-    if (untranslated.length === 0) return;
+    // 大标题随段落翻译流程一并翻译（title_zh 已持久化则跳过）
+    const titleText = title?.trim();
+    const needsTitle = Boolean(titleText && !titleZh);
+    if (untranslated.length === 0 && !needsTitle) return;
 
     setTranslating(true);
     setTranslationError(null);
@@ -289,7 +295,9 @@ export default function ReaderPage() {
       documentId || undefined,
       selectedProvider,
       indices,
-      abortController.signal
+      abortController.signal,
+      needsTitle ? titleText : undefined,
+      (t) => setTitleZh(t)
     )
       .then(() => {
         completedOk = true;
@@ -318,8 +326,10 @@ export default function ReaderPage() {
         }
       });
 
+    // 注意：titleZh 不入依赖 —— 标题翻译事件 setTitleZh 会触发重跑并 abort
+    // 正在进行的段落流。重试时 effect 重新渲染，闭包内能读到最新 titleZh。
     return () => abortController.abort();
-  }, [documentId, paragraphs.length, translationTrigger, selectedProvider]);
+  }, [documentId, title, paragraphs.length, translationTrigger, selectedProvider]);
 
   // ── Auto-open panel when analysis starts ──
   useEffect(() => {

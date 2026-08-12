@@ -31,7 +31,9 @@
       "Bash(python -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(f'Documents: {d[\\\\\"total\\\\\"]} total, first: {d[\\\\\"documents\\\\\"][0][\\\\\"title\\\\\"]}'\\)\")",
       "Skill(run)",
       "Bash(pip list *)",
-      "Bash(python -m uvicorn app.main:app --port 8000)"
+      "Bash(python -m uvicorn app.main:app --port 8000)",
+      "Bash(cmd.exe //c start chrome \"http://localhost:5173\")",
+      "Read(//c/Users/33294/.claude/**)"
     ]
   },
   "enableAllProjectMcpServers": true,
