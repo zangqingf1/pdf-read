@@ -6,6 +6,8 @@ import EditableTitle from './EditableTitle';
 import type { AIProvider } from '../../services/translateApi';
 import { useReaderStore, FONT_SIZE_MIN, FONT_SIZE_MAX } from '../../stores/readerStore';
 import TypographyDrawer from './TypographyDrawer';
+import { useAudioPlayerStore } from '../../stores/audioPlayerStore';
+import { playFromParagraph, togglePlay } from '../../hooks/useParagraphAudioPlayer';
 
 interface ReadingAreaProps {
   isTouchDevice?: boolean;
@@ -32,6 +34,7 @@ export default function ReadingArea({
     isTranslating,
   } = useDocumentStore();
   const { fontSize, increaseFontSize, decreaseFontSize } = useReaderStore();
+  const playerStatus = useAudioPlayerStore((s) => s.status);
   const [drawerOpen, setDrawerOpen] = useState(false);
 
   const translatedCount = Object.keys(translations).length;
@@ -87,6 +90,36 @@ export default function ReadingArea({
 
           {/* Font size & typography controls */}
           <div className="flex items-center gap-1 text-sm text-muted">
+            <button
+              onClick={() => {
+                if (playerStatus === 'idle') {
+                  const first = [...paragraphs].sort((a, b) => a.index - b.index)[0];
+                  if (first) void playFromParagraph(first.index);
+                } else {
+                  togglePlay();
+                }
+              }}
+              className="h-8 px-2 flex items-center gap-1.5 rounded-md hover:bg-surface-card transition-colors touch-area text-primary"
+              title="朗读全文（点击从第一句开始）"
+            >
+              {playerStatus === 'loading' ? (
+                <svg className="animate-spin" width="14" height="14" viewBox="0 0 24 24" fill="none">
+                  <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" opacity="0.25" />
+                  <path d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" fill="currentColor" opacity="0.75" />
+                </svg>
+              ) : playerStatus === 'playing' ? (
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                  <path d="M9 18V6M15 18V6" />
+                </svg>
+              ) : (
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                  <path d="M11 5L6 9H2v6h4l5 4V5z" />
+                  <path d="M15.54 8.46a5 5 0 010 7.07M19.07 4.93a10 10 0 010 14.14" />
+                </svg>
+              )}
+              <span className="text-xs">{playerStatus === 'idle' ? '朗读' : playerStatus === 'playing' ? '暂停' : '继续'}</span>
+            </button>
+            <div className="w-px h-5 bg-hairline mx-0.5" />
             <button
               onClick={decreaseFontSize}
               disabled={fontSize <= FONT_SIZE_MIN}

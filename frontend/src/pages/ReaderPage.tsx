@@ -12,8 +12,11 @@ import ApiKeyModal from '../components/common/ApiKeyModal';
 import { useDocumentStore } from '../stores/documentStore';
 import { useReaderStore, BG_COLORS } from '../stores/readerStore';
 import { useResponsiveBreakpoint } from '../hooks/useResponsiveBreakpoint';
+import { destroy as destroyPlayer } from '../hooks/useParagraphAudioPlayer';
+import { useAudioPlayerStore } from '../stores/audioPlayerStore';
 import ReaderHeader from '../components/reader/ReaderHeader';
 import ReadingArea from '../components/reader/ReadingArea';
+import AudioPlayerBar from '../components/reader/AudioPlayerBar';
 import StudyPanel from '../components/reader/StudyPanel';
 import StudySheet from '../components/reader/StudySheet';
 import FocusedAnalysisSheet from '../components/reader/FocusedAnalysisSheet';
@@ -110,6 +113,12 @@ export default function ReaderPage() {
   const [studySheetOpen, setStudySheetOpen] = useState(false);
   const [focusedAnalysis, setFocusedAnalysis] = useState<{ type: 'word' | 'sentence'; key: string } | null>(null);
   const [panelOpen, setPanelOpen] = useState(true);
+  const playerStatus = useAudioPlayerStore((s) => s.status);
+
+  // ── 朗读播放器单例清理（离开页面停止播放）──
+  useEffect(() => {
+    return () => destroyPlayer();
+  }, []);
 
   const hasAnalyses = Object.keys(wordAnalyses).length > 0
     || Object.keys(sentenceAnalyses).length > 0
@@ -776,6 +785,9 @@ export default function ReaderPage() {
           )}
         </div>
       )}
+
+      {/* ── 朗读播放条 ── */}
+      {playerStatus !== 'idle' && <AudioPlayerBar />}
 
       <ApiKeyModal
         open={showApiKeyModal}

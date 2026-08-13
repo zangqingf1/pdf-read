@@ -67,4 +67,8 @@ frontend/repro.js
 frontend/repro_bundle.js
 frontend/run_debug*.cjs
 frontend/run_render_probe.cjs
+
+# Local AI tool config (not part of the project)
+.agents/
+.codex/
 frontend/spacing_sample.json

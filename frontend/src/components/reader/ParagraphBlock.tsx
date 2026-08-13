@@ -6,6 +6,8 @@ import { useReaderStore, FONT_FAMILIES, LINE_HEIGHTS } from '../../stores/reader
 import { useDocumentStore } from '../../stores/documentStore';
 import { triggerScrollToAnalysis } from './StudyPanel';
 import { splitSentences, tokenizeWords, wordAnalysisKey, sentenceAnalysisKey } from '../../utils/textTokens';
+import { useAudioPlayerStore } from '../../stores/audioPlayerStore';
+import { playFromSentence } from '../../hooks/useParagraphAudioPlayer';
 
 // ── Module-level callback: open focused analysis on mobile ──
 let _onOpenFocusedAnalysis: ((type: 'word' | 'sentence', key: string) => void) | null = null;
@@ -29,6 +31,8 @@ function WordToken({
   paragraphIndex,
   sentenceIndex,
   sentenceText,
+  wordIdx,
+  isTtsActive,
   isTouchDevice,
 }: {
   text: string;
@@ -36,6 +40,10 @@ function WordToken({
   paragraphIndex: number;
   sentenceIndex: number;
   sentenceText: string;
+  /** 句内词干序号（供朗读高亮定位） */
+  wordIdx: number;
+  /** 朗读卡拉OK高亮中（由父级按 activeWordIdx 计算，避免逐词订阅 store） */
+  isTtsActive: boolean;
   isTouchDevice: boolean;
 }) {
   const {
@@ -122,6 +130,7 @@ function WordToken({
         'word-token',
         isSelected ? 'word-token-selected' : '',
         hasAnalysis && !isSelected ? 'word-token-has-analysis' : '',
+        isTtsActive ? 'tts-current-word' : '',
         longPressActive ? 'long-press-active' : '',
       ].join(' ')}
       onClick={handleClick}
@@ -140,10 +149,14 @@ function renderTokenizedText(
   paragraphIndex: number,
   sentenceIndex: number,
   sentenceText: string,
+  activeWordIdx: number | null,
   isTouchDevice: boolean,
 ): React.ReactNode {
+  let wordIdx = 0;
   return tokenizeWords(text).map((token, i) => {
     if (token.stem) {
+      const currentIdx = wordIdx;
+      wordIdx += 1;
       return (
         <WordToken
           key={i}
@@ -152,6 +165,8 @@ function renderTokenizedText(
           paragraphIndex={paragraphIndex}
           sentenceIndex={sentenceIndex}
           sentenceText={sentenceText}
+          wordIdx={currentIdx}
+          isTtsActive={activeWordIdx !== null && activeWordIdx >= 0 && activeWordIdx === currentIdx}
           isTouchDevice={isTouchDevice}
         />
       );
@@ -166,18 +181,19 @@ function processChildren(
   paragraphIndex: number,
   sentenceIndex: number,
   sentenceText: string,
+  activeWordIdx: number | null,
   isTouchDevice: boolean,
 ): React.ReactNode {
   return React.Children.map(children, (child) => {
     if (typeof child === 'string') {
-      return renderTokenizedText(child, paragraphIndex, sentenceIndex, sentenceText, isTouchDevice);
+      return renderTokenizedText(child, paragraphIndex, sentenceIndex, sentenceText, activeWordIdx, isTouchDevice);
     }
     if (React.isValidElement(child)) {
       const childProps = (child.props as any) || {};
       if (childProps.children) {
         return React.cloneElement(child, {
           ...childProps,
-          children: processChildren(childProps.children, paragraphIndex, sentenceIndex, sentenceText, isTouchDevice),
+          children: processChildren(childProps.children, paragraphIndex, sentenceIndex, sentenceText, activeWordIdx, isTouchDevice),
         } as any);
       }
     }
@@ -200,9 +216,18 @@ function SentenceToken({
     sentenceAnalyses,
     toggleSentenceSelection,
   } = useDocumentStore();
+  // 仅当本句是当前朗读句时才订阅（返回词序号），避免全文逐词/逐句随 timeupdate 重渲染
+  const activeWordIdx = useAudioPlayerStore((s) =>
+    s.highlight &&
+    s.highlight.paraIdx === paragraphIndex &&
+    s.highlight.sentIdx === sentence.index
+      ? s.highlight.wordIdx
+      : null
+  );
   const key = sentenceAnalysisKey(paragraphIndex, sentence.index);
   const isSelected = !!selectedSentences[key];
   const hasAnalysis = !!sentenceAnalyses[key];
+  const isTtsActive = activeWordIdx !== null;
 
   // ── Long press detection (mobile: reliable fallback for inline spans) ──
   const longPressTimer = useRef<ReturnType<typeof setTimeout>>();
@@ -265,16 +290,16 @@ function SentenceToken({
     () => ({
       p: ({ children, ...props }: any) => (
         <span {...props}>
-          {processChildren(children, paragraphIndex, sentence.index, sentence.text, isTouchDevice)}
+          {processChildren(children, paragraphIndex, sentence.index, sentence.text, activeWordIdx, isTouchDevice)}
         </span>
       ),
     }),
-    [paragraphIndex, sentence.index, sentence.text, isTouchDevice]
+    [paragraphIndex, sentence.index, sentence.text, activeWordIdx, isTouchDevice]
   );
 
   return (
     <span
-      className={`sentence-token ${isSelected ? 'sentence-token-selected' : ''} ${hasAnalysis && !isSelected ? 'sentence-token-has-analysis' : ''} ${longPressActive ? 'long-press-active' : ''}`}
+      className={`sentence-token ${isSelected ? 'sentence-token-selected' : ''} ${hasAnalysis && !isSelected ? 'sentence-token-has-analysis' : ''} ${isTtsActive ? 'tts-current-sentence' : ''} ${longPressActive ? 'long-press-active' : ''}`}
       onClick={handleClick}
       onTouchStart={handleTouchStart}
       onTouchEnd={handleTouchEnd}
@@ -282,6 +307,20 @@ function SentenceToken({
       data-paragraph-index={paragraphIndex}
       data-sentence-index={sentence.index}
     >
+      <button
+        type="button"
+        className="sentence-play-btn"
+        title="从这句开始朗读"
+        aria-label="从这句开始朗读"
+        onClick={(e) => {
+          e.stopPropagation();
+          void playFromSentence(paragraphIndex, sentence.index);
+        }}
+      >
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+          <path d="M8 5v14l11-7z" />
+        </svg>
+      </button>
       <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
         {sentence.text}
       </ReactMarkdown>

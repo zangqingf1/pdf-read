@@ -231,6 +231,45 @@
   background-color: #fdf3ef;
 }
 
+/* ── 朗读卡拉OK高亮 ── */
+.tts-current-sentence {
+  background-color: rgba(204, 120, 92, 0.12);
+  box-shadow: 0 0 0 1.5px rgba(204, 120, 92, 0.28);
+}
+.tts-current-word {
+  background-color: rgba(204, 120, 92, 0.35);
+  box-shadow: 0 0 0 1.5px rgba(204, 120, 92, 0.6);
+  border-radius: 3px;
+  padding: 0 1px;
+}
+
+/* ── 句子朗读按钮 ── */
+.sentence-play-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  margin-right: 4px;
+  vertical-align: middle;
+  border-radius: 4px;
+  color: var(--primary);
+  background-color: rgba(204, 120, 92, 0.1);
+  opacity: 0;
+  transition: opacity 0.15s ease, background-color 0.15s ease;
+}
+.sentence-play-btn:hover {
+  background-color: rgba(204, 120, 92, 0.2);
+}
+.sentence-token:hover .sentence-play-btn {
+  opacity: 1;
+}
+@media (pointer: coarse) {
+  .sentence-play-btn {
+    opacity: 1;
+  }
+}
+
 /* ── Paragraph block ── */
 .paragraph-block {
   scroll-margin-top: 24px;
