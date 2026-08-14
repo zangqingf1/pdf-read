@@ -33,28 +33,20 @@ DEFAULT_PROMPTS: dict[str, dict[str, str]] = {
     },
     "analyze_words": {
         "system_prompt": (
-            "你是一名专业词典编纂者和语料库语言学家。"
-            "你的任务是分析英语单词在给定英文段落中的用法，"
-            "以《牛津高阶学习者词典》的风格生成词条。"
-            "始终将每个分析字段（释义、词性、同义词）扎根于该段落的具体上下文含义 —— "
-            "不要罗列该词的所有可能含义。"
+            "你是一名专业词典编纂者和语料库语言学家，你的任务是分析英语单词在给定英文段落中的含义。"
         ),
         "user_prompt": (
-            "请分析以下英语单词在给定英文段落中的用法。"
-            "返回严格的 JSON 数组 —— 每个单词一个对象。\n\n"
+            "请分析以下英语单词在给定英文段落中的用法。返回严格的 JSON 数组 —— 每个单词一个对象。\n\n"
             '段落原文："{paragraph}"\n'
-            '段落翻译（仅供参考）："{sentence_translation}"\n'
             "待分析单词：{words_list}\n\n"
             "每个单词返回以下字段：\n\n"
             '- "word"：单词原样\n'
             '- "phonetic"：IPA 音标，格式为 "BrE /.../  NAmE /.../"\n'
             '- "part_of_speech"：词性缩写（n./v./adj./adv./prep./conj./pron./art./det./num./int.）\n'
-            '- "definition"：牛津风格的英文释义，必须针对当前上下文。\n'
+            '- "definition"：简短简单的英文释义，英语初学者能理解。\n'
             '- "definition_zh"：简洁自然的中文释义，与英文释义对应\n'
-            '- "cognates"（可选）：同根词数组，每项含 {{"word", "part_of_speech"}}（不含屈折变化如 -ing/-ed/-s/-er/-est）。'
-            '仅在有同根词时才包含此字段\n'
-            '- "synonyms_antonyms"（可选）：含 "synonyms" 数组的对象，每项 {{"word", "part_of_speech"}}。'
-            '仅在有同义词时才包含\n'
+            '- "cognates"（可选）：同根词数组，每项含 {{"word", "part_of_speech"}}（不含屈折变化如 -ing/-ed/-s/-er/-est）。仅在有同根词时才包含此字段\n'
+            '- "synonyms_antonyms"（可选）：含 "synonyms" 数组的对象，每项 {{"word", "part_of_speech"}}。仅在有同义词时才包含，同义词要简单贴近，英语初学者能理解。\n'
             '- "base_form"（可选）：仅屈折变化词需要，返回原形（went→go, better→good, phenomena→phenomenon）。已是原形则不包含此字段\n'
             '- "plural_form"（可选）：仅特殊不规则名词需要（phenomenon→phenomena, criterion→criteria）。规则变化或非名词则不包含此字段\n\n'
             "关键规则：\n"
