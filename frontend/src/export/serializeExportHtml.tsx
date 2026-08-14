@@ -29,9 +29,9 @@ export function collectStylesheetsCss(): string {
     }
     for (const rule of Array.from(rules)) {
       if (rule.type === CSSRule.IMPORT_RULE) continue; // 外部 @import 无法随导出携带
-      // 只保留导出文档实际用到的字体（Lora 衬线正文），其余 @font-face 剔除，
+      // 只保留导出文档实际用到的字体（Source Serif 4 衬线正文），其余 @font-face 剔除，
       // 避免无谓增大导出 HTML（Cormorant/Inter/JetBrains 仅页面 UI 使用）
-      if (rule.type === CSSRule.FONT_FACE_RULE && !/font-family:\s*['"]?Lora/i.test(rule.cssText)) {
+      if (rule.type === CSSRule.FONT_FACE_RULE && !/font-family:\s*['"]?Source Serif 4/i.test(rule.cssText)) {
         continue;
       }
       try {
