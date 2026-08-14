@@ -17,7 +17,7 @@ export function escapeHtml(s: string): string {
     .replace(/'/g, '&#39;');
 }
 
-/** 收集全部同源样式表规则（跳过跨域 sheet 与 @import） */
+/** 收集全部同源样式表规则（跳过跨域 sheet 与非导出字体 @import/@font-face） */
 export function collectStylesheetsCss(): string {
   let css = '';
   for (const sheet of Array.from(document.styleSheets)) {
@@ -28,7 +28,12 @@ export function collectStylesheetsCss(): string {
       continue; // 跨域样式表不可读
     }
     for (const rule of Array.from(rules)) {
-      if (rule.type === CSSRule.IMPORT_RULE) continue; // Google Fonts @import 跨域
+      if (rule.type === CSSRule.IMPORT_RULE) continue; // 外部 @import 无法随导出携带
+      // 只保留导出文档实际用到的字体（Lora 衬线正文），其余 @font-face 剔除，
+      // 避免无谓增大导出 HTML（Cormorant/Inter/JetBrains 仅页面 UI 使用）
+      if (rule.type === CSSRule.FONT_FACE_RULE && !/font-family:\s*['"]?Lora/i.test(rule.cssText)) {
+        continue;
+      }
       try {
         css += rule.cssText + '\n';
       } catch {
@@ -39,6 +44,38 @@ export function collectStylesheetsCss(): string {
   return css;
 }
 
+/** 将导出 CSS 中的本地字体 url 内联为 data URI（服务端 Chrome 渲染 file:// 临时 HTML 无法解析 /fonts/ 相对路径） */
+export async function inlineLocalFonts(css: string): Promise<string> {
+  const urlRe = /url\((['"]?)(\/fonts\/[a-z0-9-]+\.woff2)\1\)/g;
+  const urls = [...new Set(Array.from(css.matchAll(urlRe)).map((m) => m[2]))];
+  if (urls.length === 0) return css;
+  const cache = new Map<string, string>();
+  await Promise.all(
+    urls.map(async (u) => {
+      try {
+        const resp = await fetch(u);
+        if (!resp.ok) return;
+        const buf = await resp.arrayBuffer();
+        const bytes = new Uint8Array(buf);
+        let bin = '';
+        const CHUNK = 0x8000;
+        for (let i = 0; i < bytes.length; i += CHUNK) {
+          bin += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+        }
+        cache.set(u, `data:font/woff2;base64,${btoa(bin)}`);
+      } catch {
+        /* 保留原 url（本地预览/开发环境仍可解析） */
+      }
+    })
+  );
+  if (cache.size === 0) return css;
+  let out = css;
+  for (const [u, data] of cache) {
+    out = out.split(`url("${u}")`).join(`url("${data}")`).split(`url('${u}')`).join(`url('${data}')`).split(`url(${u})`).join(`url(${data})`);
+  }
+  return out;
+}
+
 export async function serializeExportHtml(
   data: ExportData,
   prefs: ExportPreferences,
@@ -46,7 +83,7 @@ export async function serializeExportHtml(
 ): Promise<string> {
   const { renderToStaticMarkup } = await import('react-dom/server');
   const markup = renderToStaticMarkup(<ExportPages data={data} prefs={prefs} plan={plan} />);
-  const css = collectStylesheetsCss();
+  const css = await inlineLocalFonts(collectStylesheetsCss());
   return [
     '<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">',
     `<title>${escapeHtml(data.title)}</title><style>`,
