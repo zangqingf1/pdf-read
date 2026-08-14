@@ -26,7 +26,11 @@ async def _verify_document_ownership(
     document_id: str, user: User, db: AsyncSession
 ) -> Document:
     """Verify the document exists and belongs to the current user."""
-    doc = await db.get(Document, uuid.UUID(document_id))
+    try:
+        doc_uuid = uuid.UUID(document_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail=f"Document {document_id} not found")
+    doc = await db.get(Document, doc_uuid)
     if doc is None or doc.user_id != user.id:
         raise HTTPException(status_code=404, detail=f"Document {document_id} not found")
     return doc
@@ -220,6 +224,10 @@ async def translate_paragraphs(
                 status_code=502,
                 detail=f"翻译失败: {err_msg[:200]}",
             )
+    finally:
+        # Release the per-request httpx client (connection pool) — otherwise
+        # every AI request leaks a client + keep-alive connections.
+        await ai.close()
 
 
 @router.post("/stream")
@@ -272,57 +280,62 @@ async def translate_stream(
     async def event_generator():
         translations: dict[int, str] = {}
         try:
-            # 大标题翻译：先出标题事件，再流式段落
-            if request.title and request.title.strip():
-                title_zh = await _translate_and_persist_title(
-                    ai, request.title, request.document_id,
-                    system_override, user_override, db,
-                )
-                if title_zh:
-                    yield f"data: {json.dumps({'type': 'title', 'translation': title_zh}, ensure_ascii=False)}\n\n"
-
-            async for index, translation in ai.translate_batch_stream(
-                paragraphs,
-                system_prompt_override=system_override,
-                user_prompt_override=user_override,
-            ):
-                translations[index] = translation
-                yield f"data: {json.dumps({'index': index, 'translation': translation}, ensure_ascii=False)}\n\n"
-
-            # Persist if document_id provided
-            if request.document_id and translations:
-                try:
-                    ordered = [
-                        translations.get(i, "")
-                        for i in range(len(paragraphs))
-                    ]
-                    real_indices = _map_positions_to_indices(request, len(paragraphs))
-                    await _persist_translations_by_index(
-                        request.document_id,
-                        list(enumerate(ordered)),
-                        real_indices,
-                        db,
+            try:
+                # 大标题翻译：先出标题事件，再流式段落
+                if request.title and request.title.strip():
+                    title_zh = await _translate_and_persist_title(
+                        ai, request.title, request.document_id,
+                        system_override, user_override, db,
                     )
-                except Exception:
-                    _logger.exception("Failed to persist stream translations for document %s", request.document_id)
+                    if title_zh:
+                        yield f"data: {json.dumps({'type': 'title', 'translation': title_zh}, ensure_ascii=False)}\n\n"
 
-            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+                async for index, translation in ai.translate_batch_stream(
+                    paragraphs,
+                    system_prompt_override=system_override,
+                    user_prompt_override=user_override,
+                ):
+                    translations[index] = translation
+                    yield f"data: {json.dumps({'index': index, 'translation': translation}, ensure_ascii=False)}\n\n"
 
-        except ValueError as e:
-            yield f"data: {json.dumps({'type': 'error', 'code': 400, 'message': str(e)}, ensure_ascii=False)}\n\n"
-        except Exception as e:
-            err_msg = str(e)
-            if "401" in err_msg or "Unauthorized" in err_msg:
-                code, msg = 401, "AI API Key 无效或未配置，请点击右上角🔑图标设置。"
-            elif "402" in err_msg or "insufficient" in err_msg.lower():
-                code, msg = 402, "AI 账户余额不足，请检查对应平台的账户状态。"
-            elif "429" in err_msg or "rate" in err_msg.lower():
-                code, msg = 429, "API 请求过于频繁，请稍后重试。"
-            elif "timeout" in err_msg.lower():
-                code, msg = 504, "AI 服务响应超时，请稍后重试。"
-            else:
-                code, msg = 502, f"翻译失败: {err_msg[:200]}"
-            yield f"data: {json.dumps({'type': 'error', 'code': code, 'message': msg}, ensure_ascii=False)}\n\n"
+                # Persist if document_id provided
+                if request.document_id and translations:
+                    try:
+                        ordered = [
+                            translations.get(i, "")
+                            for i in range(len(paragraphs))
+                        ]
+                        real_indices = _map_positions_to_indices(request, len(paragraphs))
+                        await _persist_translations_by_index(
+                            request.document_id,
+                            list(enumerate(ordered)),
+                            real_indices,
+                            db,
+                        )
+                    except Exception:
+                        _logger.exception("Failed to persist stream translations for document %s", request.document_id)
+
+                yield f"data: {json.dumps({'type': 'done'})}\n\n"
+
+            except ValueError as e:
+                yield f"data: {json.dumps({'type': 'error', 'code': 400, 'message': str(e)}, ensure_ascii=False)}\n\n"
+            except Exception as e:
+                err_msg = str(e)
+                if "401" in err_msg or "Unauthorized" in err_msg:
+                    code, msg = 401, "AI API Key 无效或未配置，请点击右上角🔑图标设置。"
+                elif "402" in err_msg or "insufficient" in err_msg.lower():
+                    code, msg = 402, "AI 账户余额不足，请检查对应平台的账户状态。"
+                elif "429" in err_msg or "rate" in err_msg.lower():
+                    code, msg = 429, "API 请求过于频繁，请稍后重试。"
+                elif "timeout" in err_msg.lower():
+                    code, msg = 504, "AI 服务响应超时，请稍后重试。"
+                else:
+                    code, msg = 502, f"翻译失败: {err_msg[:200]}"
+                yield f"data: {json.dumps({'type': 'error', 'code': code, 'message': msg}, ensure_ascii=False)}\n\n"
+        finally:
+            # Release the per-request httpx client even when the client
+            # disconnects mid-stream (generator close triggers this finally).
+            await ai.close()
 
     return StreamingResponse(
         event_generator(),

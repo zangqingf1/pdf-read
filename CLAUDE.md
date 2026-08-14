@@ -44,7 +44,9 @@ app/
 │   ├── tts.py        # 单词发音 + 段落朗读（edge-tts, 需鉴权）
 │   └── admin.py      # 管理后台 API（superuser only）
 ├── auth/
-│   ├── router.py     # POST /register, /login, GET /me
+│   ├── router.py     # 邮箱验证码注册/登录/找回密码/头像/资料 + 登录限流
+│   ├── verification.py # 验证码生成/HMAC 哈希/发送(频率限制)/消费(单次+TTL+尝试上限)
+│   ├── rate_limit.py # 登录暴力破解限流（进程内，按邮箱+IP）
 │   ├── deps.py       # get_current_user / superuser 依赖（新代码从这里 import）
 │   ├── security.py   # JWT create/verify + bcrypt（bcrypt 直连，无 passlib）
 │   └── schemas.py
@@ -57,8 +59,10 @@ app/
 │   ├── export_service.py  # Chrome 无头渲染 HTML→PDF（零新依赖）
 │   ├── tts_service.py     # edge-tts 合成 + 磁盘缓存 + 段落 WordBoundary 词级时间戳
 │   ├── file_types.py      # 支持的文件类型/扩展名/MinerU 模型选择（vlm / MinerU-HTML）
-│   └── url_downloader.py  # URL 内容下载
-├── models/   # 每类一文件: user/document/paragraph/word_analysis/sentence_analysis/prompt_template
+│   ├── url_downloader.py  # URL 内容下载
+│   ├── email_service.py   # SMTP 发送验证码邮件（标准库 smtplib，零新依赖；开发环境 console 兜底）
+│   └── avatar_service.py  # 头像保存/删除（白名单扩展名 + 魔数嗅探 + 随机文件名）
+├── models/   # 每类一文件: user/email_verification/document/paragraph/word_analysis/sentence_analysis/prompt_template
 ├── schemas/  # 与 api/v1 路由一一对应 + admin
 ├── tasks/    # celery_app（Redis 不可用→None）+ pdf_tasks（Celery 缺失时降级）
 ├── config.py     # pydantic-settings (.env)
@@ -74,14 +78,23 @@ app/
 - 解析任务：开发/常规部署走 FastAPI `BackgroundTasks`（`_parse_in_background`）；Celery 仅在 Redis 可用时启用
 - `get_db` 依赖注入自动 commit/rollback
 - Prompt 两层体系：DB 行有复合主键 `(name, is_default)`；生效优先级 = 自定义 `is_default=False` > 系统默认 `True` > 出厂默认 `prompt_defaults.py`。`_resolve_prompt()` 用 `_SafeDict` + `str.format_map()` 替换占位符
+- **邮箱验证码认证**：注册/找回密码均需邮箱验证码。验证码用 `secrets` 生成、HMAC-SHA256（key=SECRET_KEY）哈希入库、`hmac.compare_digest` 常量时间比较；单次使用、10 分钟过期（`EMAIL_CODE_TTL_MINUTES`）、5 次尝试上限（`EMAIL_CODE_MAX_ATTEMPTS`）。发送限流：同一邮箱 60s 冷却（`EMAIL_SEND_COOLDOWN_SECONDS`）+ 每小时 5 次（`EMAIL_MAX_PER_HOUR`），另加进程内 IP 10 次/小时。`reset_password` 发送对未知邮箱同样返回成功（防用户枚举）。SMTP 未配置时：开发环境验证码打印日志并在响应返回 `dev_code`，生产环境 503。登录按邮箱+IP 限流（`LOGIN_MAX_ATTEMPTS`/15 分钟，进程内，成功清零）
+- **头像**：仅接受文件上传（`POST /auth/avatar`），白名单扩展名 + 魔数嗅探（PNG/JPEG/GIF/WebP）+ ≤2MB（`AVATAR_MAX_MB`），随机文件名存 `UPLOAD_DIR/avatars/`，经公开端点 `GET /auth/avatar/{user_id}` 读取；不接收客户端任意 URL 字符串
 
 ### API 端点
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| POST | `/api/v1/auth/register` | 注册 |
-| POST | `/api/v1/auth/login` | 登录，返回 JWT |
+| POST | `/api/v1/auth/verification-code/send` | 发送邮箱验证码（`purpose=register\|reset_password`，带冷却/频率限制） |
+| POST | `/api/v1/auth/register` | 邮箱+验证码注册（用户名可选，返回 JWT 自动登录） |
+| POST | `/api/v1/auth/login` | 邮箱+密码登录，返回 JWT（按邮箱+IP 限流） |
+| POST | `/api/v1/auth/password-reset/send` | 发送重置密码验证码（未知邮箱也返回成功，防枚举） |
+| POST | `/api/v1/auth/password-reset/confirm` | 验证码+新密码（两次）重置密码 |
 | GET | `/api/v1/auth/me` | 当前用户信息 |
+| PUT | `/api/v1/auth/profile` | 更新用户名 |
+| POST | `/api/v1/auth/avatar` | 上传/更换头像（multipart，白名单+魔数校验） |
+| DELETE | `/api/v1/auth/avatar` | 删除头像 |
+| GET | `/api/v1/auth/avatar/{user_id}` | 获取头像图片（公开端点） |
 | POST | `/api/v1/pdf/upload` | 上传文件（响应直接含 `page_count`） |
 | POST | `/api/v1/pdf/parse-url` | 解析 URL（文件链接或网页） |
 | GET | `/api/v1/pdf/status/{task_id}` | 查询解析状态 |
@@ -133,7 +146,8 @@ app/
 
 ### 数据模型
 
-- **User**: `email`(unique), `nickname`, `password_hash`, `is_superuser`, `is_active`, `created_at`
+- **User**: `email`(unique), `nickname`, `avatar_url`（存 `avatars/xxx` 相对路径）, `password_hash`, `is_superuser`, `is_active`, `created_at`
+- **EmailVerification**: 邮箱验证码记录（注册/重置密码）。仅存 `code_hash`（HMAC-SHA256，key=SECRET_KEY），`expires_at` 到期、`failed_attempts` 超限或 `consumed_at` 消费后即失效（单次使用）
 - **Document**: UUID 主键, `parse_status` (pending→awaiting_selection(仅PDF)→processing→completed/failed), cascade delete。另有 `title_zh`（大标题中文翻译）、`source_type`(`upload`/`url`)、`file_ext`、`source_url`、`summary`+`summary_updated_at`（草稿与 AI 结果共用一列）。`original_text`/`word_count`/`paragraph_count` 为聚合字段，编辑后在后端重算
 - **Paragraph**: `(document_id, index)` 唯一索引, `text_en`, `text_zh`, `page_number`（英文变更→译文清空待重译）
 - **WordAnalysis**: `(document_id, paragraph_index, word)` 唯一, upsert。含 phonetic, definition, cognates, synonyms_antonyms 等
@@ -151,7 +165,7 @@ app/
 ### 前端 (React 18 + TypeScript + Zustand + Tailwind CSS)
 
 ```
-pages/          # Home/Reader/Review/Login/Register + admin/ (Dashboard/Users/Documents/Prompts)
+pages/          # Home/Reader/Review/Login/Register/ForgotPassword/Profile + admin/ (Dashboard/Users/Documents/Prompts)
 components/
 ├── home/       # PDFUploader, PageSelector, RecentDocuments
 ├── reader/     # ReaderHeader, ReadingArea, ParagraphBlock, StudyPanel, StudySheet,
@@ -209,5 +223,7 @@ utils/          # textTokens(token化), ttsAlign(WordBoundary↔词token贪婪�
 - 校对页 `updateParagraphs` 批量保存, `deleteParagraph`/`mergeParagraphs` 自动重排索引; `reorderParagraphs` 同步更新页码。重排/删除用单条 raw `UPDATE` 或临时负索引避免 `UNIQUE (document_id, index)` 冲突
 - `PromptEditorModal.tsx` 是死代码 — Prompt 编辑唯一入口在管理后台 `/admin/prompts`
 - **DB 迁移陷阱**: 本地 SQLite 库长期保留，启动时 `run_migrations()` 只补登记过的列；新加列需在 `database.py` 里追加 `_apply()` 迁移，否则旧库启动报错
+- **配置读取陷阱**: `Settings` 的 `env_file=".env"` 是 **CWD 相对路径** — 本地 `cd backend` 启动时读的是 `backend/.env`，不是仓库根目录的 `.env`（根 `.env` 仅供 docker-compose 变量替换）。SMTP/密钥等本地配置必须写在 `backend/.env`（两者已同步）
+- **进程与代码同步**: 本地启动必须带 `--reload`（`uvicorn app.main:app --reload --port 8000`），否则代码改动后运行中的服务仍是旧路由（典型症状：接口 404 `{"detail":"Not Found"}`）。用 `Start-Process` 脱管启动（日志重定向到 `backend/uvicorn.{out,err}.log`）可避免会话结束连带杀掉后端
 - 后端装了但代码未用的包: `python-docx`, `slowapi`, `aiofiles`；`passlib` 已从 requirements 移除（bcrypt 直连）；`python-jose` 在用（`auth/security.py`）
 - `frontend/` 根目录有大量 gitignore 的调试残件（`run_debug*.cjs`, `export_probe*`, `repro*`, `paginate_align_test*` 等），不是功能代码，勿被误导/勿提交

@@ -86,6 +86,8 @@ export interface ExportPreferences {
   includeCognates: boolean;
   /** 单栏版式（打印兼容兜底：每段原文+译文后紧跟该段解析） */
   singleColumn: boolean;
+  /** 双栏「同页对齐」：左栏可见的已解析单词/句子与其右栏解析卡尽量同页（以留白换同页，页数可能略增） */
+  alignSamePage: boolean;
   /** 来源（显示在导出首页大标题下方；空=不显示） */
   source: string;
 }
@@ -111,5 +113,6 @@ export const EXPORT_PREF_DEFAULTS: ExportPreferences = {
   includeSynonyms: true,
   includeCognates: true,
   singleColumn: false,
+  alignSamePage: true,
   source: '',
 };

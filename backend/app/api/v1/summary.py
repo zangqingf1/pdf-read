@@ -105,53 +105,57 @@ async def summarize_document_stream(
 
     async def event_generator():
         try:
-            text = await _load_document_text(
-                db,
-                request.document_id,
-                getattr(settings, "SUMMARY_MAX_CHARS", 30000),
-            )
-            if not text.strip():
-                yield f"data: {json.dumps({'type': 'error', 'code': 400, 'message': '文档没有可总结的文本'}, ensure_ascii=False)}\n\n"
-                return
-
-            async for event in ai.summarize_stream(
-                text,
-                request.user_summary if request.mode == "revise" else None,
-                system_prompt_override=system_override,
-                user_prompt_override=user_override,
-            ):
-                etype = event.get("type")
-                if etype == "chunk":
-                    yield f"data: {json.dumps({'type': 'chunk', 'text': event['text']}, ensure_ascii=False)}\n\n"
-                elif etype == "heartbeat":
-                    yield "data: {\"type\": \"heartbeat\"}\n\n"
-                elif etype == "done":
-                    summary = event.get("summary", "")
-                    try:
-                        await _save_summary(db, request.document_id, summary)
-                    except Exception:
-                        _logger.exception(
-                            "Failed to persist summary for document %s",
-                            request.document_id,
-                        )
-                    yield f"data: {json.dumps({'type': 'done', 'summary': summary}, ensure_ascii=False)}\n\n"
+            try:
+                text = await _load_document_text(
+                    db,
+                    request.document_id,
+                    getattr(settings, "SUMMARY_MAX_CHARS", 30000),
+                )
+                if not text.strip():
+                    yield f"data: {json.dumps({'type': 'error', 'code': 400, 'message': '文档没有可总结的文本'}, ensure_ascii=False)}\n\n"
                     return
 
-        except ValueError as e:
-            yield f"data: {json.dumps({'type': 'error', 'code': 400, 'message': str(e)}, ensure_ascii=False)}\n\n"
-        except Exception as e:
-            err_msg = str(e)
-            if "401" in err_msg or "Unauthorized" in err_msg:
-                code, msg = 401, "AI API Key 无效或未配置，请点击右上角🔑图标设置。"
-            elif "402" in err_msg or "insufficient" in err_msg.lower():
-                code, msg = 402, "AI 账户余额不足，请检查对应平台的账户状态。"
-            elif "429" in err_msg or "rate" in err_msg.lower():
-                code, msg = 429, "API 请求过于频繁，请稍后重试。"
-            elif "timeout" in err_msg.lower():
-                code, msg = 504, "AI 服务响应超时，请稍后重试。"
-            else:
-                code, msg = 502, f"总结失败: {err_msg[:200]}"
-            yield f"data: {json.dumps({'type': 'error', 'code': code, 'message': msg}, ensure_ascii=False)}\n\n"
+                async for event in ai.summarize_stream(
+                    text,
+                    request.user_summary if request.mode == "revise" else None,
+                    system_prompt_override=system_override,
+                    user_prompt_override=user_override,
+                ):
+                    etype = event.get("type")
+                    if etype == "chunk":
+                        yield f"data: {json.dumps({'type': 'chunk', 'text': event['text']}, ensure_ascii=False)}\n\n"
+                    elif etype == "heartbeat":
+                        yield "data: {\"type\": \"heartbeat\"}\n\n"
+                    elif etype == "done":
+                        summary = event.get("summary", "")
+                        try:
+                            await _save_summary(db, request.document_id, summary)
+                        except Exception:
+                            _logger.exception(
+                                "Failed to persist summary for document %s",
+                                request.document_id,
+                            )
+                        yield f"data: {json.dumps({'type': 'done', 'summary': summary}, ensure_ascii=False)}\n\n"
+                        return
+
+            except ValueError as e:
+                yield f"data: {json.dumps({'type': 'error', 'code': 400, 'message': str(e)}, ensure_ascii=False)}\n\n"
+            except Exception as e:
+                err_msg = str(e)
+                if "401" in err_msg or "Unauthorized" in err_msg:
+                    code, msg = 401, "AI API Key 无效或未配置，请点击右上角🔑图标设置。"
+                elif "402" in err_msg or "insufficient" in err_msg.lower():
+                    code, msg = 402, "AI 账户余额不足，请检查对应平台的账户状态。"
+                elif "429" in err_msg or "rate" in err_msg.lower():
+                    code, msg = 429, "API 请求过于频繁，请稍后重试。"
+                elif "timeout" in err_msg.lower():
+                    code, msg = 504, "AI 服务响应超时，请稍后重试。"
+                else:
+                    code, msg = 502, f"总结失败: {err_msg[:200]}"
+                yield f"data: {json.dumps({'type': 'error', 'code': code, 'message': msg}, ensure_ascii=False)}\n\n"
+        finally:
+            # Release the per-request httpx client even on client disconnect.
+            await ai.close()
 
     return StreamingResponse(
         event_generator(),

@@ -7,7 +7,7 @@ import mimetypes
 import os
 import uuid
 
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Depends, BackgroundTasks
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Depends, BackgroundTasks, Query
 from fastapi.responses import FileResponse, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -62,18 +62,66 @@ async def _get_owned_document(
 ) -> Document:
     """Fetch a document by ID, verifying it belongs to the current user.
 
-    Returns the document or raises 404 (not found / not owned).
+    Returns the document or raises 404 (not found / not owned / malformed ID).
     Using 404 instead of 403 to avoid leaking document existence info.
     """
-    document = await pdf_service.get_document(
-        uuid.UUID(task_id), db, user_id=user.id
-    )
+    try:
+        doc_uuid = uuid.UUID(task_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail=f"Document {task_id} not found")
+    document = await pdf_service.get_document(doc_uuid, db, user_id=user.id)
     if document is None:
         raise HTTPException(status_code=404, detail=f"Document {task_id} not found")
     return document
 
 
 _logger = logging.getLogger(__name__)
+
+
+async def _reshift_analysis_indices(
+    db: AsyncSession,
+    document_id: uuid.UUID,
+    *,
+    delete_above: int | None = None,
+    index_map: dict[int, int] | None = None,
+) -> None:
+    """Keep Word/Sentence analysis indices in sync after paragraph edits.
+
+    Deleting/merging/reordering paragraphs renumbers ``paragraphs.index`` but
+    leaves ``word_analyses.paragraph_index`` / ``sentence_analyses.paragraph_index``
+    stale — analyses would silently attach to the wrong paragraph.
+
+    Args:
+        delete_above: after deleting the paragraph at this index, decrement
+            every analysis whose paragraph_index is greater than it.
+        index_map: reorder mapping {old_index: new_index}; analyses are
+            re-pointed one row set at a time.
+    """
+    from sqlalchemy import update as sa_update
+
+    if delete_above is not None:
+        for model in (WordAnalysis, SentenceAnalysis):
+            await db.execute(
+                sa_update(model)
+                .where(
+                    model.document_id == str(document_id),
+                    model.paragraph_index > delete_above,
+                )
+                .values(paragraph_index=model.paragraph_index - 1)
+            )
+    if index_map:
+        for old_idx, new_idx in index_map.items():
+            if old_idx == new_idx:
+                continue
+            for model in (WordAnalysis, SentenceAnalysis):
+                await db.execute(
+                    sa_update(model)
+                    .where(
+                        model.document_id == str(document_id),
+                        model.paragraph_index == old_idx,
+                    )
+                    .values(paragraph_index=new_idx)
+                )
 
 
 async def _parse_in_background(doc_id: uuid.UUID, file_path: str, token: str):
@@ -366,7 +414,15 @@ async def get_pdf_file(
         raise HTTPException(status_code=404, detail="源文件不存在")
 
     media_type = mimetypes.guess_type(file_path)[0] or "application/octet-stream"
-    return FileResponse(file_path, media_type=media_type)
+    # Security: never let uploaded HTML/scripts execute in the app's origin.
+    # PDF must stay inline (react-pdf preview); everything else is downloaded
+    # as an attachment so browsers don't render it as same-origin HTML.
+    headers = {"X-Content-Type-Options": "nosniff"}
+    if (document.file_ext or "").lower() not in (".pdf",):
+        headers["Content-Disposition"] = (
+            f'attachment; filename="document{document.file_ext or ""}"'
+        )
+    return FileResponse(file_path, media_type=media_type, headers=headers)
 
 
 @router.put("/documents/{task_id}/title", response_model=UpdateTitleResponse)
@@ -509,6 +565,13 @@ async def delete_paragraph(
     )
     await db.flush()
 
+    # Keep word/sentence analyses pointing at the right paragraphs after
+    # the index shift above.
+    await _reshift_analysis_indices(
+        db, document.id, delete_above=paragraph_index
+    )
+    await db.flush()
+
     # Expire the collection so the next access re-loads fresh indices
     await db.refresh(document, attribute_names=["paragraphs"])
 
@@ -597,6 +660,11 @@ async def merge_paragraphs(
     )
     await db.flush()
 
+    # Keep word/sentence analyses pointing at the right paragraphs after
+    # the index shift above.
+    await _reshift_analysis_indices(db, document.id, delete_above=body.index_b)
+    await db.flush()
+
     # Expire the collection so the next access re-loads fresh indices
     await db.refresh(document, attribute_names=["paragraphs"])
 
@@ -672,6 +740,14 @@ async def reorder_paragraphs(
             if prev_para.page_number is not None:
                 para.page_number = prev_para.page_number
 
+    await db.flush()
+
+    # Re-point word/sentence analyses from old indices to the new ones
+    # (translations stay valid by design, but analyses attach by index).
+    reindex_map = {
+        old_idx: new_idx for new_idx, old_idx in enumerate(body.ordered_indices)
+    }
+    await _reshift_analysis_indices(db, document.id, index_map=reindex_map)
     await db.flush()
 
     # Recalculate document aggregates
@@ -751,8 +827,8 @@ async def select_pages(
 
 @router.get("/documents", response_model=DocumentListResponse)
 async def list_documents(
-    limit: int = 20,
-    offset: int = 0,
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -889,7 +965,17 @@ async def retry_document(
             file_ext=document.file_ext,
         )
 
-    if document.parse_status in ("failed", "processing"):
+    if document.parse_status == "processing":
+        # A background parse may already be running — retrying here would
+        # start a second concurrent parse of the same document (duplicate
+        # paragraphs / UNIQUE conflicts). The frontend polls status, so it
+        # will see the real outcome without needing a retry.
+        raise HTTPException(
+            status_code=409,
+            detail="Document is currently being parsed. Please wait for it to finish.",
+        )
+
+    if document.parse_status in ("failed",):
         # Reset to selection state if page count known, otherwise parse immediately
         if document.page_count is not None and document.page_count >= 1:
             document.parse_status = "awaiting_selection"

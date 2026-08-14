@@ -211,7 +211,14 @@ export default function ReviewPage() {
           return next;
         });
       } catch (err: any) {
-        // Silently handle
+        // 删除失败：明确提示用户，避免静默失败造成"以为已删除"的误解
+        setConfirmDialog({
+          title: '删除失败',
+          content: err?.response?.data?.detail || err?.message || '删除段落失败，请重试',
+          okText: '确定',
+          cancelText: '',
+          onOk: () => setConfirmDialog(null),
+        });
       }
     },
     [id, pushSnapshot, cancelPendingSnapshot]
@@ -259,7 +266,16 @@ export default function ReviewPage() {
           pushSnapshot(latestParagraphsRef.current, next);
           return next;
         });
-      } catch { /* handle silently */ }
+      } catch (err: any) {
+        // 合并失败：明确提示用户，避免静默失败造成"以为已合并"的误解
+        setConfirmDialog({
+          title: '合并失败',
+          content: err?.response?.data?.detail || err?.message || '合并段落失败，请重试',
+          okText: '确定',
+          cancelText: '',
+          onOk: () => setConfirmDialog(null),
+        });
+      }
     },
     [id, paragraphs, pushSnapshot, cancelPendingSnapshot]
   );

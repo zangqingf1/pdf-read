@@ -10,7 +10,7 @@ from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy import select, delete, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth.deps import get_current_user
+from app.auth.deps import get_current_user, require_superuser
 from app.database import get_db
 from app.models.prompt_template import PromptTemplate
 from app.models.user import User
@@ -148,7 +148,7 @@ async def update_prompt_template(
     """Save a custom prompt override (is_default=False).
 
     Set ``set_as_default=True`` to save as the admin-defined system default
-    instead (is_default=True).
+    instead (is_default=True) — requires superuser privileges.
     """
     if name not in _VALID_NAMES:
         raise HTTPException(
@@ -157,6 +157,14 @@ async def update_prompt_template(
         )
 
     is_default = request.set_as_default
+
+    # System defaults are global (affect every user's AI requests) —
+    # only superusers may write them.
+    if is_default and not current_user.is_superuser:
+        raise HTTPException(
+            status_code=403,
+            detail="Admin access required to set system default prompts.",
+        )
 
     # Upsert the row for (name, is_default)
     stmt = select(PromptTemplate).where(
@@ -189,7 +197,7 @@ async def set_default_prompt(
     name: str,
     request: PromptTemplateUpdateRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_superuser),
 ):
     """Set (or update) the admin-defined system default for a template.
 
@@ -204,7 +212,7 @@ async def set_default_prompt(
 async def promote_to_default(
     name: str,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_superuser),
 ):
     """Promote the current custom prompt (is_default=False) to system default (is_default=True).
 
@@ -286,7 +294,7 @@ async def get_default_prompt(
 async def reset_prompt_template(
     name: str,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_superuser),
 ):
     """Reset a single prompt template: delete ALL DB rows (custom + default).
 
@@ -308,7 +316,7 @@ async def reset_prompt_template(
 @router.post("/reset-all", response_model=PromptTemplateListResponse)
 async def reset_all_prompt_templates(
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_superuser),
 ):
     """Reset all prompt templates to factory defaults.
 

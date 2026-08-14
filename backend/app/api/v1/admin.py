@@ -129,7 +129,10 @@ async def update_user(
             detail="At least one of is_active or is_superuser must be provided.",
         )
 
-    target_uuid = uuid.UUID(user_id)
+    try:
+        target_uuid = uuid.UUID(user_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="User not found.")
 
     # Fetch target user
     target = (
@@ -168,7 +171,10 @@ async def delete_user(
 
     Prevents self-deletion.
     """
-    target_uuid = uuid.UUID(user_id)
+    try:
+        target_uuid = uuid.UUID(user_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="User not found.")
 
     # Prevent self-deletion
     if target_uuid == admin.id:
@@ -299,7 +305,10 @@ async def delete_any_document(
     admin: User = Depends(require_superuser),
 ):
     """Delete any document and its PDF file from disk (admin override)."""
-    doc_uuid = uuid.UUID(doc_id)
+    try:
+        doc_uuid = uuid.UUID(doc_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Document not found.")
 
     doc = (
         await db.execute(

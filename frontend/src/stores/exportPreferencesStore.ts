@@ -20,7 +20,8 @@ export type ToggleKey =
   | 'includeBaseForm'
   | 'includeSynonyms'
   | 'includeCognates'
-  | 'singleColumn';
+  | 'singleColumn'
+  | 'alignSamePage';
 
 const PREF_KEYS = [
   'paperSize',
@@ -43,6 +44,7 @@ const PREF_KEYS = [
   'includeSynonyms',
   'includeCognates',
   'singleColumn',
+  'alignSamePage',
   'source',
 ] as const;
 
@@ -74,6 +76,8 @@ interface ExportPreferencesStore {
   includeSynonyms: boolean;
   includeCognates: boolean;
   singleColumn: boolean;
+  /** 双栏「同页对齐」：左栏可见的已解析单词/句子与其右栏解析卡尽量同页（更占版面） */
+  alignSamePage: boolean;
   source: string;
   /** 曾输入过的来源（最近优先，去重，最多 10 条；供输入框下拉选择） */
   sourceHistory: string[];

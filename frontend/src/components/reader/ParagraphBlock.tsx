@@ -8,6 +8,7 @@ import { triggerScrollToAnalysis } from './StudyPanel';
 import { splitSentences, tokenizeWords, wordAnalysisKey, sentenceAnalysisKey } from '../../utils/textTokens';
 import { useAudioPlayerStore } from '../../stores/audioPlayerStore';
 import { playFromSentence } from '../../hooks/useParagraphAudioPlayer';
+import { safeMarkdownComponents } from '../../utils/markdownComponents';
 
 // ── Module-level callback: open focused analysis on mobile ──
 let _onOpenFocusedAnalysis: ((type: 'word' | 'sentence', key: string) => void) | null = null;
@@ -288,6 +289,7 @@ function SentenceToken({
 
   const components = useMemo(
     () => ({
+      ...safeMarkdownComponents,
       p: ({ children, ...props }: any) => (
         <span {...props}>
           {processChildren(children, paragraphIndex, sentence.index, sentence.text, activeWordIdx, isTouchDevice)}

@@ -1,4 +1,5 @@
 from app.models.document import Document
+from app.models.email_verification import EmailVerification
 from app.models.paragraph import Paragraph
 from app.models.prompt_template import PromptTemplate
 from app.models.sentence_analysis import SentenceAnalysis
@@ -7,6 +8,7 @@ from app.models.word_analysis import WordAnalysis
 
 __all__ = [
     "Document",
+    "EmailVerification",
     "Paragraph",
     "PromptTemplate",
     "SentenceAnalysis",

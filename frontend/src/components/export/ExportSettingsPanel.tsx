@@ -113,11 +113,24 @@ function FontSizeRow({
   );
 }
 
-/** 开关行 */
-function ToggleRow({ label, checked, onChange }: { label: string; checked: boolean; onChange: () => void }) {
+/** 开关行（可选 hint 副文案） */
+function ToggleRow({
+  label,
+  hint,
+  checked,
+  onChange,
+}: {
+  label: string;
+  hint?: string;
+  checked: boolean;
+  onChange: () => void;
+}) {
   return (
     <label className="flex items-center justify-between py-1.5 cursor-pointer select-none">
-      <span className="text-sm text-body">{label}</span>
+      <span className="flex flex-col">
+        <span className="text-sm text-body">{label}</span>
+        {hint && <span className="text-[11px] text-muted-soft">{hint}</span>}
+      </span>
       <input
         type="checkbox"
         checked={checked}
@@ -275,11 +288,17 @@ export default function ExportSettingsPanel() {
               ))}
             </AccordionSection>
           </div>
-          <div className="mt-2 pt-2 border-t border-hairline-soft">
+          <div className="mt-2 pt-2 border-t border-hairline-soft space-y-2">
             <ToggleRow
               label="单栏版式（打印兼容）"
               checked={store.singleColumn}
               onChange={() => toggle('singleColumn')}
+            />
+            <ToggleRow
+              label="解析与原文同页对齐"
+              hint="左栏已解析词句与右栏解析尽量同页（更占版面）"
+              checked={store.alignSamePage}
+              onChange={() => toggle('alignSamePage')}
             />
           </div>
         </section>

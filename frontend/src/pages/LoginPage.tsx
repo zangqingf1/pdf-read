@@ -80,6 +80,15 @@ export default function LoginPage() {
               autoComplete="current-password"
             />
 
+            <div className="flex justify-end -mt-1">
+              <Link
+                to="/forgot-password"
+                className="text-xs text-muted hover:text-primary hover:underline transition-colors"
+              >
+                忘记密码？
+              </Link>
+            </div>
+
             {error && (
               <p className="text-sm text-error bg-error/5 border border-error/20 rounded-md px-3 py-2">
                 {error}

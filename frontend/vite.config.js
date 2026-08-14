@@ -13,6 +13,19 @@ export default defineConfig({
                 changeOrigin: true,
             },
         },
+        watch: {
+            // 忽略编辑器/工具原子保存产生的临时目录与文件。
+            // 现象：chokidar 在 Windows 上监听它们会 EBUSY 崩溃 ——
+            //   Error: EBUSY: resource busy or locked, watch '....tmpdir\xxx.ts.tmp'
+            // 临时目录名形如 `.exportTypes.ts.<pid>.<uuid>.tmpdir`（以 .tmpdir 结尾），
+            // 文件形如 `exportTypes.ts.tmp` —— 用正则匹配更可靠。
+            ignored: [
+                /(^|[/\\])[^/\\]*\.tmpdir([/\\]|$)/i, // 任何 *.tmpdir 目录及其内容
+                /\.tmp$/i, // *.tmp 文件
+                '**/.git/**',
+                '**/node_modules/**',
+            ],
+        },
     },
     build: {
         outDir: 'dist',

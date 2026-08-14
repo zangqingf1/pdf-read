@@ -83,7 +83,15 @@ async def run_migrations():
         applied: set[str] = {row[0] for row in result.fetchall()}
 
         async def _apply(name: str, sql: str):
-            """Run a migration if not already applied, then record it."""
+            """Run a migration if not already applied, then record it.
+
+            Two failure modes are distinguished:
+            - "Column already exists" (manual fix / duplicate) → record the
+              migration as applied so we don't retry it forever.
+            - Any other failure (syntax error, unexpected DB state) → re-raise
+              and abort startup: silently skipping a *real* migration would
+              leave the schema missing a column and crash at first use.
+            """
             if name in applied:
                 return
             try:
@@ -92,15 +100,29 @@ async def run_migrations():
                     f"INSERT INTO _migrations (name) VALUES ('{name}')"
                 )
                 logger.info("Migration %s: applied", name)
-            except Exception:
-                # Migration failed (e.g. column already exists from a
-                # manual fix) — record it anyway so we don't retry forever.
-                try:
-                    await conn.exec_driver_sql(
-                        f"INSERT INTO _migrations (name) VALUES ('{name}')"
-                    )
-                except Exception:
-                    pass
+            except Exception as exc:
+                msg = str(exc).lower()
+                already_exists = (
+                    "duplicate column" in msg
+                    or "already exists" in msg
+                    or "duplicate column name" in msg
+                )
+                if already_exists:
+                    # Column/table already present (e.g. from a manual fix) —
+                    # record it anyway so we don't retry forever.
+                    try:
+                        await conn.exec_driver_sql(
+                            f"INSERT INTO _migrations (name) VALUES ('{name}')"
+                        )
+                        logger.warning(
+                            "Migration %s: already applied (skipped), recorded",
+                            name,
+                        )
+                    except Exception:
+                        pass
+                else:
+                    logger.error("Migration %s: FAILED — aborting startup", name)
+                    raise
 
         # ── Migration 001a: word_analyses.collocations ──
         await _apply(
@@ -216,6 +238,14 @@ async def run_migrations():
         await _apply(
             "007e_backfill_file_ext",
             "UPDATE documents SET file_ext='.pdf' WHERE file_ext IS NULL",
+        )
+
+        # ═══════════════════════════════════════════════════════════════
+        # Migration 008: users — 头像（注册/资料页自定义头像）
+        # ═══════════════════════════════════════════════════════════════
+        await _apply(
+            "008a_users_avatar_url",
+            "ALTER TABLE users ADD COLUMN avatar_url VARCHAR(500)",
         )
 
 

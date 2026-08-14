@@ -37,6 +37,8 @@ export interface MeasuredBlock {
   lines?: LineInfo;
   /** 卡片碎片序列（仅当 h > 页高时启用拆分） */
   frags?: FragMeasure[];
+  /** 卡片对应 token 在段内归一化文本中的字符偏移（同页对齐用；未定位词 = Infinity） */
+  pos?: number;
 }
 
 /** 段落拆分片段（文本偏移，作用于规范化文本） */
@@ -273,7 +275,8 @@ export function paginate(
   spacingRight: number[],
   contH: number,
   contGap: number,
-  singleColumn: boolean
+  singleColumn: boolean,
+  alignSamePage = true
 ): PagePlan {
   if (singleColumn) {
     const { pages, contBefore } = packTrack(leftBlocks, bodyH, spacingLeft, contH, contGap);
@@ -283,7 +286,16 @@ export function paginate(
       contBefore,
     };
   }
-  return paginateTwoColumn(leftBlocks, rightBlocks, bodyH, spacingLeft, spacingRight, contH, contGap);
+  return paginateTwoColumn(
+    leftBlocks,
+    rightBlocks,
+    bodyH,
+    spacingLeft,
+    spacingRight,
+    contH,
+    contGap,
+    alignSamePage
+  );
 }
 
 // ── 双栏严格按段落对齐（行带模型）──
@@ -409,12 +421,14 @@ function buildBands(leftBlocks: MeasuredBlock[], rightBlocks: MeasuredBlock[]): 
   return bands;
 }
 
-/** 左栏切片：段落按行放（en 先行、en 完再 zh），原子块整块放 */
+/** 左栏切片：段落按行放（en 先行、en 完再 zh），原子块整块放。
+ *  maxLines：累计 en 行上限（同页对齐截断用；undefined = 不设限） */
 function placeLeftSlice(
   band: Band,
   st: BandState,
   avail: number,
-  force: boolean
+  force: boolean,
+  maxLines?: number
 ): { items: PageItem[]; placed: number; done: boolean } {
   const L = band.left.lines;
   if (!L) {
@@ -424,7 +438,8 @@ function placeLeftSlice(
   const enStart = st.enLine;
   const zhStart = st.zhLine;
   let h = 0;
-  while (st.enLine < L.enEnds.length && h + L.hEn <= avail) {
+  const enCap = maxLines ?? L.enEnds.length;
+  while (st.enLine < enCap && h + L.hEn <= avail) {
     h += L.hEn;
     st.enLine++;
   }
@@ -435,12 +450,13 @@ function placeLeftSlice(
       st.zhLine++;
     }
   }
-  // 页首兜底：强制放一行（正常不会走到——页首 avail 恒大于行高，防死循环）
+  // 页首兜底：强制放一行（正常不会走到——页首 avail 恒大于行高，防死循环；
+  // maxLines 生效时同样尊重上限，且 zh 兜底仅限 en 已放完，避免 zh 行脱离 en）
   if (h === 0 && force) {
-    if (st.enLine < L.enEnds.length) {
+    if (st.enLine < enCap) {
       h = L.hEn;
       st.enLine++;
-    } else if (st.zhLine < L.zhEnds.length) {
+    } else if (st.enLine >= L.enEnds.length && st.zhLine < L.zhEnds.length) {
       h = L.hZh;
       st.zhLine++;
     }
@@ -466,7 +482,10 @@ function placeLeftSlice(
   };
 }
 
-/** 右栏切片：卡片逐个放（组头须与首卡同页避免孤头；超高卡走碎片路径） */
+/** 右栏切片：卡片逐个放（组头须与首卡同页避免孤头；超高卡走碎片路径）。
+ *  maxCards：累计右栏块索引上限（同页对齐截断用；undefined = 不设限）。
+ *  上限按整卡边界生效（绝不切到碎片中间）；pos=Infinity（原文中找不到的
+ *  孤立解析）的卡允许越过上限——它们没有可见 token 可匹配，否则永不放置。 */
 function placeRightSlice(
   band: Band,
   st: BandState,
@@ -476,12 +495,14 @@ function placeRightSlice(
   contGap: number,
   contBefore: Set<string>,
   atPageTop: boolean,
-  suppressCardCont: boolean
+  suppressCardCont: boolean,
+  maxCards?: number
 ): { items: PageItem[]; placed: number } {
   const items: PageItem[] = [];
   let placed = 0;
   while (st.rightIdx < band.right.length) {
     const b = band.right[st.rightIdx];
+    if (maxCards !== undefined && st.rightIdx >= maxCards && b.pos !== Infinity) break;
     // 页首兜底：一行都没放时强制放当前卡（超页卡照放，overflow 兜底裁剪），
     // 避免不可拆卡在页首也放不下而被静默丢弃 —— 与 packTrack「不可拆块照放」一致
     const force = atPageTop && placed === 0;
@@ -522,10 +543,24 @@ function placeRightSlice(
   return { items, placed };
 }
 
+/** 纯预算：给定 avail，本片可放的最大 en 行数（与 placeLeftSlice 同一套 fit 逻辑） */
+function maxEnLinesThatFit(L: LineInfo, avail: number): number {
+  let h = 0;
+  let k = 0;
+  while (k < L.enEnds.length && h + L.hEn <= avail) {
+    h += L.hEn;
+    k++;
+  }
+  return k;
+}
+
 /**
  * 双栏严格对齐装箱：逐行带同步放置左右两侧。
  * 两侧共享游标 fill；每片左右同一起始 y，短侧以 padBottom/BLANK 补到切片高；
  * 行带未放完则换新页两侧同步续排（右栏 gcont 标记，左栏 padTop 让位）。
+ * 同页对齐（alignSamePage，默认开）：每片把「左栏可见 token 集」与「右栏已放
+ * 卡片集」对齐为同一前缀 —— 先按可见 token 数上限放卡片（maxCards），卡片滞后
+ * 时把左栏行界截到已放卡界（maxLines），页界落在 token 行界 = 卡界处。
  */
 export function paginateTwoColumn(
   leftBlocks: MeasuredBlock[],
@@ -534,7 +569,8 @@ export function paginateTwoColumn(
   _spacingLeft: number[],
   _spacingRight: number[],
   contH: number,
-  contGap: number
+  contGap: number,
+  alignSamePage = true
 ): PagePlan {
   const bands = buildBands(leftBlocks, rightBlocks);
   const pages: { left: PageItem[]; right: PageItem[] }[] = [{ left: [], right: [] }];
@@ -570,23 +606,71 @@ export function paginateTwoColumn(
       const topReserve = needGcont ? contH + contGap : 0;
       const avail = bodyH - fill - topReserve - SAFETY;
 
-      // 左栏切片
-      const L: PageItem[] = [];
-      let leftPlaced = 0;
-      if (!st.leftDone) {
-        const sl = placeLeftSlice(band, st, avail, fill === 0);
-        if (sl.placed > 0) {
-          L.push({
-            blk: sl.items[0].blk,
-            frag: sl.items[0].frag,
-            padTop: needGcont ? topReserve : undefined,
-          });
-          leftPlaced = sl.placed;
-          st.leftDone = sl.done;
+      // ── 同页对齐预算（两趟：先无上限预算右栏 → 求对齐截断目标 → 正式放置）──
+      // 目标：把「左栏可见 token 集」与「右栏已放卡片集」对齐为同一前缀。
+      // j* = 可放卡数 mMax 内最后一个 count(pos ≤ enEnds[j-1]) ≤ mMax 的行界，
+      // m* = count 于 j*（≤ mMax）。左栏截到 j*、右栏 cap 到 m* ⇒ 严格同页。
+      let maxCards: number | undefined;
+      let maxLines: number | undefined;
+      // 仅当组内存在「有定位 token」的卡才对齐：全未定位（pos 缺失/Infinity）时
+      // 无可见 token 可匹配，跳过对齐走自然放置，避免 cap=0 抑制全部卡片/死循环
+      const hasPosCard =
+        band.right.length > 1 &&
+        band.right.slice(1).some((c) => typeof c.pos === 'number' && c.pos !== Infinity);
+      if (
+        alignSamePage &&
+        band.kind === 'para' &&
+        band.left.lines &&
+        hasPosCard &&
+        !st.leftDone &&
+        !st.rightDone
+      ) {
+        const L = band.left.lines;
+        const kMaxCum = st.enLine + maxEnLinesThatFit(L, avail);
+        if (kMaxCum > 0) {
+          // 预算趟：无上限放一次右栏得 mMax（副作用仅 contBefore 幂等标记，无害）
+          const saveRI = st.rightIdx;
+          const saveRF = st.rightFragIdx;
+          const saveHE = st.headEmitted;
+          placeRightSlice(band, st, avail, bodyH, contH, contGap, contBefore, fill === 0, needGcont);
+          const mMax = st.headEmitted ? st.rightIdx - 1 : 0;
+          st.rightIdx = saveRI;
+          st.rightFragIdx = saveRF;
+          st.headEmitted = saveHE;
+
+          if (mMax >= 1) {
+            let jStar = 0;
+            let mStar = 0;
+            let cnt = 0;
+            for (let li = 1; li <= kMaxCum; li++) {
+              const e = L.enEnds[li - 1];
+              while (cnt < band.right.length - 1) {
+                const p = band.right[cnt + 1].pos;
+                if (p === undefined || p === Infinity || p > e) break;
+                cnt++;
+              }
+              if (cnt <= mMax) {
+                jStar = li;
+                mStar = cnt;
+              }
+            }
+            if (jStar >= 1 && jStar < kMaxCum) {
+              // 卡片滞后（可见 token 超可放卡）：左栏截到 token m* 所在行，右栏 cap 到 m*
+              maxLines = jStar;
+              maxCards = 1 + mStar;
+            } else if (jStar >= 1) {
+              // 无需截断（可见 token ≤ 可放卡）：右栏 cap 到可见数，防卡片超前
+              maxCards = mStar >= 1 ? 1 + mStar : 0;
+            } else {
+              // 首行已超 mMax（行不可拆）：放满可放卡片，接受行内残留
+              maxCards = 1 + mMax;
+            }
+          }
+          // mMax == 0（卡片放不下）→ 不设限，走自然翻页兜底
         }
       }
 
-      // 右栏切片
+      // 右栏切片（对齐预算后带 maxCards 正式放置）
       const R: PageItem[] = [];
       let rightPlaced = 0;
       if (needGcont) {
@@ -603,11 +687,28 @@ export function paginateTwoColumn(
           contGap,
           contBefore,
           fill === 0,
-          needGcont
+          needGcont,
+          maxCards
         );
         R.push(...sr.items);
         rightPlaced += sr.placed;
         st.rightDone = st.rightIdx >= band.right.length;
+      }
+
+      // 左栏切片（maxLines 为累计上限；对齐预算与实际放置共用同一 fit 逻辑）
+      const L: PageItem[] = [];
+      let leftPlaced = 0;
+      if (!st.leftDone) {
+        const sl = placeLeftSlice(band, st, avail, fill === 0, maxLines);
+        if (sl.placed > 0) {
+          L.push({
+            blk: sl.items[0].blk,
+            frag: sl.items[0].frag,
+            padTop: needGcont ? topReserve : undefined,
+          });
+          leftPlaced = sl.placed;
+          st.leftDone = sl.done;
+        }
       }
 
       // 两侧都放不下：页中换页重试；页首仍放不下属异常，防御性结束行带

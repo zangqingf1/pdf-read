@@ -23,6 +23,7 @@ class User(Base):
         String(200), unique=True, nullable=False, index=True
     )
     nickname: Mapped[str | None] = mapped_column(String(100))
+    avatar_url: Mapped[str | None] = mapped_column(String(500))
     hashed_password: Mapped[str] = mapped_column(
         String(255), nullable=False, default=""
     )

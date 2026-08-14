@@ -259,6 +259,10 @@ class _StubAI:
         for i, _p in enumerate(paragraphs):
             yield (i, f"翻译-位置{i}")
 
+    async def close(self):
+        """模拟真实 AIService 的清理接口（端点 finally 会调用）。"""
+        return None
+
 
 async def _seed_user_doc(db: AsyncSession, count: int = 19) -> tuple[uuid.UUID, uuid.UUID]:
     user = User(id=uuid.uuid4(), email=f"u{uuid.uuid4().hex}@t.com")

@@ -116,7 +116,7 @@ function collectTrack(
       const prev = els[i - 1].getBoundingClientRect();
       spacing[i] = rect.top - (prev.top + prev.height);
     }
-    const measured: MeasuredBlock = { id: def.id, h, keepNext: def.keepNext };
+    const measured: MeasuredBlock = { id: def.id, h, keepNext: def.keepNext, pos: def.pos };
     if (def.kind === 'paragraph' || def.kind === 'sum-p') {
       const lines = collectLines(el);
       if (lines) measured.lines = lines;
@@ -251,7 +251,7 @@ export async function measureAndPaginate(data: ExportData, prefs: ExportPreferen
     const L = collectTrack(host, 'left', leftDefs);
     const R = single ? { blocks: [], spacing: [] } : collectTrack(host, 'right', rightDefs);
 
-    return paginate(L.blocks, R.blocks, bodyH, L.spacing, R.spacing, contH, CONT_GAP, single);
+    return paginate(L.blocks, R.blocks, bodyH, L.spacing, R.spacing, contH, CONT_GAP, single, prefs.alignSamePage);
   } finally {
     root.unmount();
     host.remove();

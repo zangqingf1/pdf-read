@@ -29,7 +29,11 @@ async def _verify_document_ownership(
     document_id: str, user: User, db: AsyncSession
 ) -> Document:
     """Verify the document exists and belongs to the current user."""
-    doc = await db.get(Document, uuid.UUID(document_id))
+    try:
+        doc_uuid = uuid.UUID(document_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail=f"Document {document_id} not found")
+    doc = await db.get(Document, doc_uuid)
     if doc is None or doc.user_id != user.id:
         raise HTTPException(status_code=404, detail=f"Document {document_id} not found")
     return doc
@@ -216,6 +220,9 @@ async def analyze_words(
                 status_code=502,
                 detail=f"单词解析失败: {err_msg[:200]}",
             )
+    finally:
+        # Release the per-request httpx client (connection pool).
+        await ai.close()
 
 
 @router.post("/stream")
@@ -271,97 +278,101 @@ async def analyze_words_stream(
     async def event_generator():
         all_raw: list[dict] = []
         try:
-            async for event in ai.analyze_words_stream(
-                unique_entries,
-                system_prompt_override=system_override,
-                user_prompt_override=user_override,
-            ):
-                if event["type"] == "heartbeat":
-                    # 保活心跳 — 前端据此重置读超时计时
-                    yield "data: " + json.dumps({"type": "heartbeat"}) + "\n\n"
-                    continue
+            try:
+                async for event in ai.analyze_words_stream(
+                    unique_entries,
+                    system_prompt_override=system_override,
+                    user_prompt_override=user_override,
+                ):
+                    if event["type"] == "heartbeat":
+                        # 保活心跳 — 前端据此重置读超时计时
+                        yield "data: " + json.dumps({"type": "heartbeat"}) + "\n\n"
+                        continue
 
-                if event["type"] == "chunk":
-                    # Relay raw text chunk to frontend so user sees AI output in real time
-                    yield (
-                        "data: "
-                        + json.dumps({
-                            "type": "chunk",
-                            "batch_id": event["batch_id"],
-                            "text": event["text"],
-                            "words": event["words"],
-                            "para_index": event["para_index"],
-                        }, ensure_ascii=False)
-                        + "\n\n"
-                    )
+                    if event["type"] == "chunk":
+                        # Relay raw text chunk to frontend so user sees AI output in real time
+                        yield (
+                            "data: "
+                            + json.dumps({
+                                "type": "chunk",
+                                "batch_id": event["batch_id"],
+                                "text": event["text"],
+                                "words": event["words"],
+                                "para_index": event["para_index"],
+                            }, ensure_ascii=False)
+                            + "\n\n"
+                        )
 
-                elif event["type"] == "batch":
-                    batch_results = event["results"]
-                    all_raw.extend(batch_results)
+                    elif event["type"] == "batch":
+                        batch_results = event["results"]
+                        all_raw.extend(batch_results)
 
-                    # Build result list for this batch
-                    batch_analyses = []
-                    for r in batch_results:
-                        batch_analyses.append({
-                            "paragraph_index": r.get("paragraph_index", 0),
-                            "word": r.get("word", ""),
-                            "phonetic": r.get("phonetic", ""),
-                            "part_of_speech": r.get("part_of_speech", ""),
-                            "definition": r.get("definition", ""),
-                            "definition_zh": r.get("definition_zh", ""),
-                            "collocations": r.get("collocations", []),
-                            "example_sentence": r.get("example_sentence", ""),
-                            "cognates": r.get("cognates", []),
-                            "synonyms_antonyms": r.get("synonyms_antonyms", {"synonyms": []}),
-                            "base_form": r.get("base_form", ""),
-                            "plural_form": r.get("plural_form", ""),
-                        })
-                    yield (
-                        "data: "
-                        + json.dumps({
-                            "type": "batch",
-                            "analyses": batch_analyses,
-                            "words": event["words"],
-                            "para_index": event["para_index"],
-                        }, ensure_ascii=False)
-                        + "\n\n"
-                    )
+                        # Build result list for this batch
+                        batch_analyses = []
+                        for r in batch_results:
+                            batch_analyses.append({
+                                "paragraph_index": r.get("paragraph_index", 0),
+                                "word": r.get("word", ""),
+                                "phonetic": r.get("phonetic", ""),
+                                "part_of_speech": r.get("part_of_speech", ""),
+                                "definition": r.get("definition", ""),
+                                "definition_zh": r.get("definition_zh", ""),
+                                "collocations": r.get("collocations", []),
+                                "example_sentence": r.get("example_sentence", ""),
+                                "cognates": r.get("cognates", []),
+                                "synonyms_antonyms": r.get("synonyms_antonyms", {"synonyms": []}),
+                                "base_form": r.get("base_form", ""),
+                                "plural_form": r.get("plural_form", ""),
+                            })
+                        yield (
+                            "data: "
+                            + json.dumps({
+                                "type": "batch",
+                                "analyses": batch_analyses,
+                                "words": event["words"],
+                                "para_index": event["para_index"],
+                            }, ensure_ascii=False)
+                            + "\n\n"
+                        )
 
-                elif event["type"] == "incomplete":
-                    # 部分单词补偿后仍失败/超时早退 — 透传给前端提示用户
-                    yield (
-                        "data: "
-                        + json.dumps({
-                            "type": "incomplete",
-                            "words": event.get("words", []),
-                        }, ensure_ascii=False)
-                        + "\n\n"
-                    )
+                    elif event["type"] == "incomplete":
+                        # 部分单词补偿后仍失败/超时早退 — 透传给前端提示用户
+                        yield (
+                            "data: "
+                            + json.dumps({
+                                "type": "incomplete",
+                                "words": event.get("words", []),
+                            }, ensure_ascii=False)
+                            + "\n\n"
+                        )
 
-            # Persist if document_id provided
-            if request.document_id and all_raw:
-                try:
-                    await _persist_analyses(request.document_id, all_raw, db)
-                except Exception:
-                    _logger.exception("Failed to persist stream word analyses for document %s", request.document_id)
+                # Persist if document_id provided
+                if request.document_id and all_raw:
+                    try:
+                        await _persist_analyses(request.document_id, all_raw, db)
+                    except Exception:
+                        _logger.exception("Failed to persist stream word analyses for document %s", request.document_id)
 
-            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+                yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
-        except ValueError as e:
-            yield f"data: {json.dumps({'type': 'error', 'code': 400, 'message': str(e)}, ensure_ascii=False)}\n\n"
-        except Exception as e:
-            err_msg = str(e)
-            if "401" in err_msg or "Unauthorized" in err_msg:
-                code, msg = 401, "AI API Key 无效或未配置，请点击右上角🔑图标设置。"
-            elif "402" in err_msg or "insufficient" in err_msg.lower():
-                code, msg = 402, "AI 账户余额不足，请检查对应平台的账户状态。"
-            elif "429" in err_msg or "rate" in err_msg.lower():
-                code, msg = 429, "API 请求过于频繁，请稍后重试。"
-            elif "timeout" in err_msg.lower():
-                code, msg = 504, "AI 服务响应超时，请稍后重试。"
-            else:
-                code, msg = 502, f"单词解析失败: {err_msg[:200]}"
-            yield f"data: {json.dumps({'type': 'error', 'code': code, 'message': msg}, ensure_ascii=False)}\n\n"
+            except ValueError as e:
+                yield f"data: {json.dumps({'type': 'error', 'code': 400, 'message': str(e)}, ensure_ascii=False)}\n\n"
+            except Exception as e:
+                err_msg = str(e)
+                if "401" in err_msg or "Unauthorized" in err_msg:
+                    code, msg = 401, "AI API Key 无效或未配置，请点击右上角🔑图标设置。"
+                elif "402" in err_msg or "insufficient" in err_msg.lower():
+                    code, msg = 402, "AI 账户余额不足，请检查对应平台的账户状态。"
+                elif "429" in err_msg or "rate" in err_msg.lower():
+                    code, msg = 429, "API 请求过于频繁，请稍后重试。"
+                elif "timeout" in err_msg.lower():
+                    code, msg = 504, "AI 服务响应超时，请稍后重试。"
+                else:
+                    code, msg = 502, f"单词解析失败: {err_msg[:200]}"
+                yield f"data: {json.dumps({'type': 'error', 'code': code, 'message': msg}, ensure_ascii=False)}\n\n"
+        finally:
+            # Release the per-request httpx client even on client disconnect.
+            await ai.close()
 
     return StreamingResponse(
         event_generator(),

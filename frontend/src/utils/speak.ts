@@ -12,12 +12,31 @@ import { getTtsAudio, type SpeechAccent } from '../services/ttsApi';
 let currentAudio: HTMLAudioElement | null = null;
 
 // ── 会话级 blob 缓存：key = `${word}:${accent}` → blob URL ──
+// LRU 上限：超过后淘汰最旧条目并 revokeObjectURL，防止长会话内存泄漏。
 const blobCache = new Map<string, string>();
+const MAX_BLOB_CACHE = 200;
 // 并发去重：正在请求中的 (word, accent) 复用同一 Promise，避免 hover+click 双发
 const pending = new Map<string, Promise<string | null>>();
 
 function cacheKey(word: string, accent: SpeechAccent): string {
   return `${word.toLowerCase()}:${accent}`;
+}
+
+/** 写入缓存并淘汰最旧条目（淘汰时吊销其 blob URL 释放内存）。 */
+function setBlobCache(k: string, url: string): void {
+  blobCache.set(k, url);
+  if (blobCache.size > MAX_BLOB_CACHE) {
+    const oldestKey = blobCache.keys().next().value as string;
+    const oldestUrl = blobCache.get(oldestKey);
+    blobCache.delete(oldestKey);
+    if (oldestUrl) {
+      try {
+        URL.revokeObjectURL(oldestUrl);
+      } catch {
+        /* noop */
+      }
+    }
+  }
 }
 
 function speechSupported(): boolean {
@@ -78,7 +97,7 @@ function fetchAndCache(word: string, accent: SpeechAccent): Promise<string | nul
   if (!p) {
     p = getTtsAudio(word, accent).then((url) => {
       pending.delete(k);
-      if (url) blobCache.set(k, url);
+      if (url) setBlobCache(k, url);
       return url;
     });
     pending.set(k, p);

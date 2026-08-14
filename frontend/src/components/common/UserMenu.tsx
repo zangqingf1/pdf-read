@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../../stores/authStore';
+import { avatarUrl } from '../../services/authApi';
 
 export default function UserMenu() {
   const user = useAuthStore((s) => s.user);
@@ -33,8 +34,19 @@ export default function UserMenu() {
         className="w-full flex items-center gap-2 px-2 py-2 rounded-lg text-sm
                    hover:bg-surface-card transition-colors duration-150"
       >
-        <span className="w-7 h-7 rounded-full bg-primary/15 text-primary flex items-center justify-center text-xs font-medium flex-shrink-0">
-          {displayName.charAt(0).toUpperCase()}
+        <span className="w-7 h-7 rounded-full bg-primary/15 text-primary flex items-center justify-center text-xs font-medium flex-shrink-0 overflow-hidden">
+          {user.avatar_url ? (
+            <img
+              src={avatarUrl(user.id)}
+              alt={displayName}
+              className="w-full h-full object-cover"
+              onError={(e) => {
+                (e.currentTarget as HTMLImageElement).style.display = 'none';
+              }}
+            />
+          ) : (
+            displayName.charAt(0).toUpperCase()
+          )}
         </span>
         <span className="truncate text-left leading-tight min-w-0">
           <span className="block text-[13px] font-medium text-ink truncate">{displayName}</span>
@@ -53,6 +65,23 @@ export default function UserMenu() {
       {open && (
         <div className="absolute left-0 right-0 bottom-full mb-1.5 bg-canvas border border-hairline
                         rounded-xl shadow-modal p-1 z-50 animate-fade-in">
+          {/* Profile */}
+          <button
+            onClick={() => {
+              setOpen(false);
+              navigate('/profile');
+            }}
+            className="w-full text-left px-3 py-2 rounded-lg text-sm text-body-strong
+                       hover:text-primary hover:bg-primary/5 transition-colors duration-150
+                       flex items-center gap-2.5"
+          >
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2" />
+              <circle cx="12" cy="7" r="4" />
+            </svg>
+            个人资料
+          </button>
+
           {/* Admin (superuser only) */}
           {isSuperuser && (
             <button

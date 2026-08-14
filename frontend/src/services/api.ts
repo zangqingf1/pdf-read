@@ -35,9 +35,12 @@ api.interceptors.response.use(
       if (status === 401) {
         clearStoredToken();
         clearStoredUser();
-        // Only redirect if not already on the login page
-        if (!window.location.pathname.startsWith('/login') &&
-            !window.location.pathname.startsWith('/register')) {
+        // Only redirect if not already on a public auth page
+        if (
+          !window.location.pathname.startsWith('/login') &&
+          !window.location.pathname.startsWith('/register') &&
+          !window.location.pathname.startsWith('/forgot-password')
+        ) {
           window.location.href = '/login';
         }
       }

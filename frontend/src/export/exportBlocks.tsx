@@ -6,6 +6,7 @@
 import { Fragment, isValidElement } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { safeMarkdownComponents } from '../utils/markdownComponents';
 import type { ParagraphResult } from '../services/pdfApi';
 import type { WordAnalysisResult } from '../services/wordAnalysisApi';
 import type { SentenceAnalysisResult } from '../services/sentenceAnalysisApi';
@@ -42,6 +43,8 @@ export interface BlockDef {
   kind: BlockKind;
   /** 与后随块粘合（组头/总结头/栏头：避免孤悬页尾） */
   keepNext?: boolean;
+  /** 该卡对应 token 在段内归一化文本中的字符偏移（双栏同页对齐用；未定位词 = Infinity） */
+  pos?: number;
 }
 
 export interface BlockCtx {
@@ -87,6 +90,7 @@ export function SentenceMarkdown({ content }: { content: string }) {
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
+          ...safeMarkdownComponents,
           strong: ({ children }) => {
             const text = String(children);
             const colonMatch = text.match(/^(.+?)[：:]\s*/);
@@ -231,7 +235,7 @@ export function renderWholeBlock(id: string, ctx: BlockCtx): React.ReactNode {
     if (block === undefined) return null;
     return (
       <div className="ep-summary-body">
-        <ReactMarkdown remarkPlugins={[remarkGfm]}>{block}</ReactMarkdown>
+        <ReactMarkdown remarkPlugins={[remarkGfm]} components={safeMarkdownComponents}>{block}</ReactMarkdown>
       </div>
     );
   }
@@ -454,6 +458,55 @@ export function wordCardFragRows(
 }
 
 // ── 块序列生成 ──
+
+/**
+ * 段内已解析 token（词+句）按原文出现顺序合并排序，返回 [{id, pos}]。
+ * pos = token 在段内归一化文本（.ep-en 渲染文本，即 paragraphNormText）中的
+ * 字符偏移；词取词干首现偏移，句取 splitSentences 序号累计起始偏移。
+ * 原文中找不到的词 → Infinity（排末尾，属孤立解析，不参与同页对齐）。
+ * 双栏同页对齐依赖：左栏「可见 token 计数」与右栏「卡片顺序/卡片 pos」
+ * 必须来自同一序列，故 collectLeftBlocks/collectRightBlocks 共用本辅助。
+ */
+export function analyzedTokenPositions(
+  data: ExportData,
+  prefs: ExportPreferences,
+  pi: number
+): { id: string; pos: number }[] {
+  const p = data.paragraphs.find((x) => x.index === pi);
+  if (!p) return [];
+  const norm = paragraphNormText(p);
+  const out: { id: string; pos: number }[] = [];
+  if (prefs.includeWords) {
+    // 词干首现在归一化文本中的字符偏移（与 wordPositionMap 的首次出现语义一致）
+    const first = new Map<string, number>();
+    let off = 0;
+    for (const t of tokenizeWords(norm)) {
+      if (t.stem) {
+        const k = t.stem.toLowerCase();
+        if (!first.has(k)) first.set(k, off);
+      }
+      off += t.raw.length;
+    }
+    for (const w of data.words) {
+      if (w.paragraph_index !== pi) continue;
+      out.push({ id: blockIds.w(pi, w.word), pos: first.get(w.word.toLowerCase()) ?? Infinity });
+    }
+  }
+  if (prefs.includeSentences) {
+    const sentences = splitSentences(p.text);
+    const analyzed = new Set(
+      data.sentences.filter((s) => s.paragraph_index === pi).map((s) => s.sentence_index)
+    );
+    let offset = 0;
+    for (const s of sentences) {
+      if (analyzed.has(s.index)) out.push({ id: blockIds.s(pi, s.index), pos: offset });
+      offset += s.text.length + 1;
+    }
+  }
+  out.sort((a, b) => a.pos - b.pos || (a.id < b.id ? -1 : 1));
+  return out;
+}
+
 export function collectLeftBlocks(data: ExportData, prefs: ExportPreferences): BlockDef[] {
   const blocks: BlockDef[] = [];
   if (data.title) blocks.push({ id: blockIds.title, kind: 'atomic' });
@@ -474,27 +527,24 @@ export function collectRightBlocks(data: ExportData, prefs: ExportPreferences): 
   const blocks: BlockDef[] = [];
   // 右栏栏头（与左栏「原文 · 译文」对称）；双栏严格对齐时位于栏头行带
   blocks.push({ id: blockIds.colHeadR, kind: 'atomic', keepNext: true });
-  const grouped = new Map<number, { words: WordAnalysisResult[]; sentences: SentenceAnalysisResult[] }>();
-  if (prefs.includeWords) {
-    for (const w of data.words) {
-      const g = grouped.get(w.paragraph_index) ?? { words: [], sentences: [] };
-      g.words.push(w);
-      grouped.set(w.paragraph_index, g);
-    }
-  }
-  if (prefs.includeSentences) {
-    for (const s of data.sentences) {
-      const g = grouped.get(s.paragraph_index) ?? { words: [], sentences: [] };
-      g.sentences.push(s);
-      grouped.set(s.paragraph_index, g);
-    }
+  // 每段卡片按段内原文出现顺序合并排序（词+句交错，带字符偏移 pos，
+  // 双栏同页对齐的前提：卡片顺序 = token 顺序，才能做前缀对齐）
+  const grouped = new Map<number, { id: string; pos: number }[]>();
+  for (const p of data.paragraphs) {
+    const tokens = analyzedTokenPositions(data, prefs, p.index);
+    if (tokens.length > 0) grouped.set(p.index, tokens);
   }
   const indexes = [...grouped.keys()].sort((a, b) => a - b);
   for (const pi of indexes) {
     const g = grouped.get(pi)!;
     blocks.push({ id: blockIds.g(pi), kind: 'atomic', keepNext: true });
-    for (const w of g.words) blocks.push({ id: blockIds.w(pi, w.word), kind: 'word-card' });
-    for (const s of g.sentences) blocks.push({ id: blockIds.s(pi, s.sentence_index), kind: 'sentence-card' });
+    for (const t of g) {
+      blocks.push({
+        id: t.id,
+        kind: t.id.startsWith('w:') ? 'word-card' : 'sentence-card',
+        pos: t.pos,
+      });
+    }
   }
   // 全文档零解析：栏头下保留提示（位于栏头行带，紧随栏头）
   if (blocks.length === 1) blocks.push({ id: blockIds.empty, kind: 'atomic' });

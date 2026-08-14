@@ -296,6 +296,10 @@ class _StubAI:
         yield {"type": "chunk", "text": " half."}
         yield {"type": "done", "summary": "First half."}
 
+    async def close(self):
+        """模拟真实 AIService 的清理接口（端点 finally 会调用）。"""
+        return None
+
 
 async def _collect_events(resp) -> list[dict]:
     chunks = []

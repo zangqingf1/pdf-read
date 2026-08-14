@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect, useMemo, useRef, isValidElement, Frag
 import { flushSync } from 'react-dom';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { safeMarkdownComponents } from '../../utils/markdownComponents';
 import { useDocumentStore } from '../../stores/documentStore';
 import { useReaderStore, WORD_PANEL_FONT_SIZE_MIN, WORD_PANEL_FONT_SIZE_MAX, BG_COLORS } from '../../stores/readerStore';
 import { deleteWordAnalysis, deleteAllWordAnalyses, WordAnalysisResult } from '../../services/wordAnalysisApi';
@@ -334,6 +335,7 @@ function SentenceContent({ content }: { content: string }) {
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
+          ...safeMarkdownComponents,
           // Style sentence-analysis section headers (**原句拆解**：, **理解拆解**：, etc.)
           strong: ({ children, ...props }) => {
             const text = String(children);
