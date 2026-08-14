@@ -66,7 +66,7 @@ export default function AdminLayout() {
         </h1>
         {/* Close button — mobile only */}
         <button
-          className="md:hidden w-8 h-8 flex items-center justify-center rounded-md hover:bg-white/60 transition-colors touch-area"
+          className="md:hidden w-8 h-8 flex items-center justify-center rounded-md hover:bg-surface-cream-strong/60 transition-colors touch-area"
           onClick={() => setSidebarOpen(false)}
           aria-label="关闭侧边栏"
         >
@@ -87,8 +87,8 @@ export default function AdminLayout() {
             className={({ isActive }) =>
               `flex items-center gap-3 px-3 py-2.5 rounded-md text-sm font-medium transition-colors duration-150 ${
                 isActive
-                  ? 'bg-primary/10 text-primary border-l-[3px] border-primary pl-[9px]'
-                  : 'text-body hover:text-ink hover:bg-white/60'
+                  ? 'bg-primary/10 text-primary border-l-[3px] border-primary pl-[9px] shadow-pop'
+                  : 'text-body hover:text-ink hover:bg-surface-cream-strong/60'
               }`
             }
           >
@@ -102,7 +102,7 @@ export default function AdminLayout() {
       <div className="px-3 py-4 border-t border-hairline">
         <button
           onClick={() => { navigate('/'); setSidebarOpen(false); }}
-          className="flex items-center gap-2 w-full px-3 py-2 rounded-md text-sm text-muted hover:text-ink hover:bg-white/60 transition-colors duration-150"
+          className="flex items-center gap-2 w-full px-3 py-2 rounded-md text-sm text-muted hover:text-ink hover:bg-surface-cream-strong/60 transition-colors duration-150"
         >
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <line x1="19" y1="12" x2="5" y2="12" />

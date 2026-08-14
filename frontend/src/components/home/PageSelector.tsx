@@ -174,7 +174,7 @@ export default function PageSelector({
                     cursor: isDisabled ? 'not-allowed' : 'pointer',
                     opacity: isDisabled ? 0.4 : 1,
                     borderColor: isSelected ? 'var(--primary)' : 'var(--hairline)',
-                    boxShadow: isSelected ? '0 2px 8px rgba(204, 120, 92, 0.15)' : 'none',
+                    boxShadow: isSelected ? '0 2px 8px rgba(200, 116, 85, 0.15)' : 'none',
                   }}
                 >
                   <div className="bg-canvas min-h-[100px]">

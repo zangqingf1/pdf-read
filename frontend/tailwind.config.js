@@ -12,8 +12,10 @@ export default {
           DEFAULT: '#faf9f5',
           soft: '#f5f0e8',
         },
-        'surface-card': '#efe9de',
+        'surface-card': '#f1ece2',
         'surface-cream-strong': '#e8e0d2',
+        'surface-elevated': '#f7f2ea',
+        'surface-overlay': '#fffdf8',
         'surface-dark': {
           DEFAULT: '#181715',
           elevated: '#252320',
@@ -21,8 +23,8 @@ export default {
         },
 
         primary: {
-          DEFAULT: '#cc785c',
-          active: '#a9583e',
+          DEFAULT: '#c87455',
+          active: '#a55438',
           disabled: '#e6dfd8',
         },
 
@@ -39,11 +41,14 @@ export default {
         hairline: {
           DEFAULT: '#e6dfd8',
           soft: '#ebe6df',
+          strong: '#d8cfc4',
         },
 
         'on-primary': '#ffffff',
         'on-dark': '#faf9f5',
         'on-dark-soft': '#a09d96',
+
+        ring: 'rgba(200, 116, 85, 0.24)',
 
         accent: {
           teal: '#5db8a6',
@@ -58,7 +63,7 @@ export default {
         display: ['"Cormorant Garamond"', 'Garamond', '"Times New Roman"', 'serif'],
         reading: ['Georgia', '"Times New Roman"', 'serif'],
         sans: ['Inter', '-apple-system', 'BlinkMacSystemFont', '"Segoe UI"', 'Roboto', 'sans-serif'],
-        chinese: ['"PingFang SC"', '"Noto Sans SC"', '"Microsoft YaHei"', '"Hiragino Sans GB"', 'sans-serif'],
+        chinese: ['"Noto Sans CJK SC"', '"Noto Sans SC"', '"PingFang SC"', '"Microsoft YaHei"', '"Hiragino Sans GB"', 'sans-serif'],
         mono: ['"JetBrains Mono"', 'ui-monospace', 'SFMono-Regular', 'monospace'],
       },
       borderRadius: {
@@ -82,9 +87,13 @@ export default {
         reading: '720px',
       },
       boxShadow: {
-        card: '0 1px 3px rgba(20, 20, 19, 0.08)',
-        modal: '0 4px 24px rgba(20, 20, 19, 0.12)',
-        float: '0 2px 8px rgba(20, 20, 19, 0.10)',
+        soft: '0 1px 2px rgba(20, 20, 19, 0.04), 0 2px 8px rgba(20, 20, 19, 0.06)',
+        card: '0 1px 2px rgba(20, 20, 19, 0.04), 0 2px 6px rgba(20, 20, 19, 0.06)',
+        modal: '0 2px 6px rgba(20, 20, 19, 0.06), 0 16px 40px rgba(20, 20, 19, 0.10)',
+        elevated: '0 2px 6px rgba(20, 20, 19, 0.06), 0 16px 40px rgba(20, 20, 19, 0.10)',
+        float: '0 2px 8px rgba(20, 20, 19, 0.06), 0 8px 20px rgba(20, 20, 19, 0.08)',
+        pop: '0 0 0 1px rgba(200, 116, 85, 0.18), 0 4px 16px rgba(20, 20, 19, 0.10)',
+        'inset-hairline': 'inset 0 0 0 1px rgba(20, 20, 19, 0.05)',
       },
       animation: {
         'fade-in': 'fadeIn 0.2s ease-out',

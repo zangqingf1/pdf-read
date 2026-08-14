@@ -110,7 +110,7 @@ export default function ProfilePage() {
 
         <h1 className="text-display-md font-display text-ink mb-6">个人资料</h1>
 
-        <div className="bg-surface-card border border-hairline rounded-xl p-6 shadow-card flex flex-col gap-5">
+        <div className="bg-surface-card border border-hairline rounded-xl p-6 shadow-elevated flex flex-col gap-5">
           {/* 头像 */}
           <div className="flex flex-col gap-2">
             <span className="text-sm font-medium text-body-strong">头像</span>

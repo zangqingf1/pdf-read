@@ -84,7 +84,7 @@ export default function AudioPlayerBar() {
 
   return (
     <div
-      className="fixed z-[60] shadow-float rounded-xl border border-hairline bg-surface-card px-3 py-2.5 md:px-4 flex items-center gap-3 md:gap-4"
+      className="fixed z-[60] shadow-float rounded-xl border border-hairline bg-surface-card px-3 py-2.5 md:px-4 flex items-center gap-3 md:gap-4 ring-1 ring-hairline-soft"
       style={{
         left: '50%',
         transform: 'translateX(-50%)',

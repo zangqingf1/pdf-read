@@ -59,7 +59,7 @@ export default function LoginPage() {
         </div>
 
         {/* Card */}
-        <div className="bg-surface-card border border-hairline rounded-xl p-6 shadow-card">
+        <div className="bg-surface-card border border-hairline rounded-xl p-6 shadow-elevated">
           <form onSubmit={handleSubmit} className="flex flex-col gap-4">
             <Input
               label="邮箱"

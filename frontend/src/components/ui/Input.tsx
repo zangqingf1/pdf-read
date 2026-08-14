@@ -29,8 +29,8 @@ export default function Input({
           'w-full h-10 px-3.5 py-2.5 rounded-md border text-sm font-sans text-ink bg-canvas',
           'placeholder:text-muted-soft',
           'transition-colors duration-150',
-          'focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/15',
-          error ? 'border-error' : 'border-hairline hover:border-muted-soft',
+          'focus:outline-none focus:border-primary focus:ring-2 focus:ring-[color:var(--ring)]',
+          error ? 'border-error shadow-[0_0_0_3px_rgba(198,69,69,0.10)]' : 'border-hairline hover:border-muted-soft',
           className,
         ].join(' ')}
         {...props}
@@ -65,8 +65,8 @@ export const TextArea = forwardRef<HTMLTextAreaElement, TextAreaProps>(
             'w-full min-h-[120px] px-3.5 py-2.5 rounded-md border text-sm font-sans text-ink bg-canvas resize-y',
             'placeholder:text-muted-soft',
             'transition-colors duration-150',
-            'focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/15',
-            error ? 'border-error' : 'border-hairline hover:border-muted-soft',
+            'focus:outline-none focus:border-primary focus:ring-2 focus:ring-[color:var(--ring)]',
+            error ? 'border-error shadow-[0_0_0_3px_rgba(198,69,69,0.10)]' : 'border-hairline hover:border-muted-soft',
             className,
           ].join(' ')}
           {...props}

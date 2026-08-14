@@ -367,7 +367,7 @@ export default function ParagraphBlock({
         <div className="not-prose mt-1" style={{ fontSize: `${Math.max(fontSize - 4, 12)}px` }}>
           <button
             onClick={() => setShowTranslation(!showTranslation)}
-            className="inline-flex items-center gap-1.5 cursor-pointer select-none text-muted hover:text-ink transition-colors text-xs font-sans"
+            className="inline-flex items-center gap-1.5 cursor-pointer select-none text-primary/80 hover:text-primary transition-colors text-xs font-sans"
           >
             <svg
               width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"
@@ -385,7 +385,7 @@ export default function ParagraphBlock({
             {showTranslation ? '隐藏翻译' : '查看翻译'}
           </button>
           {showTranslation && (
-            <div className="mt-2 p-3.5 bg-surface-card rounded-md text-body border-l-2 border-primary">
+            <div className="mt-2 p-3.5 bg-surface-card rounded-md text-body border-l-[3px] border-primary shadow-soft">
               <span className="font-chinese leading-relaxed">{translation}</span>
             </div>
           )}

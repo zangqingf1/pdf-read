@@ -193,7 +193,7 @@ export default function AdminUsers() {
           </div>
 
           {/* ── Desktop: table ── */}
-          <div className="hidden md:block overflow-x-auto rounded-lg border border-hairline">
+          <div className="hidden md:block overflow-x-auto rounded-lg border border-hairline shadow-soft">
             <table className="w-full">
               <thead>
                 <tr className="bg-surface-card text-left">

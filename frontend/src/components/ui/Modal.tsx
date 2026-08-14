@@ -54,11 +54,11 @@ export default function Modal({
     <div
       ref={overlayRef}
       onClick={handleOverlayClick}
-      className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/30 animate-fade-in"
+      className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/30 backdrop-blur-[2px] animate-fade-in"
     >
       <div
         ref={contentRef}
-        className="bg-canvas rounded-t-xl md:rounded-lg shadow-modal animate-slide-up max-h-[92vh] md:max-h-[95vh] flex flex-col w-full md:w-auto"
+        className="bg-surface-overlay rounded-t-xl md:rounded-lg shadow-elevated animate-slide-up max-h-[92vh] md:max-h-[95vh] flex flex-col w-full md:w-auto"
         style={{ width: typeof window !== 'undefined' && window.innerWidth < 768 ? '100%' : `min(${width}, calc(100vw - 48px))` }}
       >
         {/* Header */}

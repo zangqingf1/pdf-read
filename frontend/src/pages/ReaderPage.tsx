@@ -737,7 +737,7 @@ export default function ReaderPage() {
       {isMobile && hasAnalyses && !studySheetOpen && !focusedAnalysis && (
         <button
           onClick={() => setStudySheetOpen(true)}
-          className="fixed bottom-6 right-4 z-40 w-12 h-12 rounded-full bg-primary text-white shadow-lg flex items-center justify-center hover:bg-primary-active transition-colors touch-area"
+          className="fixed bottom-6 right-4 z-40 w-12 h-12 rounded-full bg-primary text-white shadow-pop flex items-center justify-center hover:bg-primary-active transition-colors touch-area"
           aria-label="打开解析面板"
         >
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
@@ -749,7 +749,7 @@ export default function ReaderPage() {
       {/* Floating action bar */}
       {(selectedWordCount > 0 || selectedSentenceCount > 0) && (
         <div className={[
-          'z-50 shadow-float rounded-lg px-4 md:px-5 py-3 border border-hairline flex items-center gap-3 md:gap-4 flex-wrap',
+          'z-50 shadow-elevated rounded-lg px-4 md:px-5 py-3 border border-hairline flex items-center gap-3 md:gap-4 flex-wrap',
           isMobile
             ? 'fixed bottom-0 left-0 right-0 rounded-t-xl'
             : 'fixed bottom-6 left-1/2 -translate-x-1/2',

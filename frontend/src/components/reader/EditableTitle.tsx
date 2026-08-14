@@ -123,7 +123,7 @@ export default function EditableTitle({
           maxLength={500}
           className={[
             'w-full rounded-md border px-2 py-0.5 bg-canvas text-ink font-display',
-            'focus:outline-none focus:ring-2 focus:ring-primary/15',
+            'focus:outline-none focus:ring-2 focus:ring-[color:var(--ring)]',
             'border-primary/50',
             inputClassName,
           ].join(' ')}

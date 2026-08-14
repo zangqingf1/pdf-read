@@ -11,7 +11,7 @@ export default function EmptyState({ icon, title, description, action }: EmptySt
       {icon ? (
         <div className="text-4xl text-muted-soft mb-4">{icon}</div>
       ) : (
-        <div className="w-16 h-16 rounded-full bg-surface-card flex items-center justify-center mb-4">
+        <div className="w-16 h-16 rounded-full bg-surface-card flex items-center justify-center mb-5 shadow-inset-hairline">
           <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="var(--muted-soft)" strokeWidth="1.5">
             <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
             <path d="M14 2v6h6M16 13H8M16 17H8M10 9H8" />

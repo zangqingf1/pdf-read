@@ -12,13 +12,13 @@ interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
 
 const variantClasses: Record<ButtonVariant, string> = {
   primary:
-    'bg-primary text-on-primary hover:bg-primary-active active:bg-primary-active border-transparent',
+    'bg-primary text-on-primary hover:bg-primary-active active:bg-primary-active border-transparent shadow-soft',
   secondary:
-    'bg-canvas text-ink border-hairline hover:border-primary hover:bg-canvas-soft active:bg-surface-card',
+    'bg-canvas text-ink border-hairline hover:border-primary/60 hover:bg-canvas-soft active:bg-surface-card shadow-soft',
   ghost:
-    'bg-transparent text-ink border-transparent hover:bg-surface-card active:bg-surface-cream-strong',
+    'bg-transparent text-ink border-transparent hover:bg-surface-card/80 active:bg-surface-cream-strong',
   danger:
-    'bg-error text-white hover:opacity-90 active:opacity-80 border-transparent',
+    'bg-error text-white hover:opacity-90 active:opacity-80 border-transparent shadow-soft',
   text: 'bg-transparent text-muted border-transparent hover:text-ink hover:bg-surface-card active:bg-surface-cream-strong',
 };
 
@@ -41,8 +41,8 @@ export default function Button({
   return (
     <button
       className={[
-        'inline-flex items-center justify-center gap-2 font-medium rounded-md border transition-colors duration-150 select-none',
-        'focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2',
+        'inline-flex items-center justify-center gap-2 font-medium rounded-md border transition-all duration-150 select-none active:scale-[0.98]',
+        'focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2 disabled:active:scale-100',
         'disabled:opacity-50 disabled:cursor-not-allowed',
         variantClasses[variant],
         sizeClasses[size],

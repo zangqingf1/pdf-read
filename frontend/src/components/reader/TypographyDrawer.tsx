@@ -46,7 +46,7 @@ export default function TypographyDrawer({ open, onClose }: TypographyDrawerProp
       onClick={handleOverlayClick}
       className="fixed inset-0 z-50 flex justify-end bg-black/20 animate-fade-in"
     >
-      <div className="w-[320px] h-full bg-canvas shadow-modal animate-slide-in-right flex flex-col overflow-hidden">
+      <div className="w-[320px] h-full bg-surface-overlay shadow-elevated animate-slide-in-right flex flex-col overflow-hidden">
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-hairline-soft shrink-0">
           <h3 className="text-lg font-display font-medium text-ink">阅读排版</h3>

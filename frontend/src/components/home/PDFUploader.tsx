@@ -320,7 +320,7 @@ export default function PDFUploader({
           onClick={() => !isBusy && fileInputRef.current?.click()}
           className={[
             'upload-zone flex flex-col items-center justify-center p-6 md:p-10 rounded-lg border-2 border-dashed cursor-pointer transition-colors',
-            dragOver ? 'upload-zone-dragover' : 'border-hairline bg-surface-card',
+            dragOver ? 'upload-zone-dragover' : 'border-hairline bg-surface-card shadow-soft',
             isBusy ? 'opacity-50 pointer-events-none' : '',
           ].join(' ')}
         >

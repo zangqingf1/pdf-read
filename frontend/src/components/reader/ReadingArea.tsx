@@ -99,7 +99,7 @@ export default function ReadingArea({
                   togglePlay();
                 }
               }}
-              className="h-8 px-2 flex items-center gap-1.5 rounded-md hover:bg-surface-card transition-colors touch-area text-primary"
+              className="h-8 px-2 flex items-center gap-1.5 rounded-md hover:bg-surface-card active:scale-95 transition-all touch-area text-primary"
               title="朗读全文（点击从第一句开始）"
             >
               {playerStatus === 'loading' ? (
@@ -123,7 +123,7 @@ export default function ReadingArea({
             <button
               onClick={decreaseFontSize}
               disabled={fontSize <= FONT_SIZE_MIN}
-              className="w-8 h-8 flex items-center justify-center rounded-md hover:bg-surface-card disabled:opacity-30 transition-colors touch-area"
+              className="w-8 h-8 flex items-center justify-center rounded-md hover:bg-surface-card disabled:opacity-30 active:scale-95 transition-all touch-area"
               title="缩小字体"
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -134,7 +134,7 @@ export default function ReadingArea({
             <button
               onClick={increaseFontSize}
               disabled={fontSize >= FONT_SIZE_MAX}
-              className="w-8 h-8 flex items-center justify-center rounded-md hover:bg-surface-card disabled:opacity-30 transition-colors touch-area"
+              className="w-8 h-8 flex items-center justify-center rounded-md hover:bg-surface-card disabled:opacity-30 active:scale-95 transition-all touch-area"
               title="放大字体"
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -144,7 +144,7 @@ export default function ReadingArea({
             <div className="w-px h-5 bg-hairline mx-0.5" />
             <button
               onClick={() => setDrawerOpen(true)}
-              className="w-8 h-8 flex items-center justify-center rounded-md hover:bg-surface-card transition-colors touch-area"
+              className="w-8 h-8 flex items-center justify-center rounded-md hover:bg-surface-card active:scale-95 transition-all touch-area"
               title="排版设置"
             >
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">

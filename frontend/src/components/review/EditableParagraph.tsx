@@ -45,7 +45,7 @@ export default function EditableParagraph({
 
   return (
     <div
-      className="mb-4 p-3 rounded-lg border transition-colors duration-200 bg-white"
+      className="mb-4 p-3 rounded-lg border transition-colors duration-200 bg-surface-overlay shadow-soft"
       style={{
         borderColor: isDirty ? 'var(--primary)' : 'var(--hairline)',
         borderLeft: isDirty ? '3px solid var(--primary)' : '3px solid transparent',
@@ -105,7 +105,7 @@ export default function EditableParagraph({
         ref={textareaRef}
         value={paragraph.text_en}
         onChange={(e) => onChange(paragraph.index, e.target.value)}
-        className="w-full px-3 py-2 rounded-md border border-hairline text-sm font-sans text-ink bg-canvas leading-relaxed overflow-y-auto focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/15 transition-colors"
+        className="w-full px-3 py-2 rounded-md border border-hairline text-sm font-sans text-ink bg-canvas leading-relaxed overflow-y-auto focus:outline-none focus:border-primary focus:ring-2 focus:ring-[color:var(--ring)] transition-colors"
         rows={1}
       />
     </div>

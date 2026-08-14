@@ -143,7 +143,7 @@ export default function ForgotPasswordPage() {
         </div>
 
         {/* Card */}
-        <div className="bg-surface-card border border-hairline rounded-xl p-6 shadow-card">
+        <div className="bg-surface-card border border-hairline rounded-xl p-6 shadow-elevated">
           {step === 'email' ? (
             <form
               onSubmit={(e) => {

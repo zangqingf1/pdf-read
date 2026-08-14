@@ -59,7 +59,7 @@ function StreamingWordCard({
       className="bg-surface-card border border-primary/30 rounded-lg p-3.5 mb-3"
       data-word-key={`${paragraphIndex}:${word.toLowerCase()}`}
       data-paragraph-index={paragraphIndex}
-      style={{ boxShadow: '0 0 0 1px rgba(204,120,92,0.15)' }}
+      style={{ boxShadow: '0 0 0 1px rgba(200,116,85,0.15)' }}
     >
       {/* Word header with streaming indicator */}
       <div className="flex items-center gap-2 mb-2">
@@ -113,7 +113,7 @@ function WordCard({
 
   return (
     <div
-      className="bg-surface-card border border-hairline rounded-lg p-3.5 mb-3"
+      className="bg-surface-card border border-hairline rounded-lg p-3.5 mb-3 shadow-soft"
       data-word-key={`${analysis.paragraph_index}:${analysis.word.toLowerCase()}`}
       data-paragraph-index={analysis.paragraph_index}
     >
@@ -283,7 +283,7 @@ function StreamingSentenceCard({
       className="bg-surface-card border border-primary/30 rounded-lg p-3.5 mb-3"
       data-sentence-key={`${paragraphIndex}:${sentenceIndex}`}
       data-paragraph-index={paragraphIndex}
-      style={{ boxShadow: '0 0 0 1px rgba(204,120,92,0.15)' }}
+      style={{ boxShadow: '0 0 0 1px rgba(200,116,85,0.15)' }}
     >
       {/* Sentence header with streaming indicator */}
       <div className="flex items-center gap-2 mb-2">
@@ -439,7 +439,7 @@ function SentenceCard({
 
   return (
     <div
-      className="bg-surface-card border border-hairline rounded-lg p-3.5 mb-3"
+      className="bg-surface-card border border-hairline rounded-lg p-3.5 mb-3 shadow-soft"
       data-sentence-key={`${analysis.paragraph_index}:${analysis.sentence_index}`}
       data-paragraph-index={analysis.paragraph_index}
     >

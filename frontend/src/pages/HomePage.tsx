@@ -26,7 +26,7 @@ export default function HomePage() {
   return (
     <div className="h-screen bg-canvas flex flex-col">
       {/* ── Top Navigation ── */}
-      <header className="flex items-center justify-between h-[52px] px-4 md:px-6 bg-canvas border-b border-hairline">
+      <header className="flex items-center justify-between h-[52px] px-4 md:px-6 bg-canvas border-b border-hairline shadow-soft">
         <div className="flex items-center gap-3">
           {/* Hamburger button — mobile only */}
           <button
@@ -77,7 +77,7 @@ export default function HomePage() {
         {/* ── Left Sidebar: Recent Documents ── */}
         <aside
           className={[
-            'flex-shrink-0 border-r border-hairline bg-[#f8f5ef] flex flex-col transition-transform duration-300',
+            'flex-shrink-0 border-r border-hairline bg-canvas-soft flex flex-col transition-transform duration-300',
             // Mobile: fixed overlay
             'fixed inset-y-0 left-0 z-50 w-[280px] shadow-xl',
             sidebarOpen ? 'translate-x-0' : '-translate-x-full',
@@ -116,14 +116,14 @@ export default function HomePage() {
 
         {/* ── Center: Upload + Hero ── */}
         <div className={isSelecting ? 'flex-1 min-h-0 flex flex-col overflow-hidden' : 'flex-1 overflow-y-auto'}>
-          <div className={isSelecting ? 'min-h-0 flex-1 flex flex-col' : 'max-w-2xl mx-auto px-4 md:px-8 py-8 md:py-12 w-full'}>
+          <div className={isSelecting ? 'min-h-0 flex-1 flex flex-col' : 'max-w-2xl mx-auto px-4 md:px-8 py-10 md:py-16 w-full'}>
             {/* Hero section */}
             {!isSelecting && !resumeTaskId && (
-              <div className="text-center mb-12">
-                <h2 className="text-display-md font-display text-ink mb-3">
+              <div className="text-center mb-14 animate-slide-up">
+                <h2 className="text-display-md font-display text-ink mb-4 tracking-tight">
                   上传文档或粘贴链接，即刻阅读
                 </h2>
-                <p className="text-base text-muted max-w-md mx-auto">
+                <p className="text-base text-muted max-w-lg mx-auto">
                   导入英文文档或网页链接，自动提取正文内容，AI 翻译 + 单词解析 + 语意块拆分，纯净阅读体验
                 </p>
               </div>

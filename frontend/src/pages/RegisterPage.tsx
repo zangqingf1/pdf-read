@@ -191,7 +191,7 @@ export default function RegisterPage() {
         </div>
 
         {/* Card */}
-        <div className="bg-surface-card border border-hairline rounded-xl p-6 shadow-card">
+        <div className="bg-surface-card border border-hairline rounded-xl p-6 shadow-elevated">
           <form onSubmit={handleSubmit} className="flex flex-col gap-4">
             {/* 邮箱 + 验证码 */}
             <div>
@@ -270,7 +270,7 @@ export default function RegisterPage() {
             <div className="flex flex-col gap-1.5">
               <span className="text-sm font-medium text-body-strong">头像（可选）</span>
               <div className="flex items-center gap-4">
-                <div className="w-14 h-14 rounded-full overflow-hidden bg-primary/15 flex items-center justify-center text-primary font-medium text-lg flex-shrink-0">
+                <div className="w-14 h-14 rounded-full overflow-hidden bg-primary/15 shadow-inset-hairline flex items-center justify-center text-primary font-medium text-lg flex-shrink-0">
                   {avatarPreview ? (
                     <img src={avatarPreview} alt="头像预览" className="w-full h-full object-cover" />
                   ) : (
