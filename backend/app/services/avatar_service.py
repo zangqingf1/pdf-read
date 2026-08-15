@@ -10,6 +10,7 @@ Security:
 
 import logging
 import uuid
+from io import BytesIO
 from pathlib import Path
 
 from fastapi import HTTPException, UploadFile, status
@@ -17,6 +18,13 @@ from fastapi import HTTPException, UploadFile, status
 from app.config import settings
 
 logger = logging.getLogger(__name__)
+
+try:
+    from PIL import Image
+
+    _HAS_PIL = True
+except ImportError:  # pragma: no cover - optional dependency
+    _HAS_PIL = False
 
 ALLOWED_AVATAR_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
 AVATAR_MEDIA_TYPES = {
@@ -51,6 +59,29 @@ def sniff_image_type(data: bytes) -> str | None:
     return None
 
 
+def _sanitize_image(raw: bytes) -> tuple[bytes, str] | None:
+    """Decode and re-encode an image, dropping trailing polyglot payloads.
+
+    Returns ``(safe_bytes, final_ext)`` or None when the bytes are not a
+    decodable image. GIF/WebP are normalized to PNG; JPEG stays JPEG.
+    """
+    try:
+        with Image.open(BytesIO(raw)) as img:
+            img.verify()
+        with Image.open(BytesIO(raw)) as img:
+            out = BytesIO()
+            if img.format in ("JPEG", "JPG"):
+                img.convert("RGB").save(out, "JPEG", quality=90)
+                return out.getvalue(), ".jpg"
+            if img.format == "PNG":
+                img.save(out, "PNG")
+                return out.getvalue(), ".png"
+            img.convert("RGBA").save(out, "PNG")
+            return out.getvalue(), ".png"
+    except Exception:
+        return None
+
+
 async def save_avatar(file: UploadFile, user_id: str) -> str:
     """Validate and persist an avatar upload.
 
@@ -80,13 +111,24 @@ async def save_avatar(file: UploadFile, user_id: str) -> str:
             detail="头像必须是 PNG、JPG、GIF 或 WebP 图片。",
         )
 
+    final_bytes: bytes = raw
+    final_ext: str = ext
+    if _HAS_PIL:
+        sanitized = _sanitize_image(raw)
+        if sanitized is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="头像文件不是有效的图片。",
+            )
+        final_bytes, final_ext = sanitized
+
     folder = _avatar_dir()
     folder.mkdir(parents=True, exist_ok=True)
-    filename = f"{user_id}-{uuid.uuid4().hex}{ext}"
+    filename = f"{user_id}-{uuid.uuid4().hex}{final_ext}"
     target = folder / filename
 
     try:
-        target.write_bytes(raw)
+        target.write_bytes(final_bytes)
     except OSError as exc:
         logger.error("Failed to write avatar %s: %s", target, exc)
         raise HTTPException(

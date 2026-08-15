@@ -3,7 +3,11 @@
 Follows TECH_DESING.md section 3.2 — F01 PDF import and text extraction.
 """
 
+import asyncio
+import ipaddress
+import json
 import os
+import socket
 import uuid
 import logging
 from datetime import datetime
@@ -26,6 +30,61 @@ from app.services.ocr_engine import OCREngine, ParsedDocument, ocr_engine
 from app.services.page_utils import count_pdf_pages
 
 logger = logging.getLogger(__name__)
+
+_RESTRICTED_IP = (
+    "is_private",
+    "is_loopback",
+    "is_link_local",
+    "is_multicast",
+    "is_reserved",
+    "is_unspecified",
+)
+
+
+def _is_restricted_ip(addr: ipaddress._BaseAddress) -> bool:
+    """Reject private, loopback, link-local, metadata and other non-public IPs."""
+    if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped is not None:
+        addr = addr.ipv4_mapped
+    return any(getattr(addr, attr, False) for attr in _RESTRICTED_IP)
+
+
+async def _validate_public_http_url(url: str) -> None:
+    """Ensure a URL targets a public http(s) host (SSRF guard).
+
+    Checks the literal host and every resolved address. DNS resolution is
+    done through the event loop so the async worker is not blocked.
+    """
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        raise ValueError("仅支持 http/https 链接")
+
+    hostname = parsed.hostname
+    if hostname == "localhost" or hostname.endswith(".local"):
+        raise ValueError("仅支持公网 http/https 链接")
+
+    try:
+        literal = ipaddress.ip_address(hostname)
+        if _is_restricted_ip(literal):
+            raise ValueError("仅支持公网 http/https 链接")
+    except ValueError as exc:
+        # Non-IP literal — resolve below; re-raise only for the guard above.
+        if isinstance(exc, ValueError) and str(exc) == "仅支持公网 http/https 链接":
+            raise
+
+    try:
+        infos = await asyncio.get_running_loop().getaddrinfo(
+            hostname, None, type=socket.SOCK_STREAM
+        )
+    except OSError:
+        raise ValueError("仅支持公网 http/https 链接")
+
+    for info in infos:
+        try:
+            addr = ipaddress.ip_address(info[4][0])
+        except ValueError:
+            continue
+        if _is_restricted_ip(addr):
+            raise ValueError("仅支持公网 http/https 链接")
 
 
 class PDFService:
@@ -63,19 +122,7 @@ class PDFService:
         Raises:
             ValueError: If file validation fails.
         """
-        # Validate content
-        content = await file.read()
-
-        if len(content) == 0:
-            raise ValueError("Empty file uploaded")
-
-        if len(content) > self.MAX_FILE_SIZE:
-            raise ValueError(
-                f"File size ({len(content) / 1024 / 1024:.1f}MB) exceeds "
-                f"maximum ({settings.MAX_UPLOAD_SIZE_MB}MB)"
-            )
-
-        # Extension whitelist (replaces the PDF-only content-type gate)
+        # Extension whitelist (replaces the PDF-only content-type gate).
         filename = file.filename or "untitled"
         ext = normalize_ext(filename)
         if ext not in SUPPORTED_UPLOAD_EXTENSIONS:
@@ -84,18 +131,51 @@ class PDFService:
                 "支持的格式：PDF、Word、PPT、Excel、图片与 HTML"
             )
 
-        # Keep the PDF magic-number check so a renamed docx isn't accepted as
-        # PDF (page-count and page-selection flows depend on real PDFs).
-        if ext == ".pdf" and not content.startswith(b"%PDF"):
-            raise ValueError("扩展名为 .pdf 但内容不是有效 PDF 文件")
-
-        # Save to disk with the real extension
+        # Save to disk with the real extension, streaming in chunks so a
+        # 50MB upload is never buffered fully in memory per request.
         os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
         file_id = uuid.uuid4()
         file_path = os.path.join(settings.UPLOAD_DIR, f"{file_id}{ext}")
 
-        with open(file_path, "wb") as f:
-            f.write(content)
+        size = 0
+        first_chunk = b""
+        try:
+            with open(file_path, "wb") as f:
+                while True:
+                    chunk = await file.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    if not first_chunk:
+                        first_chunk = chunk
+                    size += len(chunk)
+                    if size > self.MAX_FILE_SIZE:
+                        raise ValueError(
+                            f"File size exceeds maximum "
+                            f"({settings.MAX_UPLOAD_SIZE_MB}MB)"
+                        )
+                    f.write(chunk)
+        except Exception:
+            try:
+                os.remove(file_path)
+            except OSError:
+                pass
+            raise
+
+        if size == 0:
+            try:
+                os.remove(file_path)
+            except OSError:
+                pass
+            raise ValueError("Empty file uploaded")
+
+        # Keep the PDF magic-number check so a renamed docx isn't accepted as
+        # PDF (page-count and page-selection flows depend on real PDFs).
+        if ext == ".pdf" and not first_chunk.startswith(b"%PDF"):
+            try:
+                os.remove(file_path)
+            except OSError:
+                pass
+            raise ValueError("扩展名为 .pdf 但内容不是有效 PDF 文件")
 
         # Count pages only for PDF (other types have no page concept)
         page_count = None
@@ -135,9 +215,8 @@ class PDFService:
         Raises:
             ValueError: If the URL scheme is not http/https.
         """
+        await _validate_public_http_url(url)
         parsed = urlparse(url)
-        if parsed.scheme not in ("http", "https") or not parsed.hostname:
-            raise ValueError("仅支持 http/https 链接")
 
         # Extension for display/model hint; unknown suffix → treat as web page.
         ext = normalize_ext(url) or ".html"
@@ -211,15 +290,55 @@ class PDFService:
             document.page_count = document.page_count or parsed.total_pages
             document.parse_status = "completed"
 
-            # Create paragraph records with page numbers
+            # ── Layout boxes: PDF uploads only ──
+            # MinerU bbox is in render-image pixels. MinerU renders pages with
+            # pypdfium2 at dpi=200 (scale=200/72), clamped so the image long
+            # side never exceeds 3500px (mineru/utils/pdf_reader.py). Store the
+            # exact per-page render scale together with the page's PDF-point
+            # size so the frontend can map boxes without guessing the DPI.
             page_nums = parsed.paragraph_page_numbers
+            bboxes = getattr(parsed, "paragraph_bboxes", []) or []
+            page_pts_map: dict[int, tuple[float, float, float]] = {}  # page -> (w, h, scale)
+            needs_dims = any(
+                bbox is not None and page_nums[i] is not None
+                for i, bbox in enumerate(bboxes)
+                if i < len(page_nums)
+            )
+            is_pdf = (document.file_ext or "").lower() == ".pdf"
+            if needs_dims and is_pdf and document.file_path:
+                try:
+                    from pypdf import PdfReader
+
+                    render_dpi = 200.0
+                    max_render_side = 3500.0
+                    reader = PdfReader(document.file_path)
+                    for i, pg in enumerate(reader.pages, start=1):
+                        mb = pg.mediabox
+                        w, h = float(mb.width), float(mb.height)
+                        # 与 MinerU page_to_image 一致的渲染缩放（含长边钳制）
+                        scale = min(render_dpi / 72.0, max_render_side / max(w, h))
+                        page_pts_map[i] = (w, h, scale)
+                except Exception:
+                    logger.warning(
+                        "Could not read PDF page dimensions for layout boxes "
+                        "(document %s)", document.id, exc_info=True,
+                    )
+
             for idx, text in enumerate(parsed.paragraphs):
                 page_num = page_nums[idx] if idx < len(page_nums) else None
+                bbox = bboxes[idx] if idx < len(bboxes) else None
+                bbox_json = None
+                if bbox is not None and page_num is not None and page_num in page_pts_map:
+                    w, h, scale = page_pts_map[page_num]
+                    bbox_json = json.dumps(
+                        {"box": bbox, "pts_w": w, "pts_h": h, "scale": scale}
+                    )
                 paragraph = Paragraph(
                     document_id=document.id,
                     index=idx,
                     text_en=text,
                     page_number=page_num,
+                    bbox_json=bbox_json,
                 )
                 db.add(paragraph)
 

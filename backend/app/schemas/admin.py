@@ -107,3 +107,52 @@ class AdminBatchDeleteResponse(BaseModel):
     deleted_count: int
     failed_ids: list[str] = Field(default_factory=list)
     message: str
+
+
+# ── Daily Quote Management ──
+
+class AdminQuoteItem(BaseModel):
+    """A single daily-quote row in the admin quote list."""
+
+    id: int
+    text_en: str
+    text_zh: str
+    author: str
+    active: bool
+    created_at: datetime
+
+    @classmethod
+    def from_quote(cls, q) -> "AdminQuoteItem":
+        return cls(
+            id=q.id,
+            text_en=q.text_en,
+            text_zh=q.text_zh,
+            author=q.author,
+            active=q.active,
+            created_at=q.created_at,
+        )
+
+
+class AdminQuoteListResponse(BaseModel):
+    """Paginated daily-quote list."""
+
+    quotes: list[AdminQuoteItem]
+    total: int
+
+
+class AdminQuoteCreateRequest(BaseModel):
+    """Fields required to create a daily quote."""
+
+    text_en: str = Field(..., min_length=1, max_length=2000)
+    text_zh: str = Field("", max_length=2000)
+    author: str = Field("", max_length=200)
+    active: bool = True
+
+
+class AdminQuoteUpdateRequest(BaseModel):
+    """Fields the admin may update on a daily quote."""
+
+    text_en: str | None = Field(None, min_length=1, max_length=2000)
+    text_zh: str | None = Field(None, max_length=2000)
+    author: str | None = Field(None, max_length=200)
+    active: bool | None = None

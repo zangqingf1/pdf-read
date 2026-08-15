@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, String, DateTime, Uuid, func, text
+from sqlalchemy import Boolean, Integer, String, DateTime, Uuid, func, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -35,6 +35,10 @@ class User(Base):
     )
     is_superuser: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default=text("0")
+    )
+    # Bumped on password reset so previously issued JWTs are rejected.
+    token_version: Mapped[int] = mapped_column(
+        Integer, default=0, server_default=text("0"), nullable=False
     )
 
     created_at: Mapped[datetime] = mapped_column(

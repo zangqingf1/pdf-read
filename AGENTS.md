@@ -61,13 +61,14 @@ app/
 │   ├── file_types.py      # 支持的文件类型/扩展名/MinerU 模型选择（vlm / MinerU-HTML）
 │   ├── url_downloader.py  # URL 内容下载
 │   ├── email_service.py   # SMTP 发送验证码邮件（标准库 smtplib，零新依赖；开发环境 console 兜底）
+│   ├── daily_quote.py     # 每日一句名句库 + 按日期取句（epoch days 取模轮换，无状态）
 │   └── avatar_service.py  # 头像保存/删除（白名单扩展名 + 魔数嗅探 + 随机文件名）
-├── models/   # 每类一文件: user/email_verification/document/paragraph/word_analysis/sentence_analysis/prompt_template
+├── models/   # 每类一文件: user/email_verification/document/paragraph/word_analysis/sentence_analysis/prompt_template/daily_quote
 ├── schemas/  # 与 api/v1 路由一一对应 + admin
 ├── tasks/    # celery_app（Redis 不可用→None）+ pdf_tasks（Celery 缺失时降级）
 ├── config.py     # pydantic-settings (.env)
 ├── database.py   # engine + get_db + init_db + run_migrations
-└── main.py       # lifespan: 建表 → 增量迁移 → 孤儿 processing/awaiting_selection→failed
+└── main.py       # lifespan: 建表 → 增量迁移 → 孤儿 processing/awaiting_selection→failed → 每日一句种子
 ```
 
 **关键决策：**
@@ -80,6 +81,7 @@ app/
 - Prompt 两层体系：DB 行有复合主键 `(name, is_default)`；生效优先级 = 自定义 `is_default=False` > 系统默认 `True` > 出厂默认 `prompt_defaults.py`。`_resolve_prompt()` 用 `_SafeDict` + `str.format_map()` 替换占位符
 - **邮箱验证码认证**：注册/找回密码均需邮箱验证码。验证码用 `secrets` 生成、HMAC-SHA256（key=SECRET_KEY）哈希入库、`hmac.compare_digest` 常量时间比较；单次使用、10 分钟过期（`EMAIL_CODE_TTL_MINUTES`）、5 次尝试上限（`EMAIL_CODE_MAX_ATTEMPTS`）。发送限流：同一邮箱 60s 冷却（`EMAIL_SEND_COOLDOWN_SECONDS`）+ 每小时 5 次（`EMAIL_MAX_PER_HOUR`），另加进程内 IP 10 次/小时。`reset_password` 发送对未知邮箱同样返回成功（防用户枚举）。SMTP 未配置时：开发环境验证码打印日志并在响应返回 `dev_code`，生产环境 503。登录按邮箱+IP 限流（`LOGIN_MAX_ATTEMPTS`/15 分钟，进程内，成功清零）
 - **头像**：仅接受文件上传（`POST /auth/avatar`），白名单扩展名 + 魔数嗅探（PNG/JPEG/GIF/WebP）+ ≤2MB（`AVATAR_MAX_MB`），随机文件名存 `UPLOAD_DIR/avatars/`，经公开端点 `GET /auth/avatar/{user_id}` 读取；不接收客户端任意 URL 字符串
+- **每日一句**：名句数据存 `daily_quotes` 表（`text_en`/`text_zh`/`author`/`active`），首次启动自动以内置库（`daily_quote.py` 的 `DAILY_QUOTES`）播种；公开端点 `GET /quote` 按日期序数对 **active** 行取模轮换（同天稳定、跨天自动换），表空时回退内置库。管理后台「句子管理」可增删改/启停
 
 ### API 端点
 
@@ -133,6 +135,7 @@ app/
 | GET | `/api/v1/prompts/{name}/default` | 查看出厂默认（只读） |
 | POST | `/api/v1/prompts/{name}/reset` | 重置单个（删全部 DB 行） |
 | POST | `/api/v1/prompts/reset-all` | 重置全部 |
+| GET | `/api/v1/quote` | 每日一句（公开，按日期确定性取句：en + zh + author + date） |
 | GET | `/api/v1/admin/stats` | 管理统计 |
 | GET | `/api/v1/admin/users` | 用户列表 |
 | PUT | `/api/v1/admin/users/{user_id}` | 编辑用户 |
@@ -140,6 +143,10 @@ app/
 | GET | `/api/v1/admin/documents` | 全部文档列表 |
 | POST | `/api/v1/admin/documents/batch-delete` | 批量删除文档 |
 | DELETE | `/api/v1/admin/documents/{doc_id}` | 删除单个文档 |
+| GET | `/api/v1/admin/quotes` | 名句列表（搜索/启停过滤/分页） |
+| POST | `/api/v1/admin/quotes` | 新增名句 |
+| PUT | `/api/v1/admin/quotes/{quote_id}` | 编辑名句（部分更新，含启停） |
+| DELETE | `/api/v1/admin/quotes/{quote_id}` | 删除名句 |
 | GET | `/health` | 健康检查 |
 
 **Prompt 模板**: 四种 (`translate`, `analyze_words`, `analyze_sentences`, `summary`) 全部可编辑。`_VALID_NAMES` 从 `DEFAULT_PROMPTS.keys()` 动态派生。
@@ -149,10 +156,11 @@ app/
 - **User**: `email`(unique), `nickname`, `avatar_url`（存 `avatars/xxx` 相对路径）, `password_hash`, `is_superuser`, `is_active`, `created_at`
 - **EmailVerification**: 邮箱验证码记录（注册/重置密码）。仅存 `code_hash`（HMAC-SHA256，key=SECRET_KEY），`expires_at` 到期、`failed_attempts` 超限或 `consumed_at` 消费后即失效（单次使用）
 - **Document**: UUID 主键, `parse_status` (pending→awaiting_selection(仅PDF)→processing→completed/failed), cascade delete。另有 `title_zh`（大标题中文翻译）、`source_type`(`upload`/`url`)、`file_ext`、`source_url`、`summary`+`summary_updated_at`（草稿与 AI 结果共用一列）。`original_text`/`word_count`/`paragraph_count` 为聚合字段，编辑后在后端重算
-- **Paragraph**: `(document_id, index)` 唯一索引, `text_en`, `text_zh`, `page_number`（英文变更→译文清空待重译）
+- **Paragraph**: `(document_id, index)` 唯一索引, `text_en`, `text_zh`, `page_number`, `bbox_json`（英文变更→译文清空待重译）。`bbox_json` 存 MinerU 布局坐标 JSON `{"box":[x1,y1,x2,y2], "pts_w":.., "pts_h":..}`（PDF 源才有；box 为 MinerU 渲染图像像素，pts_w/pts_h 为 pypdf 读的该页 PDF 点数尺寸，前端据此把框映射到 react-pdf 渲染坐标，见注意事项「PDF 布局解析框」）
 - **WordAnalysis**: `(document_id, paragraph_index, word)` 唯一, upsert。含 phonetic, definition, cognates, synonyms_antonyms 等
 - **SentenceAnalysis**: `(document_id, paragraph_index, sentence_index)` 唯一, upsert。含 `structure_json`（新格式 `{"content": ...}`，旧格式向前兼容重建）
 - **PromptTemplate**: **复合主键 `(name, is_default)`**, `system_prompt` + `user_prompt`。无 DB 行=出厂默认
+- **DailyQuote**: 每日一句名句库（管理后台「句子管理」维护）。`text_en`/`text_zh`/`author`/`active`(启停)/`created_at`；`GET /quote` 按日期序数对 active 行取模轮换
 
 ### 解析流程
 
@@ -165,14 +173,14 @@ app/
 ### 前端 (React 18 + TypeScript + Zustand + Tailwind CSS)
 
 ```
-pages/          # Home/Reader/Review/Login/Register/ForgotPassword/Profile + admin/ (Dashboard/Users/Documents/Prompts)
+pages/          # Home/Reader/Review/Login/Register/ForgotPassword/Profile + admin/ (Dashboard/Users/Documents/Prompts/Quotes)
 components/
-├── home/       # PDFUploader, PageSelector, RecentDocuments
+├── home/       # DailyQuote, PDFUploader, PageSelector, RecentDocuments
 ├── reader/     # ReaderHeader, ReadingArea, ParagraphBlock, StudyPanel, StudySheet,
 │               #   FocusedAnalysisSheet, TypographyDrawer, DocumentSummary, EditableTitle,
 │               #   SpeakerButton, PhoneticWithSpeakers, AudioPlayerBar(朗读播放条)
-├── review/     # EditableParagraph(Panel), PageGroup, PDFViewerPanel, ReviewHeader,
-│               #   SortableParagraph, UndoRedoToolbar
+├── review/     # EditableParagraph(Panel), PageGroup, PDFViewerPanel(布局解析框),
+│               #   ReviewHeader, UndoRedoToolbar
 ├── export/     # ExportButton, ExportPreview, ExportSettingsModal/Panel
 ├── common/     # ApiKeyModal, ProviderSelector, ProtectedRoute, UserMenu,
 │               #   PromptEditorModal(死代码)
@@ -214,13 +222,15 @@ utils/          # textTokens(token化), ttsAlign(WordBoundary↔词token贪婪�
 
 - `ocr.parse_pdf()` / `parse_file()` / `parse_url()` 都是 async，必须 `await`
 - `pdf_service.py` 的 `filter_non_content`/`reconstruct_paragraphs` 是 passthrough — 实际过滤在 `OCREngine._content_list_to_paragraphs()`
+- **OCR 后处理**：`text_cleanup.py` 的 `clean_ocr_text()` 在解析落库前做保守确定性清洗（断行连字 `con-\ntinue`、连字字符 `ﬁ/ﬂ`、弯引号、短破折号、NBSP、零宽/替换符、控制字符、标点前空格、重复标点；省略号 `...` 保护、`\u2014` 长破折号保留、表格 HTML 不清洗），幂等零成本，重复解析不会叠加变形
 - Celery tasks 仅在 `celery_app is not None` 时动态定义（`pdf_tasks.py`）；Redis 不可用时 `parse_pdf_task = None`
 - 所有 AI 端点接受可选 `api_key` + `system_prompt_override`/`user_prompt_override`；OCR 端点接受 `mineru_token`
 - `_SafeDict` 使未知占位符保留原文; `_is_fatal_error()` 区分认证错误（401/403/缺 key）和瞬时错误
 - 单词分析防丢失: `_request_word_batch()` + `_missing_words()` 做单词级补偿 — AI 批次返回不全/失败时对缺失单词逐词补发; 补偿仍失败则通过 SSE `incomplete` 事件上报, 前端明确提示缺失单词(绝不静默丢弃)
 - 单词分析按**段落分组**(非句子): 同段落单词共享完整段落原文作为上下文 (`{paragraph}` 占位符), 每批 ≤8 词 (`WORDS_BATCH_SIZE`); 兼容旧自定义模板保留 `{sentence}` 占位符(同值填充)
 - 全文总结: `POST /summary/stream` 后端自取段落全文（超 `SUMMARY_MAX_CHARS` 按 head 60% + tail 40% 截断），`mode=generate/revise` 区分一键总结与 AI 修改；`summarize_stream` 仅首 chunk 前重试（中途断流重试会重复文本）；草稿由前端 1s 防抖 + 失焦/卸载 flush 到 `PUT /summary/draft`（空白=清空），生成期间暂停保存
-- 校对页 `updateParagraphs` 批量保存, `deleteParagraph`/`mergeParagraphs` 自动重排索引; `reorderParagraphs` 同步更新页码。重排/删除用单条 raw `UPDATE` 或临时负索引避免 `UNIQUE (document_id, index)` 冲突
+- 校对页 `updateParagraphs` 批量保存, `deleteParagraph`/`mergeParagraphs` 自动重排索引; `reorderParagraphs` 同步更新页码。重排/删除用单条 raw `UPDATE` 或临时负索引避免 `UNIQUE (document_id, index)` 冲突（前端已移除拖拽重排 UI，`/reorder` 接口保留未用）
+- **PDF 布局解析框**：`_content_list_to_paragraphs` 提取 MinerU 块 `bbox`（list 取 item 并集；5 元素带置信度格式取前 4；缺省为 None）→ `ParsedDocument.paragraph_bboxes` → `pdf_service` 用 pypdf 读该页 `mediabox` 点数尺寸写入 `Paragraph.bbox_json`（迁移 `010a_paragraphs_bbox_json`，`{"box":[...], "pts_w":.., "pts_h":..}`，另存每页渲染 `scale`）→ `GET /result` 每段返回 `layout`。**前端坐标换算以「文本自校准」为主**（`PDFViewerPanel` 用 pdfjs `getTextContent` 提取真实文本位置，把段落框与文本按栏做线性拟合，得到「MinerU 图像像素 → CSS 像素」的仿射映射 `css = f·box + c`，`fitLineRobust` 带离群点剔除；**MinerU Cloud 的 bbox 实际落在约 1000×1000 正方形坐标空间（x/y 缩放不同，如 fx≈0.92、fy≈1.24），存储的 scale（200dpi 假设）对其无效**，必须从真实文本反推 fx/fy/cx/cy；非 Cloud 文档同样适用（fx≈fy）。校准记录 `refW`，换宽度时按 `pageWidth/refW` 等比缩放，框随 PDF 一起变大变小）；自校准失败才回退 `bboxToCss`（`css = box × renderWidth / (pts_w × scale)`，无 scale 时 `MINERU_BBOX_DPI=200` 常量）。校对页已改文档式显示（无卡片、无拖拽），段落悬浮显示蓝色线框 + 图标条（修订/合并下一段/删除，CSS `group-hover` 控制显隐且 `mt-0` 紧贴段落避免空隙导致 hover 中断），PDF 预览页叠加布局框。**布局框交互**：直角细线无填充，鼠标移过才填充（整体垂直微调偏移 `BOX_V_OFFSET`，正值向下）；悬浮框联动高亮对应段落（不跳转）；**点击框 → 编辑区段落滚动居中并暖黄闪烁高亮**（`review-paragraph-flash`）；**点击段落 → 对应框滚动到 PDF 预览居中并蓝色闪烁高亮**（`layout-box-flash`，移动端自动切到 PDF 标签页，`focusRequest` 用 `{index,t}` 递增触发 + `numPages` 依赖兜底等 PDF 加载完成再定位）。**布局框与段落同步**：`paragraphLayouts` 与 `paragraphs` 同源并行维护，删除段落 → 对应框删除、后续索引前移；合并段落 → 同页两框并集（`mergeLayoutItems`，跨页仅保留前框）后续索引前移；**布局框纳入 undo/redo 快照**（`useUndoRedo` 的 `UndoableSnapshot.layouts`，`pushSnapshot` 同步保存），撤销/重做时框随段落一起恢复/重做，对应关系始终正确
 - `PromptEditorModal.tsx` 是死代码 — Prompt 编辑唯一入口在管理后台 `/admin/prompts`
 - **DB 迁移陷阱**: 本地 SQLite 库长期保留，启动时 `run_migrations()` 只补登记过的列；新加列需在 `database.py` 里追加 `_apply()` 迁移，否则旧库启动报错
 - **配置读取陷阱**: `Settings` 的 `env_file=".env"` 是 **CWD 相对路径** — 本地 `cd backend` 启动时读的是 `backend/.env`，不是仓库根目录的 `.env`（根 `.env` 仅供 docker-compose 变量替换）。SMTP/密钥等本地配置必须写在 `backend/.env`（两者已同步）

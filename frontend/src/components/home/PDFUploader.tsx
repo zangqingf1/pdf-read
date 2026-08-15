@@ -4,7 +4,6 @@ import { uploadPDF, getPDFStatus, selectPages, parseUrl } from '../../services/p
 import { getStoredMineruToken } from '../common/ApiKeyModal';
 import PageSelector from './PageSelector';
 import Button from '../ui/Button';
-import Spinner from '../ui/Spinner';
 
 type UploadPhase = 'idle' | 'uploading' | 'selection' | 'parsing' | 'completed' | 'failed';
 
@@ -63,7 +62,7 @@ export default function PDFUploader({
       } catch { /* silent */ }
     };
     resume();
-  }, [resumeTaskId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [resumeTaskId]);
 
   // Poll for parsing status
   useEffect(() => {
@@ -319,7 +318,7 @@ export default function PDFUploader({
           onDrop={handleDrop}
           onClick={() => !isBusy && fileInputRef.current?.click()}
           className={[
-            'upload-zone flex flex-col items-center justify-center p-6 md:p-10 rounded-lg border-2 border-dashed cursor-pointer transition-colors',
+            'upload-zone flex flex-col items-center justify-center p-6 md:p-10 rounded-lg border-2 border-dashed cursor-pointer transition-colors animate-fade-in',
             dragOver ? 'upload-zone-dragover' : 'border-hairline bg-surface-card shadow-soft',
             isBusy ? 'opacity-50 pointer-events-none' : '',
           ].join(' ')}

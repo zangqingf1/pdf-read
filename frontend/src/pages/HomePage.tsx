@@ -2,6 +2,7 @@ import { useState, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import PDFUploader from '../components/home/PDFUploader';
 import RecentDocuments from '../components/home/RecentDocuments';
+import DailyQuote from '../components/home/DailyQuote';
 import ApiKeyModal from '../components/common/ApiKeyModal';
 import UserMenu from '../components/common/UserMenu';
 import Button from '../components/ui/Button';
@@ -116,18 +117,9 @@ export default function HomePage() {
 
         {/* ── Center: Upload + Hero ── */}
         <div className={isSelecting ? 'flex-1 min-h-0 flex flex-col overflow-hidden' : 'flex-1 overflow-y-auto'}>
-          <div className={isSelecting ? 'min-h-0 flex-1 flex flex-col' : 'max-w-2xl mx-auto px-4 md:px-8 py-10 md:py-16 w-full'}>
-            {/* Hero section */}
-            {!isSelecting && !resumeTaskId && (
-              <div className="text-center mb-14 animate-slide-up">
-                <h2 className="text-display-md font-display text-ink mb-4 tracking-tight">
-                  上传文档或粘贴链接，即刻阅读
-                </h2>
-                <p className="text-base text-muted max-w-lg mx-auto">
-                  导入英文文档或网页链接，自动提取正文内容，AI 翻译 + 单词解析 + 语意块拆分，纯净阅读体验
-                </p>
-              </div>
-            )}
+          <div className={isSelecting ? 'min-h-0 flex-1 flex flex-col' : 'max-w-2xl mx-auto px-4 md:px-8 pt-4 md:pt-6 pb-10 md:pb-16 w-full'}>
+            {/* Daily Quote — 每日一句 */}
+            {!isSelecting && !resumeTaskId && <DailyQuote />}
 
             {/* Upload area */}
             <PDFUploader

@@ -78,11 +78,47 @@ async def _get_owned_document(
 _logger = logging.getLogger(__name__)
 
 
+def _parse_layout(bbox_json: str | None) -> dict | None:
+    """Parse a Paragraph.bbox_json into a layout dict (or None if invalid).
+
+    Expected shape: {"box": [x1,y1,x2,y2], "pts_w": float, "pts_h": float,
+    "scale": float (optional — MinerU render scale, image px per PDF point)}.
+    Corrupt / legacy rows return None so the frontend degrades gracefully.
+    """
+    if not bbox_json:
+        return None
+    try:
+        data = json.loads(bbox_json)
+        box = data.get("box")
+        pts_w = data.get("pts_w")
+        pts_h = data.get("pts_h")
+        if (
+            isinstance(box, (list, tuple))
+            and len(box) >= 4
+            and isinstance(pts_w, (int, float))
+            and isinstance(pts_h, (int, float))
+            and pts_w > 0
+            and pts_h > 0
+        ):
+            layout: dict = {
+                "box": [float(box[0]), float(box[1]), float(box[2]), float(box[3])],
+                "pts_w": float(pts_w),
+                "pts_h": float(pts_h),
+            }
+            scale = data.get("scale")
+            if isinstance(scale, (int, float)) and scale > 0:
+                layout["scale"] = float(scale)
+            return layout
+    except (json.JSONDecodeError, TypeError, KeyError, ValueError):
+        pass
+    return None
+
+
 async def _reshift_analysis_indices(
     db: AsyncSession,
     document_id: uuid.UUID,
     *,
-    delete_above: int | None = None,
+    delete_at: int | None = None,
     index_map: dict[int, int] | None = None,
 ) -> None:
     """Keep Word/Sentence analysis indices in sync after paragraph edits.
@@ -92,33 +128,52 @@ async def _reshift_analysis_indices(
     stale — analyses would silently attach to the wrong paragraph.
 
     Args:
-        delete_above: after deleting the paragraph at this index, decrement
-            every analysis whose paragraph_index is greater than it.
-        index_map: reorder mapping {old_index: new_index}; analyses are
-            re-pointed one row set at a time.
+        delete_at: analyses attached to the removed paragraph index are
+            deleted, then every analysis whose paragraph_index is greater
+            than it is decremented.
+        index_map: reorder mapping {old_index: new_index}; analyses move
+            through unique temporary indices first so a swap can never hit
+            the UNIQUE constraint mid-update.
     """
-    from sqlalchemy import update as sa_update
+    from sqlalchemy import delete as sa_delete, update as sa_update
 
-    if delete_above is not None:
+    if delete_at is not None:
         for model in (WordAnalysis, SentenceAnalysis):
+            await db.execute(
+                sa_delete(model).where(
+                    model.document_id == str(document_id),
+                    model.paragraph_index == delete_at,
+                )
+            )
             await db.execute(
                 sa_update(model)
                 .where(
                     model.document_id == str(document_id),
-                    model.paragraph_index > delete_above,
+                    model.paragraph_index > delete_at,
                 )
                 .values(paragraph_index=model.paragraph_index - 1)
             )
     if index_map:
-        for old_idx, new_idx in index_map.items():
-            if old_idx == new_idx:
-                continue
-            for model in (WordAnalysis, SentenceAnalysis):
+        temp_indices = {old_idx: -(old_idx + 1) for old_idx in index_map}
+        for model in (WordAnalysis, SentenceAnalysis):
+            # Phase 1: every mapped paragraph moves to a unique negative
+            # index so phase 2 cannot collide with rows still at old indices.
+            for old_idx in index_map:
                 await db.execute(
                     sa_update(model)
                     .where(
                         model.document_id == str(document_id),
                         model.paragraph_index == old_idx,
+                    )
+                    .values(paragraph_index=temp_indices[old_idx])
+                )
+            # Phase 2: move into the final contiguous indices.
+            for old_idx, new_idx in index_map.items():
+                await db.execute(
+                    sa_update(model)
+                    .where(
+                        model.document_id == str(document_id),
+                        model.paragraph_index == temp_indices[old_idx],
                     )
                     .values(paragraph_index=new_idx)
                 )
@@ -283,6 +338,7 @@ async def get_parse_result(
             text=p.text_en,
             text_zh=p.text_zh,
             page_number=p.page_number,
+            layout=_parse_layout(p.bbox_json),
         )
         for p in sorted(document.paragraphs, key=lambda p: p.index)
     ]
@@ -568,7 +624,7 @@ async def delete_paragraph(
     # Keep word/sentence analyses pointing at the right paragraphs after
     # the index shift above.
     await _reshift_analysis_indices(
-        db, document.id, delete_above=paragraph_index
+        db, document.id, delete_at=paragraph_index
     )
     await db.flush()
 
@@ -662,7 +718,7 @@ async def merge_paragraphs(
 
     # Keep word/sentence analyses pointing at the right paragraphs after
     # the index shift above.
-    await _reshift_analysis_indices(db, document.id, delete_above=body.index_b)
+    await _reshift_analysis_indices(db, document.id, delete_at=body.index_b)
     await db.flush()
 
     # Expire the collection so the next access re-loads fresh indices
@@ -943,9 +999,9 @@ async def delete_document(
 async def retry_document(
     background_tasks: BackgroundTasks,
     task_id: str,
-    body: RetryDocumentRequest,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    body: RetryDocumentRequest | None = None,
 ):
     """Retry a failed or stuck document.
 
@@ -992,7 +1048,10 @@ async def retry_document(
             document.error_message = None
             await db.commit()
             background_tasks.add_task(
-                _parse_in_background, document.id, document.file_path, body.mineru_token
+                _parse_in_background,
+                document.id,
+                document.file_path,
+                body.mineru_token if body else "",
             )
             return PDFUploadResponse(
                 task_id=task_id,

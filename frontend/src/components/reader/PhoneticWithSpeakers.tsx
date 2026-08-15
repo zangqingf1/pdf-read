@@ -10,8 +10,8 @@ interface PhoneticWithSpeakersProps {
 }
 
 const SEGMENTS: Array<{ accent: SpeechAccent; label: string; key: 'br' | 'am' }> = [
-  { accent: 'uk', label: '英音', key: 'br' },
-  { accent: 'us', label: '美音', key: 'am' },
+  { accent: 'uk', label: 'UK', key: 'br' },
+  { accent: 'us', label: 'US', key: 'am' },
 ];
 
 /** 音标分段展示（英音/美音），每段内联一个小喇叭按钮；音标缺失/异常时兜底两个喇叭。 */

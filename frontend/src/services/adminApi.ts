@@ -95,3 +95,53 @@ export async function batchDeleteAdminDocuments(
   );
   return data;
 }
+
+// ── Daily Quote Management ──
+
+export interface AdminQuoteItem {
+  id: number;
+  text_en: string;
+  text_zh: string;
+  author: string;
+  active: boolean;
+  created_at: string;
+}
+
+export interface AdminQuoteListResponse {
+  quotes: AdminQuoteItem[];
+  total: number;
+}
+
+export interface AdminQuotePayload {
+  text_en: string;
+  text_zh: string;
+  author: string;
+  active: boolean;
+}
+
+export async function getAdminQuotes(params: {
+  search?: string;
+  active?: boolean | null;
+  limit?: number;
+  offset?: number;
+}): Promise<AdminQuoteListResponse> {
+  const { data } = await api.get<AdminQuoteListResponse>('/admin/quotes', { params });
+  return data;
+}
+
+export async function createAdminQuote(body: AdminQuotePayload): Promise<AdminQuoteItem> {
+  const { data } = await api.post<AdminQuoteItem>('/admin/quotes', body);
+  return data;
+}
+
+export async function updateAdminQuote(
+  quoteId: number,
+  body: Partial<AdminQuotePayload>
+): Promise<AdminQuoteItem> {
+  const { data } = await api.put<AdminQuoteItem>(`/admin/quotes/${quoteId}`, body);
+  return data;
+}
+
+export async function deleteAdminQuote(quoteId: number): Promise<void> {
+  await api.delete(`/admin/quotes/${quoteId}`);
+}

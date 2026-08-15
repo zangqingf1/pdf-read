@@ -121,31 +121,29 @@ export async function translateParagraphsStream(
     for (const line of lines) {
       if (!line.startsWith('data: ')) continue;
       const jsonStr = line.slice(6);
+      let event: TranslateSSEEvent;
       try {
-        const event: TranslateSSEEvent = JSON.parse(jsonStr);
+        event = JSON.parse(jsonStr);
+      } catch {
+        console.warn('SSE parse error:', jsonStr);
+        continue;
+      }
 
-        if (event.type === 'done') {
-          return translations;
-        }
-        if (event.type === 'error') {
-          throw new Error(event.message || '翻译失败');
-        }
-        // 大标题翻译事件（先于段落事件到达）
-        if (event.type === 'title' && event.translation !== undefined) {
-          onTitle?.(event.translation);
-          continue;
-        }
-        if (event.index !== undefined && event.translation !== undefined) {
-          translations[event.index] = event.translation;
-          onProgress(event.index, event.translation);
-        }
-      } catch (e) {
-        // If it's our own error throw, re-throw it
-        if (e instanceof Error && e.message.includes('翻译')) {
-          throw e;
-        }
-        // Otherwise skip malformed events
-        console.warn('SSE parse error:', e);
+      if (event.type === 'done') {
+        return translations;
+      }
+      if (event.type === 'error') {
+        // 401/429/超时等错误事件必须中断流，不能当作“已完成”静默返回半截译文。
+        throw new Error(event.message || '翻译失败');
+      }
+      // 大标题翻译事件（先于段落事件到达）
+      if (event.type === 'title' && event.translation !== undefined) {
+        onTitle?.(event.translation);
+        continue;
+      }
+      if (event.index !== undefined && event.translation !== undefined) {
+        translations[event.index] = event.translation;
+        onProgress(event.index, event.translation);
       }
     }
   }

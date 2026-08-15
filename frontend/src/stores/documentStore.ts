@@ -148,6 +148,10 @@ export const useDocumentStore = create<DocumentState>((set) => ({
       for (const p of data.paragraphs) {
         if (p.text_zh && !translations[p.index]) {
           translations[p.index] = p.text_zh;
+        } else if (!p.text_zh) {
+          // DB 已清空译文（段落被编辑后待重译）→ 丢弃内存中的旧译文，
+          // 否则会一直显示过期翻译并跳过重新翻译。
+          delete translations[p.index];
         }
       }
 

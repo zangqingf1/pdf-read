@@ -10,6 +10,7 @@ from app.config import settings
 from app.database import init_db, run_migrations, close_db, async_session_factory
 from app.models import *  # noqa: F401,F403 — ensure all models are registered
 from app.models.document import Document
+from app.services.daily_quote import seed_daily_quotes
 from app.api.v1 import api_v1_router
 from app.auth.router import router as auth_router
 
@@ -37,6 +38,10 @@ async def lifespan(app: FastAPI):
             )
             await db.execute(stmt)
         await db.commit()
+
+    # Seed daily quote library on first startup
+    async with async_session_factory() as db:
+        await seed_daily_quotes(db)
 
     yield
     # Shutdown

@@ -449,7 +449,15 @@ class AIService:
 
         # Stream results as they complete
         while completed < total:
-            item = await queue.get()
+            try:
+                item = await asyncio.wait_for(
+                    queue.get(), timeout=self.heartbeat_interval
+                )
+            except asyncio.TimeoutError:
+                # Keep the SSE connection alive while the slowest AI call is
+                # still running; nginx would otherwise cut a silent stream.
+                yield ("__heartbeat__", "")
+                continue
             if item[0] == "__error__":
                 # Fatal error — cancel remaining tasks and propagate
                 for t in tasks:

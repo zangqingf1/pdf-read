@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect, type Dispatch, type SetStateAction } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { Document, Page } from 'react-pdf';
 import { pdfjs } from 'react-pdf';
 import { fetchPDFBlob } from '../../services/pdfApi';
@@ -27,14 +27,12 @@ export default function PageSelector({
   loading = false,
 }: PageSelectorProps) {
   const [selected, setSelected] = useState<number[]>([]);
-  const [numPages, setNumPages] = useState<number | null>(null);
   const gridRef = useRef<HTMLDivElement>(null);
   const [pageWidth, setPageWidth] = useState(500);
   const [columns, setColumns] = useState<1 | 2 | 3 | 4>(
     typeof window !== 'undefined' && window.innerWidth >= 768 ? 2 : 1
   );
   const [pdfBlobUrl, setPdfBlobUrl] = useState<string | null>(null);
-  const [loadError, setLoadError] = useState(false);
 
   // Fetch PDF as blob through axios (so auth header is included)
   useEffect(() => {
@@ -46,9 +44,7 @@ export default function PageSelector({
         }
       })
       .catch(() => {
-        if (!cancelled) {
-          setLoadError(true);
-        }
+        /* 预览加载失败时静默降级为按页码选择 */
       });
     return () => {
       cancelled = true;
@@ -77,13 +73,6 @@ export default function PageSelector({
     observer.observe(el);
     return () => observer.disconnect();
   }, [columns]);
-
-  const onDocumentLoadSuccess = useCallback(
-    ({ numPages: loaded }: { numPages: number }) => {
-      setNumPages(Math.min(loaded, pageCount));
-    },
-    [pageCount]
-  );
 
   const togglePage = useCallback((page: number) => {
     setSelected((prev) => {
@@ -142,8 +131,6 @@ export default function PageSelector({
       >
         <Document
           file={pdfBlobUrl}
-          onLoadSuccess={onDocumentLoadSuccess}
-          onLoadError={() => setLoadError(true)}
           loading={
             <div className="text-center py-16">
               <div className="animate-spin h-8 w-8 border-2 border-primary border-t-transparent rounded-full mx-auto mb-3" />

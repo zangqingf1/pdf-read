@@ -3,10 +3,12 @@
 try:
     from celery import Celery
 
+    from app.config import settings
+
     celery_app = Celery(
         "pdfreader",
-        broker="redis://localhost:6379/0",
-        backend="redis://localhost:6379/0",
+        broker=settings.REDIS_URL,
+        backend=settings.REDIS_URL,
         include=[
             "app.tasks.pdf_tasks",
         ],

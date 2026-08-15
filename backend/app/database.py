@@ -178,12 +178,18 @@ async def run_migrations():
             ")",
         )
         # Step 2: copy existing rows (all legacy rows become is_default=False).
+        # Dialect-neutral form: `INSERT OR IGNORE` is SQLite-only and would
+        # abort startup on PostgreSQL, so guard with NOT EXISTS instead.
         await _apply(
             "004b_prompt_templates_copy_data",
-            "INSERT OR IGNORE INTO _prompt_templates_v2 "
+            "INSERT INTO _prompt_templates_v2 "
             "  (name, is_default, system_prompt, user_prompt, created_at, updated_at)"
             "  SELECT name, 0, system_prompt, user_prompt, created_at, updated_at"
-            "  FROM prompt_templates",
+            "  FROM prompt_templates"
+            "  WHERE NOT EXISTS ("
+            "    SELECT 1 FROM _prompt_templates_v2 AS t"
+            "    WHERE t.name = prompt_templates.name AND t.is_default = 0"
+            "  )",
         )
         # Step 3: swap tables.
         await _apply(
@@ -246,6 +252,22 @@ async def run_migrations():
         await _apply(
             "008a_users_avatar_url",
             "ALTER TABLE users ADD COLUMN avatar_url VARCHAR(500)",
+        )
+
+        # ═══════════════════════════════════════════════════════════════
+        # Migration 009: users — JWT token version (revoke on password reset)
+        # ═══════════════════════════════════════════════════════════════
+        await _apply(
+            "009a_users_token_version",
+            "ALTER TABLE users ADD COLUMN token_version INTEGER NOT NULL DEFAULT 0",
+        )
+
+        # ═══════════════════════════════════════════════════════════════
+        # Migration 010: paragraphs — MinerU 布局坐标（PDF 预览解析框）
+        # ═══════════════════════════════════════════════════════════════
+        await _apply(
+            "010a_paragraphs_bbox_json",
+            "ALTER TABLE paragraphs ADD COLUMN bbox_json TEXT",
         )
 
 

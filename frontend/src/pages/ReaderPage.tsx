@@ -113,6 +113,8 @@ export default function ReaderPage() {
   const [studySheetOpen, setStudySheetOpen] = useState(false);
   const [focusedAnalysis, setFocusedAnalysis] = useState<{ type: 'word' | 'sentence'; key: string } | null>(null);
   const [panelOpen, setPanelOpen] = useState(true);
+  // 打开面板瞬间抑制正文宽度过渡（原文直接到位，不播放动画）
+  const [panelJustOpened, setPanelJustOpened] = useState(false);
   const playerStatus = useAudioPlayerStore((s) => s.status);
 
   // ── 朗读播放器单例清理（离开页面停止播放）──
@@ -202,6 +204,13 @@ export default function ReaderPage() {
           return;
         }
 
+        if (status.status === 'awaiting_selection') {
+          setParseStatus('awaiting_selection');
+          parseStatusRef.current = 'awaiting_selection';
+          setLoading(false);
+          return;
+        }
+
         if (status.status !== 'completed') {
           setParseStatus(status.status);
           parseStatusRef.current = status.status;
@@ -235,7 +244,11 @@ export default function ReaderPage() {
     tryLoadDocument();
 
     pollRef.current = setInterval(() => {
-      if (parseStatusRef.current === 'completed' || error) {
+      if (
+        parseStatusRef.current === 'completed' ||
+        parseStatusRef.current === 'awaiting_selection' ||
+        error
+      ) {
         if (pollRef.current) clearInterval(pollRef.current);
         return;
       }
@@ -261,10 +274,16 @@ export default function ReaderPage() {
   }, [isMobile]);
 
   // ── Register open-panel callback (for clicking analyzed words/sentences when panel is closed) ──
-  useEffect(() => {
-    setOnOpenPanel(() => setPanelOpen(true));
-    return () => setOnOpenPanel(null);
+  const handleOpenPanel = useCallback(() => {
+    setPanelOpen(true);
+    setPanelJustOpened(true);
+    requestAnimationFrame(() => setPanelJustOpened(false));
   }, []);
+
+  useEffect(() => {
+    setOnOpenPanel(() => handleOpenPanel());
+    return () => setOnOpenPanel(null);
+  }, [handleOpenPanel]);
 
   // ── Auto-translate (streaming) ──
   useEffect(() => {
@@ -343,10 +362,10 @@ export default function ReaderPage() {
   // ── Auto-open panel when analysis starts ──
   useEffect(() => {
     if (isAnalyzing || isAnalyzingSentences) {
-      setPanelOpen(true);
+      handleOpenPanel();
       if (isMobile) setStudySheetOpen(true);
     }
-  }, [isAnalyzing, isAnalyzingSentences, isMobile]);
+  }, [isAnalyzing, isAnalyzingSentences, isMobile, handleOpenPanel]);
 
   // ── Analyze selected words (streaming) ──
   const analysisAbortRef = useRef<AbortController | null>(null);
@@ -566,6 +585,29 @@ export default function ReaderPage() {
     );
   }
 
+  if (parseStatus === 'awaiting_selection') {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen gap-4" style={{ backgroundColor: bgColorValue }}>
+        <div className="w-16 h-16 rounded-full bg-warning/15 flex items-center justify-center">
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="var(--warning)" strokeWidth="2">
+            <path d="M12 9v4M12 17h.01" />
+            <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+          </svg>
+        </div>
+        <h3 className="text-display-sm font-display text-ink">解析前需要选择页面</h3>
+        <p className="text-muted max-w-sm text-center">该文档尚未选择解析范围，请先完成选页。</p>
+        <div className="flex gap-3">
+          <Button variant="primary" onClick={() => navigate(`/?resume=${id}`)}>
+            去选择页面
+          </Button>
+          <Button variant="secondary" onClick={() => navigate('/')}>
+            返回首页
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
   if (error) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen gap-4" style={{ backgroundColor: bgColorValue }}>
@@ -667,7 +709,7 @@ export default function ReaderPage() {
         <div className="flex-1 min-h-0 flex overflow-hidden transition-colors duration-300" style={{ backgroundColor: bgColorValue }}>
           {/* Left: Reading area */}
           <div
-            className="overflow-y-auto flex-shrink-0 min-h-0"
+            className={`overflow-y-auto flex-shrink-0 min-h-0 ${panelJustOpened ? '' : 'transition-[width] duration-300 ease-out'}`}
             style={{ width: hasAnalyses && panelOpen ? leftWidth : '100%', backgroundColor: bgColorValue }}
           >
             <div className={hasAnalyses && panelOpen ? 'px-6 py-6 max-w-none' : 'px-8 py-6 max-w-[950px] mx-auto'}>
@@ -684,9 +726,11 @@ export default function ReaderPage() {
             />
           )}
 
-          {/* Right: Study panel */}
-          {hasAnalyses && panelOpen && (
-            <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
+          {/* Right: Study panel（始终挂载，通过 transform/opacity 滑动进出） */}
+          {hasAnalyses && (
+            <div
+              className={`flex-1 min-h-0 overflow-hidden flex flex-col transition-all duration-300 ease-out ${panelOpen ? 'translate-x-0 opacity-100' : 'translate-x-full opacity-0'}`}
+            >
               <StudyPanel onClose={() => setPanelOpen(false)} />
             </div>
           )}
@@ -694,7 +738,7 @@ export default function ReaderPage() {
           {/* Reopen panel button — shown when panel is closed but has analyses */}
           {hasAnalyses && !panelOpen && (
             <button
-              onClick={() => setPanelOpen(true)}
+              onClick={handleOpenPanel}
               className="fixed right-3 top-1/2 -translate-y-1/2 z-40 w-9 h-24 bg-surface-card border border-hairline rounded-l-lg shadow-md flex flex-col items-center justify-center gap-1.5 hover:bg-canvas-soft transition-colors touch-area group"
               title="打开解析面板"
               style={{ borderRight: 'none' }}
@@ -718,8 +762,8 @@ export default function ReaderPage() {
       )}
 
       {/* ── Mobile: Study panel bottom sheet ── */}
-      {isMobile && hasAnalyses && studySheetOpen && (
-        <StudySheet onClose={() => setStudySheetOpen(false)}>
+      {isMobile && hasAnalyses && (
+        <StudySheet open={studySheetOpen} onClose={() => setStudySheetOpen(false)}>
           <StudyPanel mobile />
         </StudySheet>
       )}

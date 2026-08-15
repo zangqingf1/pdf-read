@@ -7,7 +7,7 @@
  * 产出的 (句子索引, 词索引) 上；对齐率过低时整段降级为句子级高亮。
  */
 
-import { splitSentences, tokenizeWords } from './textTokens';
+import { tokenizeWords } from './textTokens';
 
 /** 前向查找窗口：允许跳过的原文词数上限（应对数字/展开朗读） */
 const LOOKAHEAD = 8;

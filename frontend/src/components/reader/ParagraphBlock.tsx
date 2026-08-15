@@ -32,7 +32,7 @@ function WordToken({
   paragraphIndex,
   sentenceIndex,
   sentenceText,
-  wordIdx,
+  wordIdx: _wordIdx,
   isTtsActive,
   isTouchDevice,
 }: {
@@ -243,7 +243,7 @@ function SentenceToken({
     setLongPressActive(false);
   }, []);
 
-  const handleTouchStart = useCallback((e: React.TouchEvent) => {
+  const handleTouchStart = useCallback(() => {
     if (!isTouchDevice) return;
     longPressFired.current = false;
     longPressTimer.current = setTimeout(() => {
@@ -300,15 +300,7 @@ function SentenceToken({
   );
 
   return (
-    <span
-      className={`sentence-token ${isSelected ? 'sentence-token-selected' : ''} ${hasAnalysis && !isSelected ? 'sentence-token-has-analysis' : ''} ${isTtsActive ? 'tts-current-sentence' : ''} ${longPressActive ? 'long-press-active' : ''}`}
-      onClick={handleClick}
-      onTouchStart={handleTouchStart}
-      onTouchEnd={handleTouchEnd}
-      onTouchMove={handleTouchMove}
-      data-paragraph-index={paragraphIndex}
-      data-sentence-index={sentence.index}
-    >
+    <span className="sentence-wrap">
       <button
         type="button"
         className="sentence-play-btn"
@@ -323,9 +315,19 @@ function SentenceToken({
           <path d="M8 5v14l11-7z" />
         </svg>
       </button>
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
-        {sentence.text}
-      </ReactMarkdown>
+      <span
+        className={`sentence-token ${isSelected ? 'sentence-token-selected' : ''} ${hasAnalysis && !isSelected ? 'sentence-token-has-analysis' : ''} ${isTtsActive ? 'tts-current-sentence' : ''} ${longPressActive ? 'long-press-active' : ''}`}
+        onClick={handleClick}
+        onTouchStart={handleTouchStart}
+        onTouchEnd={handleTouchEnd}
+        onTouchMove={handleTouchMove}
+        data-paragraph-index={paragraphIndex}
+        data-sentence-index={sentence.index}
+      >
+        <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
+          {sentence.text}
+        </ReactMarkdown>
+      </span>
     </span>
   );
 }
@@ -350,7 +352,7 @@ export default function ParagraphBlock({
       style={{ fontSize: `${fontSize}px`, fontFamily: fontFamilyValue, lineHeight: lineHeightValue }}
       data-paragraph-index={paragraph.index}
     >
-      {/* Sentence-level rendering */}
+      {/* Sentence-level rendering + 段尾展开翻译图标按钮 */}
       <p className="text-ink !mb-0">
         {sentences.map((sentence) => (
           <SentenceToken
@@ -360,37 +362,31 @@ export default function ParagraphBlock({
             isTouchDevice={isTouchDevice}
           />
         ))}{' '}
+        {translation && (
+          <button
+            type="button"
+            onClick={() => setShowTranslation(!showTranslation)}
+            className="translate-toggle-btn"
+            title={showTranslation ? '收起翻译' : '展开翻译'}
+            aria-label={showTranslation ? '收起翻译' : '展开翻译'}
+            aria-expanded={showTranslation}
+          >
+            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path d="M12.87 15.07l-2.54-2.51.03-.03A17.52 17.52 0 0 0 14.07 6H17V4h-7V2H8v2H1v2h11.17C11.5 7.92 10.44 9.75 9 11.35 8.07 10.32 7.3 9.19 6.69 8h-2c.73 1.63 1.73 3.17 2.98 4.56l-5.09 5.02L4 19l5-5 3.11 3.11.76-2.04zM18.5 10h-2L12 22h2l1.12-3h4.75L21 22h2l-4.5-12zm-2.62 7l1.62-4.33L19.12 17h-3.24z" />
+            </svg>
+          </button>
+        )}
       </p>
 
       {/* Translation section */}
-      {translation ? (
-        <div className="not-prose mt-1" style={{ fontSize: `${Math.max(fontSize - 4, 12)}px` }}>
-          <button
-            onClick={() => setShowTranslation(!showTranslation)}
-            className="inline-flex items-center gap-1.5 cursor-pointer select-none text-primary/80 hover:text-primary transition-colors text-xs font-sans"
-          >
-            <svg
-              width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"
-              className={showTranslation ? '' : 'opacity-60'}
-            >
-              {showTranslation ? (
-                <path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19M14.12 14.12a3 3 0 11-4.24-4.24" />
-              ) : (
-                <>
-                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
-                  <circle cx="12" cy="12" r="3" />
-                </>
-              )}
-            </svg>
-            {showTranslation ? '隐藏翻译' : '查看翻译'}
-          </button>
-          {showTranslation && (
-            <div className="mt-2 p-3.5 bg-surface-card rounded-md text-body border-l-[3px] border-primary shadow-soft">
-              <span className="font-chinese leading-relaxed">{translation}</span>
-            </div>
-          )}
+      {showTranslation && translation && (
+        <div className="not-prose mt-2" style={{ fontSize: `${Math.max(fontSize - 4, 12)}px` }}>
+          <div className="p-3.5 bg-surface-card rounded-md text-body border-l-[3px] border-primary shadow-soft">
+            <span className="font-chinese leading-relaxed">{translation}</span>
+          </div>
         </div>
-      ) : isTranslating ? (
+      )}
+      {!translation && isTranslating ? (
         <div className="mt-1 not-prose text-xs text-muted-soft font-sans">
           <span className="inline-flex items-center gap-1">
             <svg className="animate-spin" width="12" height="12" viewBox="0 0 24 24" fill="none">

@@ -11,7 +11,6 @@ import type { SentenceAnalysisResult } from '../../services/sentenceAnalysisApi'
 import { sentenceBodyMarkdown, sentenceBreakdownChunks } from '../../utils/sentenceSections';
 import { wordPositionMap } from '../../utils/textTokens';
 import EmptyState from '../ui/EmptyState';
-import Button from '../ui/Button';
 import PhoneticWithSpeakers from './PhoneticWithSpeakers';
 
 // ── Module-level callback for reverse navigation ──
@@ -671,20 +670,23 @@ export default function StudyPanel({
     <div className="flex-1 min-h-0 flex flex-col border-l border-hairline transition-colors duration-300" style={{ backgroundColor: bgColorValue }}>
       {/* Header — hidden on mobile (StudySheet provides its own header) */}
       <div className="hidden md:flex items-center justify-between px-4 py-3 border-b border-hairline flex-shrink-0">
-        <h3 className="text-sm font-display font-medium text-ink m-0">解析面板</h3>
-        <div className="flex items-center gap-1">
-          {/* Close panel button */}
+        <div className="flex items-center gap-2">
+          {/* Close panel button — 左侧双箭头 */}
           {onClose && (
             <button
               onClick={onClose}
               className="w-7 h-7 flex items-center justify-center rounded-md hover:bg-surface-card transition-colors text-muted-soft hover:text-ink"
               title="关闭面板"
+              aria-label="关闭面板"
             >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                <path d="M18 6L6 18M6 6l12 12" />
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M6 17l5-5-5-5M13 17l5-5-5-5" />
               </svg>
             </button>
           )}
+          <h3 className="text-sm font-display font-medium text-ink m-0">解析面板</h3>
+        </div>
+        <div className="flex items-center gap-1">
           {/* Font size controls */}
           <button
             onClick={decreaseWordPanelFontSize}

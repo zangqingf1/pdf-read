@@ -20,7 +20,7 @@ interface FocusedAnalysisSheetProps {
 
 function FocusedWordCard({
   analysis,
-  analysisKey,
+  analysisKey: _analysisKey,
 }: {
   analysis: WordAnalysisResult;
   analysisKey: string;

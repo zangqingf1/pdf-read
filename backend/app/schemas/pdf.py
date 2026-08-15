@@ -30,6 +30,10 @@ class ParagraphResult(BaseModel):
     text: str
     text_zh: str | None = None
     page_number: int | None = None
+    # MinerU 布局框（PDF 源）: {"box":[x1,y1,x2,y2], "pts_w":.., "pts_h":..}
+    # box 为 MinerU 渲染图像像素坐标；pts_w/pts_h 为该页 PDF 点数尺寸。
+    # 非 PDF / 无坐标时为 None。
+    layout: dict | None = None
 
 
 class WordAnalysisItem(BaseModel):

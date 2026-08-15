@@ -295,6 +295,10 @@ async def translate_stream(
                     system_prompt_override=system_override,
                     user_prompt_override=user_override,
                 ):
+                    if index == "__heartbeat__":
+                        # SSE comment — keeps nginx from timing out the stream.
+                        yield ": ping\n\n"
+                        continue
                     translations[index] = translation
                     yield f"data: {json.dumps({'index': index, 'translation': translation}, ensure_ascii=False)}\n\n"
 

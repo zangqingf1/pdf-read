@@ -4,7 +4,6 @@ import { TextArea } from '../ui/Input';
 import Button from '../ui/Button';
 import Badge from '../ui/Badge';
 import { usePromptStore } from '../../stores/promptStore';
-import type { PromptTemplate } from '../../services/promptApi';
 
 // Placeholder descriptions for user guidance
 const PLACEHOLDER_DESC: Record<string, string> = {

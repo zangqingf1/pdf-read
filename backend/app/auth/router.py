@@ -52,7 +52,16 @@ router = APIRouter()
 
 
 def _client_ip(request: Request) -> str:
-    """Best-effort client IP (direct connection; nginx proxy note in docs)."""
+    """Best-effort client IP.
+
+    Behind nginx the real client is the leftmost entry of X-Forwarded-For;
+    without that header fall back to the socket peer address.
+    """
+    forwarded = request.headers.get("x-forwarded-for") if hasattr(request, "headers") else None
+    if forwarded:
+        first = forwarded.split(",")[0].strip()
+        if first:
+            return first
     return request.client.host if request.client else "unknown"
 
 
@@ -150,7 +159,7 @@ async def register(body: RegisterRequest, db: AsyncSession = Depends(get_db)):
     await db.refresh(user)
 
     # Auto-login: issue token
-    token = create_access_token(data={"sub": str(user.id)})
+    token = create_access_token(data={"sub": str(user.id), "ver": user.token_version})
     return TokenResponse.from_user(user, token)
 
 
@@ -189,7 +198,7 @@ async def login(
     record_login_success(email, ip)
 
     # Issue token
-    token = create_access_token(data={"sub": str(user.id)})
+    token = create_access_token(data={"sub": str(user.id), "ver": user.token_version})
     return TokenResponse.from_user(user, token)
 
 
@@ -229,6 +238,7 @@ async def reset_password_confirm(
     await consume_verification_code(db, email, "reset_password", body.code)
 
     user.hashed_password = hash_password(body.new_password)
+    user.token_version += 1  # invalidate all previously issued JWTs
     await db.flush()
     return {"message": "密码已重置，请使用新密码登录。"}
 

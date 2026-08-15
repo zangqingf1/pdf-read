@@ -14,6 +14,7 @@ import AdminDashboard from './pages/admin/AdminDashboard';
 import AdminUsers from './pages/admin/AdminUsers';
 import AdminDocuments from './pages/admin/AdminDocuments';
 import AdminPrompts from './pages/admin/AdminPrompts';
+import AdminQuotes from './pages/admin/AdminQuotes';
 import { useAuthStore } from './stores/authStore';
 
 // ── Error Boundary (no Ant Design dependency) ──
@@ -123,6 +124,7 @@ export default function App() {
             <Route path="users" element={<AdminUsers />} />
             <Route path="documents" element={<AdminDocuments />} />
             <Route path="prompts" element={<AdminPrompts />} />
+            <Route path="quotes" element={<AdminQuotes />} />
           </Route>
         </Routes>
       </div>

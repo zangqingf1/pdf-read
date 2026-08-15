@@ -185,7 +185,7 @@ export async function analyzeWordsStream(
   };
 
   // ── Words that failed after backend compensation — surfaced on completion ──
-  let incompleteWords: Array<{ para_index: number; word: string }> = [];
+  const incompleteWords: Array<{ para_index: number; word: string }> = [];
 
   try {
     while (true) {

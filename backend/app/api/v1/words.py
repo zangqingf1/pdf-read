@@ -7,9 +7,12 @@ import uuid
 from fastapi import APIRouter, HTTPException, Depends
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select, delete
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.deps import get_current_user
+from app.config import settings
 from app.database import get_db
 from app.models.document import Document
 from app.models.user import User
@@ -23,6 +26,45 @@ from app.services.ai_service import create_ai_service, resolve_prompt_overrides
 
 router = APIRouter()
 _logger = logging.getLogger(__name__)
+
+
+def _word_upsert_stmt(
+    document_id: str,
+    paragraph_index: int,
+    word: str,
+    values: dict,
+):
+    """Dialect-neutral upsert keyed by (document_id, paragraph_index, word)."""
+    payload = {
+        "document_id": document_id,
+        "paragraph_index": paragraph_index,
+        "word": word,
+        **values,
+    }
+    if "sqlite" in settings.DATABASE_URL:
+        stmt = sqlite_insert(WordAnalysis).values(**payload)
+    else:
+        stmt = pg_insert(WordAnalysis).values(**payload)
+    excluded = stmt.excluded
+    return stmt.on_conflict_do_update(
+        index_elements=[
+            WordAnalysis.document_id,
+            WordAnalysis.paragraph_index,
+            WordAnalysis.word,
+        ],
+        set_={
+            "phonetic": excluded.phonetic,
+            "part_of_speech": excluded.part_of_speech,
+            "definition": excluded.definition,
+            "definition_zh": excluded.definition_zh,
+            "collocations": excluded.collocations,
+            "example_sentence": excluded.example_sentence,
+            "cognates": excluded.cognates,
+            "synonyms_antonyms": excluded.synonyms_antonyms,
+            "base_form": excluded.base_form,
+            "plural_form": excluded.plural_form,
+        },
+    )
 
 
 async def _verify_document_ownership(
@@ -53,57 +95,38 @@ async def _persist_analyses(
         if not word:
             continue
 
-        # Check if an analysis already exists for this (document, paragraph, word) tuple
-        stmt = select(WordAnalysis).where(
-            WordAnalysis.document_id == document_id,
-            WordAnalysis.paragraph_index == para_index,
-            WordAnalysis.word == word,
+        collocations = entry.get("collocations", [])
+        cognates = entry.get("cognates", [])
+        syn_ant = entry.get("synonyms_antonyms", {"synonyms": []})
+        await db.execute(
+            _word_upsert_stmt(
+                document_id,
+                para_index,
+                word,
+                {
+                    "phonetic": entry.get("phonetic", ""),
+                    "part_of_speech": entry.get("part_of_speech", ""),
+                    "definition": entry.get("definition", ""),
+                    "definition_zh": entry.get("definition_zh", ""),
+                    "collocations": (
+                        json.dumps(collocations, ensure_ascii=False)
+                        if collocations
+                        else "[]"
+                    ),
+                    "example_sentence": entry.get("example_sentence", ""),
+                    "cognates": (
+                        json.dumps(cognates, ensure_ascii=False) if cognates else "[]"
+                    ),
+                    "synonyms_antonyms": (
+                        json.dumps(syn_ant, ensure_ascii=False)
+                        if syn_ant
+                        else '{"synonyms": []}'
+                    ),
+                    "base_form": entry.get("base_form", ""),
+                    "plural_form": entry.get("plural_form", ""),
+                },
+            )
         )
-        result = await db.execute(stmt)
-        existing = result.scalars().first()
-
-        if existing:
-            # Update existing record
-            existing.phonetic = entry.get("phonetic", "")
-            existing.part_of_speech = entry.get("part_of_speech", "")
-            existing.definition = entry.get("definition", "")
-            existing.definition_zh = entry.get("definition_zh", "")
-            collocations = entry.get("collocations", [])
-            existing.collocations = (
-                json.dumps(collocations, ensure_ascii=False) if collocations else "[]"
-            )
-            existing.example_sentence = entry.get("example_sentence", "")
-            cognates = entry.get("cognates", [])
-            syn_ant = entry.get("synonyms_antonyms", {"synonyms": []})
-            existing.cognates = (
-                json.dumps(cognates, ensure_ascii=False) if cognates else "[]"
-            )
-            existing.synonyms_antonyms = (
-                json.dumps(syn_ant, ensure_ascii=False) if syn_ant else '{"synonyms": []}'
-            )
-            existing.base_form = entry.get("base_form", "")
-            existing.plural_form = entry.get("plural_form", "")
-        else:
-            # Create new record
-            collocations = entry.get("collocations", [])
-            cognates = entry.get("cognates", [])
-            syn_ant = entry.get("synonyms_antonyms", {"synonyms": []})
-            new_analysis = WordAnalysis(
-                document_id=document_id,
-                paragraph_index=para_index,
-                word=word,
-                phonetic=entry.get("phonetic", ""),
-                part_of_speech=entry.get("part_of_speech", ""),
-                definition=entry.get("definition", ""),
-                definition_zh=entry.get("definition_zh", ""),
-                collocations=json.dumps(collocations, ensure_ascii=False) if collocations else "[]",
-                example_sentence=entry.get("example_sentence", ""),
-                cognates=json.dumps(cognates, ensure_ascii=False) if cognates else "[]",
-                synonyms_antonyms=json.dumps(syn_ant, ensure_ascii=False) if syn_ant else '{"synonyms": []}',
-                base_form=entry.get("base_form", ""),
-                plural_form=entry.get("plural_form", ""),
-            )
-            db.add(new_analysis)
 
     await db.commit()
 

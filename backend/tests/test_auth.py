@@ -5,6 +5,7 @@ test_summary.py 同一模式）。SMTP 未配置且 ENVIRONMENT=development 时
 验证码走 console 兜底并随响应返回 ``dev_code``，测试据此取码。
 """
 
+import base64
 import io
 import types
 import uuid
@@ -36,7 +37,9 @@ from app.models.email_verification import EmailVerification
 from app.models.user import User
 
 FAKE_IP = "127.0.0.1"
-PNG_BYTES = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
+PNG_BYTES = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+)
 
 
 def fake_request():
@@ -520,7 +523,7 @@ async def test_avatar_upload_and_get(db, tmp_path, monkeypatch):
     )
     await db.commit()
     assert resp.avatar_url and resp.avatar_url.startswith("avatars/")
-    assert (tmp_path / resp.avatar_url).read_bytes() == PNG_BYTES
+    assert (tmp_path / resp.avatar_url).read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
 
     file_resp = await auth_router.get_avatar(str(user.id), db)
     assert file_resp.path is not None

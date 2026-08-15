@@ -143,12 +143,13 @@ async def update_prompt_template(
     name: str,
     request: PromptTemplateUpdateRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_superuser),
 ):
-    """Save a custom prompt override (is_default=False).
+    """Save a prompt override (is_default=False custom or system default).
 
     Set ``set_as_default=True`` to save as the admin-defined system default
-    instead (is_default=True) — requires superuser privileges.
+    instead (is_default=True). Prompt templates are global configuration,
+    so every write requires admin privileges (the admin UI is the only editor).
     """
     if name not in _VALID_NAMES:
         raise HTTPException(
@@ -156,10 +157,16 @@ async def update_prompt_template(
             detail=f"Unknown template name: {name}. Valid: {', '.join(sorted(_VALID_NAMES))}",
         )
 
+    # Prompt templates are global configuration — every write is admin-only.
+    if not current_user.is_superuser:
+        raise HTTPException(
+            status_code=403,
+            detail="Admin access required to edit prompt templates.",
+        )
+
     is_default = request.set_as_default
 
-    # System defaults are global (affect every user's AI requests) —
-    # only superusers may write them.
+    # Defense in depth: system defaults affect every user's AI requests.
     if is_default and not current_user.is_superuser:
         raise HTTPException(
             status_code=403,

@@ -17,6 +17,7 @@ always reports success even when the email is unknown; with
 (that information is inherent to the registration form anyway).
 """
 
+import asyncio
 import hashlib
 import hmac
 import logging
@@ -215,7 +216,9 @@ async def send_verification_code(
         "cooldown_seconds": settings.EMAIL_SEND_COOLDOWN_SECONDS,
     }
     # Dev-only: expose the code so the flow can be tested without SMTP.
-    if settings.ENVIRONMENT.lower() == "development":
+    # Requires DEBUG as well — a production box accidentally left in
+    # development mode must not hand out verification codes to callers.
+    if settings.ENVIRONMENT.lower() == "development" and settings.DEBUG:
         payload["dev_code"] = code
     return payload
 
@@ -224,7 +227,8 @@ async def _send_async_safe(
     email: str, subject: str, text_body: str, html_body: str | None
 ) -> None:
     """Wrapper so tests can monkeypatch a single point (sync ok — smtplib)."""
-    send_email(email, subject, text_body, html_body)
+    # send_email does blocking SMTP I/O — run it off the event loop.
+    await asyncio.to_thread(send_email, email, subject, text_body, html_body)
 
 
 async def consume_verification_code(
@@ -259,6 +263,9 @@ async def consume_verification_code(
     if row.expires_at < _utcnow():
         row.consumed_at = _utcnow()  # invalidate expired code
         await db.flush()
+        # Commit the invalidation before raising: get_db would otherwise
+        # roll back this write along with the HTTPException.
+        await db.commit()
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="验证码已过期，请重新获取。",
@@ -267,6 +274,7 @@ async def consume_verification_code(
     if row.failed_attempts >= settings.EMAIL_CODE_MAX_ATTEMPTS:
         row.consumed_at = _utcnow()  # invalidate exhausted code
         await db.flush()
+        await db.commit()
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="验证码尝试次数过多，已失效，请重新获取。",
@@ -277,6 +285,7 @@ async def consume_verification_code(
         if row.failed_attempts >= settings.EMAIL_CODE_MAX_ATTEMPTS:
             row.consumed_at = _utcnow()  # invalidate on final failure
         await db.flush()
+        await db.commit()
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="验证码错误，请重新输入。",

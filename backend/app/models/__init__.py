@@ -5,6 +5,7 @@ from app.models.prompt_template import PromptTemplate
 from app.models.sentence_analysis import SentenceAnalysis
 from app.models.user import User
 from app.models.word_analysis import WordAnalysis
+from app.models.daily_quote import DailyQuote
 
 __all__ = [
     "Document",
@@ -14,4 +15,5 @@ __all__ = [
     "SentenceAnalysis",
     "User",
     "WordAnalysis",
+    "DailyQuote",
 ]

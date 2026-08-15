@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { listDocuments, deleteDocument, retryDocument, batchDeleteDocuments, type DocumentListItem } from '../../services/pdfApi';
+import { getStoredMineruToken } from '../common/ApiKeyModal';
 import dayjs from 'dayjs';
 import Button from '../ui/Button';
 import Badge from '../ui/Badge';
@@ -79,7 +80,7 @@ export default function RecentDocuments({ refreshKey = 0, sidebar = false }: Rec
   const handleRetry = async (id: string) => {
     setActionLoading(id);
     try {
-      const result = await retryDocument(id);
+      const result = await retryDocument(id, getStoredMineruToken());
       if (result.status === 'awaiting_selection') {
         navigate(`/?resume=${id}`);
       } else {
@@ -99,14 +100,6 @@ export default function RecentDocuments({ refreshKey = 0, sidebar = false }: Rec
       if (next.has(id)) next.delete(id); else next.add(id);
       return next;
     });
-  };
-
-  const toggleSelectAll = () => {
-    if (selectedIds.size === documents.length && documents.length > 0) {
-      setSelectedIds(new Set());
-    } else {
-      setSelectedIds(new Set(documents.map((d) => d.id)));
-    }
   };
 
   const exitSelectMode = () => {

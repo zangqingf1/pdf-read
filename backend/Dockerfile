@@ -13,6 +13,8 @@ RUN apt-get update && apt-get install -y \
     libxrender-dev \
     libgomp1 \
     poppler-utils \
+    chromium \
+    fonts-noto-cjk \
     && rm -rf /var/lib/apt/lists/*
 
 # Python dependencies

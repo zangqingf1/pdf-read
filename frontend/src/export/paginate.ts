@@ -158,7 +158,6 @@ export function packTrack(
       const L = b.lines;
       let enLine = 0;
       let zhLine = 0;
-      let n = 0;
       const enOff = (k: number) => (k <= 0 ? 0 : L.enEnds[k - 1]);
       const zhOff = (k: number) => (k <= 0 ? 0 : L.zhEnds[k - 1]);
 
@@ -217,7 +216,6 @@ export function packTrack(
           },
         });
         fill += h;
-        n++;
         markPlaced(b, pages.length - 1, fragTop);
 
         if (enLine >= L.enEnds.length && zhLine >= L.zhEnds.length) break;

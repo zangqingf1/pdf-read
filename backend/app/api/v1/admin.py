@@ -17,11 +17,16 @@ from app.schemas.admin import (
     AdminBatchDeleteResponse,
     AdminDocumentItem,
     AdminDocumentListResponse,
+    AdminQuoteCreateRequest,
+    AdminQuoteItem,
+    AdminQuoteListResponse,
+    AdminQuoteUpdateRequest,
     AdminStats,
     AdminUserItem,
     AdminUserListResponse,
     AdminUserUpdateRequest,
 )
+from app.models.daily_quote import DailyQuote
 
 router = APIRouter()
 
@@ -141,11 +146,14 @@ async def update_user(
     if target is None:
         raise HTTPException(status_code=404, detail="User not found.")
 
-    # Prevent self-demotion
-    if target.id == admin.id and body.is_superuser is False:
+    # Prevent self-demotion / self-lockout (an admin must not remove the
+    # last usable admin account by disabling their own account).
+    if target.id == admin.id and (
+        body.is_superuser is False or body.is_active is False
+    ):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="You cannot remove your own admin privileges.",
+            detail="You cannot remove your own admin privileges or disable your own account.",
         )
 
     # Build update values
@@ -329,3 +337,103 @@ async def delete_any_document(
     await db.commit()
 
     return {"detail": "Document deleted successfully"}
+
+
+# ── Daily Quote Management ──
+
+@router.get("/quotes", response_model=AdminQuoteListResponse)
+async def list_quotes(
+    search: str = Query("", description="Search English text or author"),
+    active: bool | None = Query(None, description="Filter by active status"),
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_superuser),
+):
+    """List daily quotes with optional search, status filter and pagination."""
+    base_q = select(DailyQuote)
+    count_q = select(func.count(DailyQuote.id))
+
+    if search:
+        pattern = f"%{search}%"
+        filter_clause = DailyQuote.text_en.ilike(pattern) | DailyQuote.author.ilike(pattern)
+        base_q = base_q.where(filter_clause)
+        count_q = count_q.where(filter_clause)
+
+    if active is not None:
+        base_q = base_q.where(DailyQuote.active.is_(active))
+        count_q = count_q.where(DailyQuote.active.is_(active))
+
+    total = (await db.execute(count_q)).scalar() or 0
+
+    quotes = (
+        await db.execute(
+            base_q.order_by(DailyQuote.id.desc()).offset(offset).limit(limit)
+        )
+    ).scalars().all()
+
+    return AdminQuoteListResponse(
+        quotes=[AdminQuoteItem.from_quote(q) for q in quotes],
+        total=total,
+    )
+
+
+@router.post("/quotes", response_model=AdminQuoteItem, status_code=status.HTTP_201_CREATED)
+async def create_quote(
+    body: AdminQuoteCreateRequest,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_superuser),
+):
+    """Create a new daily quote."""
+    quote = DailyQuote(
+        text_en=body.text_en,
+        text_zh=body.text_zh,
+        author=body.author,
+        active=body.active,
+    )
+    db.add(quote)
+    await db.commit()
+    await db.refresh(quote)
+    return AdminQuoteItem.from_quote(quote)
+
+
+@router.put("/quotes/{quote_id}", response_model=AdminQuoteItem)
+async def update_quote(
+    quote_id: int,
+    body: AdminQuoteUpdateRequest,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_superuser),
+):
+    """Update a daily quote (partial update allowed)."""
+    quote = await db.get(DailyQuote, quote_id)
+    if quote is None:
+        raise HTTPException(status_code=404, detail="Quote not found.")
+
+    if body.text_en is not None:
+        quote.text_en = body.text_en
+    if body.text_zh is not None:
+        quote.text_zh = body.text_zh
+    if body.author is not None:
+        quote.author = body.author
+    if body.active is not None:
+        quote.active = body.active
+
+    await db.commit()
+    await db.refresh(quote)
+    return AdminQuoteItem.from_quote(quote)
+
+
+@router.delete("/quotes/{quote_id}")
+async def delete_quote(
+    quote_id: int,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_superuser),
+):
+    """Delete a daily quote."""
+    quote = await db.get(DailyQuote, quote_id)
+    if quote is None:
+        raise HTTPException(status_code=404, detail="Quote not found.")
+
+    await db.delete(quote)
+    await db.commit()
+    return {"detail": "Quote deleted successfully"}

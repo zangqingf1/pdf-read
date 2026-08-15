@@ -78,7 +78,7 @@ export default function ApiKeyModal({ open, onClose }: Props) {
             <circle cx="12" cy="12" r="10" />
             <path d="M12 16v-4M12 8h.01" />
           </svg>
-          密钥仅保存在浏览器本地，不会上传到服务器
+          密钥保存在浏览器本地；调用 AI/OCR 服务时会随请求发送到服务器，服务器不会保存密钥
         </span>
       </div>
 

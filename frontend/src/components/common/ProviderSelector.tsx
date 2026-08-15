@@ -16,7 +16,7 @@ interface Props {
   onChange: (provider: AIProvider) => void;
 }
 
-export function hasProviderKey(provider: AIProvider): boolean {
+export function hasProviderKey(_provider: AIProvider): boolean {
   return !!getStoredDeepseekKey();
 }
 

@@ -27,6 +27,9 @@ class Paragraph(Base):
     text_zh: Mapped[str | None] = mapped_column(Text)
     summary: Mapped[str | None] = mapped_column(Text)
     page_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # MinerU 布局坐标（PDF 源）：JSON {"box":[x1,y1,x2,y2], "pts_w":.., "pts_h":..}
+    # box 为 MinerU 渲染图像像素坐标；pts_w/pts_h 为该页 PDF 点数尺寸（pypdf mediabox）
+    bbox_json: Mapped[str | None] = mapped_column(Text)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now()

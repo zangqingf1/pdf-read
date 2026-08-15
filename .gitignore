@@ -51,6 +51,16 @@ logs/
 backend/alembic/versions/*.pyc
 
 # Local debug / test artifacts (probes, dumps, repros)
+.npmcache/
+_probe.err
+_probe.out
+backend/_tmp_query_urls.py
+check_new_prompt.sh
+verify_module.py
+verify_new_prompt.sh
+deploy.tar.gz
+download-whale.mjs
+fetch-deep-whale.cjs
 backend/_recovered.txt
 frontend/debug_bundle.js
 frontend/dom_dump.txt

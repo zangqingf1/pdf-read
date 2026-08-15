@@ -23,6 +23,9 @@ class Settings(BaseSettings):
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 10080  # 7 days
 
+    # Redis / Celery
+    REDIS_URL: str = "redis://localhost:6379/0"
+
     # ── Email verification codes (SMTP) ──
     # SMTP 未配置时：开发环境（ENVIRONMENT=development）走 console 兜底
     # （验证码打印到日志并在 API 响应返回 dev_code），生产环境返回 503。
@@ -98,11 +101,16 @@ class Settings(BaseSettings):
 
         A publicly-known signing key lets anyone forge JWTs (including admin
         tokens), so the app must refuse to boot rather than silently run
-        insecure. Development environments are exempt.
+        insecure. JWT_SECRET_KEY falls back to SECRET_KEY, so both are
+        validated. Development environments are exempt.
         """
+        jwt_secret = self.JWT_SECRET_KEY or self.SECRET_KEY
         if (
             self.ENVIRONMENT.lower() != "development"
-            and self.SECRET_KEY in _INSECURE_SECRETS
+            and (
+                self.SECRET_KEY in _INSECURE_SECRETS
+                or jwt_secret in _INSECURE_SECRETS
+            )
         ):
             raise ValueError(
                 "SECRET_KEY must be set to a random value in production "

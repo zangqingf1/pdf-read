@@ -7,9 +7,12 @@ import uuid
 from fastapi import APIRouter, HTTPException, Depends
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select, delete
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.deps import get_current_user
+from app.config import settings
 from app.database import get_db
 from app.models.document import Document
 from app.models.sentence_analysis import SentenceAnalysis
@@ -23,6 +26,37 @@ from app.services.ai_service import create_ai_service, resolve_prompt_overrides
 
 router = APIRouter()
 _logger = logging.getLogger(__name__)
+
+
+def _sentence_upsert_stmt(
+    document_id: str,
+    paragraph_index: int,
+    sentence_index: int,
+    values: dict,
+):
+    """Dialect-neutral upsert keyed by (document_id, paragraph_index, sentence_index)."""
+    payload = {
+        "document_id": document_id,
+        "paragraph_index": paragraph_index,
+        "sentence_index": sentence_index,
+        **values,
+    }
+    if "sqlite" in settings.DATABASE_URL:
+        stmt = sqlite_insert(SentenceAnalysis).values(**payload)
+    else:
+        stmt = pg_insert(SentenceAnalysis).values(**payload)
+    excluded = stmt.excluded
+    return stmt.on_conflict_do_update(
+        index_elements=[
+            SentenceAnalysis.document_id,
+            SentenceAnalysis.paragraph_index,
+            SentenceAnalysis.sentence_index,
+        ],
+        set_={
+            "sentence_text": excluded.sentence_text,
+            "structure_json": excluded.structure_json,
+        },
+    )
 
 
 async def _verify_document_ownership(
@@ -51,34 +85,23 @@ async def _persist_analyses(
         sent_index = entry.get("sentence_index", 0)
         sentence_text = entry.get("sentence_text", "")
 
-        # Check if an analysis already exists for this tuple
-        stmt = select(SentenceAnalysis).where(
-            SentenceAnalysis.document_id == document_id,
-            SentenceAnalysis.paragraph_index == para_index,
-            SentenceAnalysis.sentence_index == sent_index,
-        )
-        result = await db.execute(stmt)
-        existing = result.scalars().first()
-
         # Build the JSON to store — content is raw markdown from AI
         content = entry.get("content", "")
         structure_json = json.dumps(
             {"content": content},
             ensure_ascii=False,
         )
-
-        if existing:
-            existing.sentence_text = sentence_text
-            existing.structure_json = structure_json
-        else:
-            new_analysis = SentenceAnalysis(
-                document_id=document_id,
-                paragraph_index=para_index,
-                sentence_index=sent_index,
-                sentence_text=sentence_text,
-                structure_json=structure_json,
+        await db.execute(
+            _sentence_upsert_stmt(
+                document_id,
+                para_index,
+                sent_index,
+                {
+                    "sentence_text": sentence_text,
+                    "structure_json": structure_json,
+                },
             )
-            db.add(new_analysis)
+        )
 
     await db.commit()
 

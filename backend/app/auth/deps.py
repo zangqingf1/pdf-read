@@ -65,6 +65,21 @@ async def get_current_user(
             detail="User account is deactivated.",
         )
 
+    # Reject tokens issued before a password reset. Legacy tokens without a
+    # version claim are accepted only while the account has never been bumped.
+    token_version = payload.get("ver")
+    if token_version is None:
+        if user.token_version != 0:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Token is no longer valid. Please log in again.",
+            )
+    elif token_version != user.token_version:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token is no longer valid. Please log in again.",
+        )
+
     return user
 
 

@@ -1,11 +1,13 @@
 import { useRef, useState, useCallback } from 'react';
 import type { ParagraphData } from '../components/review/EditableParagraph';
+import type { ParagraphLayoutItem } from '../utils/pdfBbox';
 
 // ── Types ───────────────────────────────────────────────────────────
 
 interface UndoableSnapshot {
   paragraphs: ParagraphData[];
   dirtyIndices: number[];
+  layouts: ParagraphLayoutItem[];
 }
 
 const DEFAULT_MAX_HISTORY = 50;
@@ -31,7 +33,7 @@ export function useUndoRedo(maxHistory: number = DEFAULT_MAX_HISTORY) {
    * present, the call is silently ignored.
    */
   const pushSnapshot = useCallback(
-    (paragraphs: ParagraphData[], dirtySet: Set<number>) => {
+    (paragraphs: ParagraphData[], dirtySet: Set<number>, layouts: ParagraphLayoutItem[]) => {
       const dirtyArr = Array.from(dirtySet).sort();
 
       // Build a quick fingerprint — avoid pushing a duplicate present
@@ -54,6 +56,9 @@ export function useUndoRedo(maxHistory: number = DEFAULT_MAX_HISTORY) {
       const snapshot: UndoableSnapshot = {
         paragraphs: paragraphs.map((p) => ({ ...p })), // shallow-clone each paragraph
         dirtyIndices: dirtyArr,
+        // 布局框与段落同源（删除/合并时同步变），必须随快照保存，
+        // 否则 undo/redo 后左侧解析框与右侧文本对应关系会错乱
+        layouts: layouts.map((l) => ({ ...l, layout: { ...l.layout } })),
       };
 
       // Archive previous present → past

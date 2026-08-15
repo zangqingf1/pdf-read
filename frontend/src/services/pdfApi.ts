@@ -19,11 +19,22 @@ export interface PDFStatusResponse {
   file_ext?: string | null;
 }
 
+/** MinerU 布局框：box 为渲染图像像素 [x1,y1,x2,y2]，pts_w/pts_h 为该页 PDF 点数尺寸 */
+export interface PdfLayout {
+  box: number[];
+  pts_w: number;
+  pts_h: number;
+  /** 该页 MinerU 渲染缩放（图像像素/PDF 点），旧数据可能缺失 */
+  scale?: number;
+}
+
 export interface ParagraphResult {
   index: number;
   text: string;
   text_zh?: string | null;
   page_number?: number | null;
+  /** PDF 源的 MinerU 布局框；非 PDF / 旧文档为 null */
+  layout?: PdfLayout | null;
 }
 
 export interface WordAnalysisItem {
@@ -224,8 +235,12 @@ export async function batchDeleteDocuments(
   return data;
 }
 
-export async function retryDocument(taskId: string): Promise<PDFUploadResponse> {
-  const { data } = await api.post<PDFUploadResponse>(`/pdf/retry/${taskId}`);
+export async function retryDocument(taskId: string, mineruToken?: string): Promise<PDFUploadResponse> {
+  const body: Record<string, string> = {};
+  if (mineruToken) {
+    body.mineru_token = mineruToken;
+  }
+  const { data } = await api.post<PDFUploadResponse>(`/pdf/retry/${taskId}`, body);
   return data;
 }
 

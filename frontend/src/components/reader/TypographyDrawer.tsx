@@ -1,4 +1,4 @@
-import { useEffect, useCallback, useRef } from 'react';
+import { useEffect, useCallback, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useReaderStore, BG_COLORS, FONT_FAMILIES, LINE_HEIGHTS, FONT_SIZE_MIN, FONT_SIZE_MAX, WORD_PANEL_FONT_SIZE_MIN, WORD_PANEL_FONT_SIZE_MAX } from '../../stores/readerStore';
 
@@ -6,6 +6,8 @@ interface TypographyDrawerProps {
   open: boolean;
   onClose: () => void;
 }
+
+const CLOSE_ANIM_MS = 300;
 
 export default function TypographyDrawer({ open, onClose }: TypographyDrawerProps) {
   const {
@@ -16,42 +18,76 @@ export default function TypographyDrawer({ open, onClose }: TypographyDrawerProp
   } = useReaderStore();
   const overlayRef = useRef<HTMLDivElement>(null);
 
+  // ── 两阶段渲染：先播放滑出动画，动画结束再卸载 ──
+  const [rendered, setRendered] = useState(open);
+  const [closing, setClosing] = useState(false);
+
+  useEffect(() => {
+    if (open) {
+      setRendered(true);
+      setClosing(false);
+    } else if (rendered) {
+      setClosing(true);
+      const t = setTimeout(() => {
+        setRendered(false);
+        setClosing(false);
+      }, CLOSE_ANIM_MS);
+      return () => clearTimeout(t);
+    }
+  }, [open, rendered]);
+
+  const handleClose = useCallback(() => {
+    if (!closing) onClose();
+  }, [closing, onClose]);
+
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape') handleClose();
     },
-    [onClose]
+    [handleClose]
   );
 
   useEffect(() => {
     if (open) {
       document.addEventListener('keydown', handleKeyDown);
-      document.body.style.overflow = 'hidden';
     }
     return () => {
       document.removeEventListener('keydown', handleKeyDown);
-      document.body.style.overflow = '';
     };
   }, [open, handleKeyDown]);
 
+  // 背景滚动锁定跟随 rendered（关闭动画期间保持锁定，动画结束卸载后才恢复），
+  // 并用 paddingRight 补偿滚动条宽度，避免开合时整页位移/闪动。
+  useEffect(() => {
+    if (!rendered) return;
+    const scrollbarWidth = window.innerWidth - document.documentElement.clientWidth;
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    document.body.style.paddingRight = `${scrollbarWidth}px`;
+    return () => {
+      document.body.style.overflow = prevOverflow;
+      document.body.style.paddingRight = '';
+    };
+  }, [rendered]);
+
   const handleOverlayClick = (e: React.MouseEvent) => {
-    if (e.target === overlayRef.current) onClose();
+    if (e.target === overlayRef.current) handleClose();
   };
 
-  if (!open) return null;
+  if (!rendered) return null;
 
   return createPortal(
     <div
       ref={overlayRef}
       onClick={handleOverlayClick}
-      className="fixed inset-0 z-50 flex justify-end bg-black/20 animate-fade-in"
+      className={`fixed inset-0 z-50 flex justify-end bg-black/20 ${closing ? 'animate-fade-out' : 'animate-fade-in'}`}
     >
-      <div className="w-[320px] h-full bg-surface-overlay shadow-elevated animate-slide-in-right flex flex-col overflow-hidden">
+      <div className={`w-[320px] h-full bg-surface-overlay shadow-elevated flex flex-col overflow-hidden ${closing ? 'animate-slide-out-right' : 'animate-slide-in-right'}`}>
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-hairline-soft shrink-0">
           <h3 className="text-lg font-display font-medium text-ink">阅读排版</h3>
           <button
-            onClick={onClose}
+            onClick={handleClose}
             className="inline-flex items-center justify-center w-8 h-8 rounded-md text-muted hover:text-ink hover:bg-surface-card transition-colors"
             aria-label="关闭"
           >

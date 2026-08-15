@@ -24,6 +24,7 @@ edge-tts==7.2.8
 # Document Processing
 python-docx==1.1.2
 pypdf==4.3.1
+Pillow==10.4.0  # 头像解码/重编码，剥离 polyglot 载荷
 
 # Data Validation
 pydantic==2.7.4

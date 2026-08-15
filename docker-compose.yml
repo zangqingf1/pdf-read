@@ -17,8 +17,8 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     environment:
-      - DATABASE_URL=postgresql+asyncpg://user:${DB_PASSWORD:-pdfreader_pass}@db:5432/pdfreader
-      - DATABASE_URL_SYNC=postgresql://user:${DB_PASSWORD:-pdfreader_pass}@db:5432/pdfreader
+      - DATABASE_URL=postgresql+asyncpg://user:${DB_PASSWORD:?Set DB_PASSWORD in .env}@db:5432/pdfreader
+      - DATABASE_URL_SYNC=postgresql://user:${DB_PASSWORD:?Set DB_PASSWORD in .env}@db:5432/pdfreader
       - REDIS_URL=redis://redis:6379/0
       - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
       - DEEPSEEK_BASE_URL=${DEEPSEEK_BASE_URL:-https://api.deepseek.com/v1}
@@ -26,7 +26,7 @@ services:
       - MINERU_API_TOKEN=${MINERU_API_TOKEN}
       - MINERU_API_BASE=${MINERU_API_BASE:-https://mineru.net}
       - PADDLEOCR_MODEL_PATH=/models/paddleocr
-      - SECRET_KEY=${SECRET_KEY:-change-me-in-production}
+      - SECRET_KEY=${SECRET_KEY:?Set SECRET_KEY in .env}
       - ENVIRONMENT=${ENVIRONMENT:-production}
       - DEBUG=${DEBUG:-false}
       - MAX_UPLOAD_SIZE_MB=${MAX_UPLOAD_SIZE_MB:-50}
@@ -66,7 +66,7 @@ services:
       dockerfile: Dockerfile
     command: celery -A app.tasks.celery_app worker -l info -c 2
     environment:
-      - DATABASE_URL=postgresql+asyncpg://user:${DB_PASSWORD:-pdfreader_pass}@db:5432/pdfreader
+      - DATABASE_URL=postgresql+asyncpg://user:${DB_PASSWORD:?Set DB_PASSWORD in .env}@db:5432/pdfreader
       - REDIS_URL=redis://redis:6379/0
       - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
       - DEEPSEEK_BASE_URL=${DEEPSEEK_BASE_URL:-https://api.deepseek.com/v1}
@@ -92,7 +92,7 @@ services:
     environment:
       POSTGRES_DB: pdfreader
       POSTGRES_USER: user
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-pdfreader_pass}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in .env}
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -105,6 +105,7 @@ services:
   # ========== Redis ==========
   redis:
     image: redis:7-alpine
+    # Redis 仅在内网可达（未对外暴露端口）；生产环境建议再配置 requirepass。
     volumes:
       - redisdata:/data
     restart: unless-stopped

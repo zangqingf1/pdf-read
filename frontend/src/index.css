@@ -663,6 +663,11 @@
   background-color: #fdf3ef;
 }
 
+/* 句子外层容器（朗读按钮与可选中文本分离，选中/高亮不含播放按钮） */
+.sentence-wrap {
+  display: inline;
+}
+
 /* ── 朗读卡拉OK高亮 ── */
 .tts-current-sentence {
   background-color: rgba(200, 116, 85, 0.12);
@@ -685,15 +690,15 @@
   margin-right: 4px;
   vertical-align: middle;
   border-radius: 4px;
-  color: var(--primary);
-  background-color: rgba(200, 116, 85, 0.1);
+  color: var(--muted-soft);
+  background-color: rgba(108, 106, 100, 0.12);
   opacity: 0;
   transition: opacity 0.15s ease, background-color 0.15s ease;
 }
 .sentence-play-btn:hover {
-  background-color: rgba(200, 116, 85, 0.2);
+  background-color: rgba(108, 106, 100, 0.22);
 }
-.sentence-token:hover .sentence-play-btn {
+.sentence-wrap:hover .sentence-play-btn {
   opacity: 1;
 }
 @media (pointer: coarse) {
@@ -705,12 +710,36 @@
 /* ── Paragraph block ── */
 .paragraph-block {
   scroll-margin-top: 24px;
-  padding: 14px 0;
-  border-bottom: 1px solid var(--hairline-soft);
+  padding: 8px 0;
   transition: background-color 0.3s ease;
 }
-.paragraph-block:last-child {
-  border-bottom: none;
+
+/* ── 段尾「展开翻译」图标按钮（谷歌翻译 文A 图标，淡灰，约与正文字号同大）── */
+.translate-toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.2em;
+  height: 1.2em;
+  margin-left: 6px;
+  vertical-align: middle;
+  flex-shrink: 0;
+  border-radius: 9999px;
+  border: 1px solid rgba(150, 148, 142, 0.25);
+  background-color: rgba(150, 148, 142, 0.1);
+  color: #97948d;
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease, background-color 0.15s ease;
+}
+.translate-toggle-btn svg {
+  width: 0.7em;
+  height: 0.7em;
+}
+.translate-toggle-btn:hover,
+.translate-toggle-btn[aria-expanded='true'] {
+  color: #6c6a64;
+  border-color: rgba(150, 148, 142, 0.45);
+  background-color: rgba(150, 148, 142, 0.18);
 }
 
 /* ── Paragraph flash animation ── */
@@ -720,6 +749,24 @@
 @keyframes paragraph-flash-anim {
   0% { background-color: var(--surface-card); }
   100% { background-color: transparent; }
+}
+
+/* 校对页：点击 PDF 解析框后高亮对应段落（暖黄闪烁） */
+.review-paragraph-flash {
+  animation: review-paragraph-flash-anim 1.6s ease-out;
+}
+@keyframes review-paragraph-flash-anim {
+  0% { background-color: rgba(250, 204, 21, 0.4); }
+  100% { background-color: transparent; }
+}
+
+/* 校对页：点击编辑区段落后高亮对应解析框（蓝色闪烁） */
+.layout-box-flash {
+  animation: layout-box-flash-anim 1.6s ease-out;
+}
+@keyframes layout-box-flash-anim {
+  0% { box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.7); background-color: rgba(59, 130, 246, 0.35); }
+  100% { box-shadow: 0 0 0 0 transparent; background-color: transparent; }
 }
 
 /* ── Word/Sentence card flash ── */
@@ -875,6 +922,19 @@
 }
 .animate-sheet-slide-up {
   animation: sheet-slide-up 0.3s ease-out;
+}
+
+/* ── Slide-down animation for mobile bottom sheets (closing) ── */
+@keyframes sheet-slide-down {
+  from {
+    transform: translateY(0);
+  }
+  to {
+    transform: translateY(100%);
+  }
+}
+.animate-sheet-slide-down {
+  animation: sheet-slide-down 0.3s ease-in;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════

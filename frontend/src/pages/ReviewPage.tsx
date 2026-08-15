@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { generateUUID } from '../utils/uuid';
 import { useParams, useNavigate } from 'react-router-dom';
-import { getPDFResult, updateParagraphs, deleteParagraph, mergeParagraphs, reorderParagraphs } from '../services/pdfApi';
+import { getPDFResult, updateParagraphs, deleteParagraph, mergeParagraphs } from '../services/pdfApi';
 import { useSplitPane } from '../hooks/useSplitPane';
 import { useResponsiveBreakpoint } from '../hooks/useResponsiveBreakpoint';
 import { useUndoRedo } from '../hooks/useUndoRedo';
@@ -12,6 +12,8 @@ import Button from '../components/ui/Button';
 import Modal from '../components/ui/Modal';
 import Spinner from '../components/ui/Spinner';
 import type { ParagraphData } from '../components/review/EditableParagraph';
+import type { ParagraphLayoutItem } from '../utils/pdfBbox';
+import { mergeLayoutItems } from '../utils/pdfBbox';
 
 export default function ReviewPage() {
   const { id } = useParams<{ id: string }>();
@@ -29,6 +31,16 @@ export default function ReviewPage() {
   const [paragraphs, setParagraphs] = useState<ParagraphData[]>([]);
   const [dirtySet, setDirtySet] = useState<Set<number>>(new Set());
   const [saving, setSaving] = useState(false);
+
+  // ── PDF 布局框 / 悬浮联动 ──
+  const [paragraphLayouts, setParagraphLayouts] = useState<ParagraphLayoutItem[]>([]);
+  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
+  /** 点击 PDF 解析框 → 编辑区对应段落闪烁高亮 */
+  const [flashParagraph, setFlashParagraph] = useState<{ index: number; stamp: number } | null>(null);
+  /** 点击编辑区段落 → 请求 PDF 预览滚动居中对应解析框 */
+  const [focusRequest, setFocusRequest] = useState<{ index: number; t: number } | null>(null);
+  const flashStampRef = useRef(0);
+  const focusTickRef = useRef(0);
 
   // ── Confirm dialog state ──
   const [confirmDialog, setConfirmDialog] = useState<{
@@ -50,8 +62,8 @@ export default function ReviewPage() {
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastPushedRef = useRef<string>('');
   const latestParagraphsRef = useRef<ParagraphData[]>([]);
+  const latestLayoutsRef = useRef<ParagraphLayoutItem[]>([]);
   const latestDirtySetRef = useRef<Set<number>>(new Set());
-  const savedOrderRef = useRef<string[]>([]);
 
   // ── Split pane / mobile tab ──
   const { leftWidth, isDragging, handleDividerMouseDown, handleDividerTouchStart } = useSplitPane(0.60);
@@ -83,6 +95,18 @@ export default function ReviewPage() {
           page_number: p.page_number ?? null,
         }));
 
+        // PDF 源布局框（MinerU bbox），供预览页绘制解析框
+        const layouts: ParagraphLayoutItem[] = result.paragraphs
+          .filter((p) => p.layout)
+          .map((p) => ({
+            index: p.index,
+            page_number: p.page_number ?? null,
+            layout: p.layout!,
+            text: p.text,
+          }));
+        setParagraphLayouts(layouts);
+        latestLayoutsRef.current = layouts;
+
         const originals = new Map<number, string>();
         for (const p of paras) {
           originals.set(p.index, p.text_en);
@@ -93,8 +117,7 @@ export default function ReviewPage() {
         setDirtySet(new Set());
         latestParagraphsRef.current = paras;
         latestDirtySetRef.current = new Set();
-        savedOrderRef.current = paras.map((p) => p.cid);
-        pushSnapshot(paras, new Set());
+        pushSnapshot(paras, new Set(), layouts);
         lastPushedRef.current = '';
       } catch (err: any) {
         if (!cancelled) {
@@ -120,7 +143,7 @@ export default function ReviewPage() {
 
   // ── Debounced snapshot ──
   const scheduleTextSnapshot = useCallback(
-    (paragraphs: ParagraphData[], dirtySet: Set<number>) => {
+    (_paragraphs: ParagraphData[], _dirtySet: Set<number>) => {
       if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
       debounceTimerRef.current = setTimeout(() => {
         const currentParas = latestParagraphsRef.current;
@@ -128,7 +151,7 @@ export default function ReviewPage() {
         const key = JSON.stringify({ paras: currentParas, dirty: Array.from(currentDirty) });
         if (key !== lastPushedRef.current) {
           lastPushedRef.current = key;
-          pushSnapshot(currentParas, currentDirty);
+          pushSnapshot(currentParas, currentDirty, latestLayoutsRef.current);
         }
       }, 800);
     },
@@ -144,7 +167,7 @@ export default function ReviewPage() {
       const key = JSON.stringify({ paras: currentParas, dirty: Array.from(currentDirty) });
       if (key !== lastPushedRef.current) {
         lastPushedRef.current = key;
-        pushSnapshot(currentParas, currentDirty);
+        pushSnapshot(currentParas, currentDirty, latestLayoutsRef.current);
       }
     }
   }, [pushSnapshot]);
@@ -184,14 +207,25 @@ export default function ReviewPage() {
       cancelPendingSnapshot();
       try {
         await deleteParagraph(id, index);
-        setParagraphs((prev) => {
-          const filtered = prev.filter((p) => p.index !== index);
-          const reindexed = filtered.map((p) =>
-            p.index > index ? { ...p, index: p.index - 1 } : p
-          );
-          latestParagraphsRef.current = reindexed;
-          return reindexed;
-        });
+
+        // 段落重排 + 布局框同步重排（删除该段的框，其后的索引 -1）
+        const reindexed = latestParagraphsRef.current
+          .filter((p) => p.index !== index)
+          .map((p) => (p.index > index ? { ...p, index: p.index - 1 } : p));
+        setParagraphs(reindexed);
+        latestParagraphsRef.current = reindexed;
+
+        const nextLayouts = latestLayoutsRef.current
+          .filter((l) => l.index !== index)
+          .map((l) => (l.index > index ? { ...l, index: l.index - 1 } : l));
+        setParagraphLayouts(nextLayouts);
+        latestLayoutsRef.current = nextLayouts;
+
+        // 重排后旧的高亮/定位索引失效，清空避免错位
+        setHoveredIndex(null);
+        setFlashParagraph(null);
+        setFocusRequest(null);
+
         const newOriginals = new Map<number, string>();
         for (const [origIdx, text] of originalTexts.current.entries()) {
           if (origIdx === index) continue;
@@ -205,9 +239,8 @@ export default function ReviewPage() {
             next.add(i > index ? i - 1 : i);
           }
           latestDirtySetRef.current = next;
-          const paras = latestParagraphsRef.current;
-          lastPushedRef.current = JSON.stringify({ paras, dirty: Array.from(next) });
-          pushSnapshot(paras, next);
+          lastPushedRef.current = JSON.stringify({ paras: reindexed, dirty: Array.from(next) });
+          pushSnapshot(reindexed, next, nextLayouts);
           return next;
         });
       } catch (err: any) {
@@ -228,24 +261,43 @@ export default function ReviewPage() {
   const handleMergeDown = useCallback(
     async (index: number) => {
       if (!id) return;
-      const nextPara = paragraphs.find((p) => p.index === index + 1);
+      const currentParas = latestParagraphsRef.current;
+      const nextPara = currentParas.find((p) => p.index === index + 1);
       if (!nextPara) return;
       cancelPendingSnapshot();
       try {
         await mergeParagraphs(id, index, index + 1);
-        setParagraphs((prev) => {
-          const current = prev.find((p) => p.index === index);
-          if (!current) return prev;
-          const merged = prev
-            .filter((p) => p.index !== index + 1)
-            .map((p) => {
-              if (p.index === index) return { ...p, text_en: current.text_en + ' ' + nextPara.text_en };
-              if (p.index > index + 1) return { ...p, index: p.index - 1 };
-              return p;
-            });
-          latestParagraphsRef.current = merged;
-          return merged;
-        });
+
+        const merged = currentParas
+          .filter((p) => p.index !== index + 1)
+          .map((p) => {
+            if (p.index === index) return { ...p, text_en: p.text_en + ' ' + nextPara.text_en };
+            if (p.index > index + 1) return { ...p, index: p.index - 1 };
+            return p;
+          });
+        setParagraphs(merged);
+        latestParagraphsRef.current = merged;
+
+        // 布局框同步合并：两框并集（同页）→ 单框，其后的索引 -1
+        const first = latestLayoutsRef.current.find((l) => l.index === index);
+        const second = latestLayoutsRef.current.find((l) => l.index === index + 1);
+        const combined: ParagraphLayoutItem[] = [];
+        if (first) combined.push(second ? mergeLayoutItems(first, second) : first);
+        else if (second) combined.push({ ...second, index });
+        const nextLayouts = [
+          ...combined,
+          ...latestLayoutsRef.current
+            .filter((l) => l.index !== index && l.index !== index + 1)
+            .map((l) => (l.index > index + 1 ? { ...l, index: l.index - 1 } : l)),
+        ];
+        setParagraphLayouts(nextLayouts);
+        latestLayoutsRef.current = nextLayouts;
+
+        // 重排后旧的高亮/定位索引失效，清空避免错位
+        setHoveredIndex(null);
+        setFlashParagraph(null);
+        setFocusRequest(null);
+
         const newOriginals = new Map<number, string>();
         for (const [origIdx, text] of originalTexts.current.entries()) {
           if (origIdx === index + 1) continue;
@@ -263,7 +315,7 @@ export default function ReviewPage() {
             else next.add(i);
           }
           latestDirtySetRef.current = next;
-          pushSnapshot(latestParagraphsRef.current, next);
+          pushSnapshot(merged, next, nextLayouts);
           return next;
         });
       } catch (err: any) {
@@ -277,99 +329,66 @@ export default function ReviewPage() {
         });
       }
     },
-    [id, paragraphs, pushSnapshot, cancelPendingSnapshot]
+    [id, pushSnapshot, cancelPendingSnapshot]
   );
 
-  // ── Reorder ──
-  const handleReorder = useCallback(
-    (activeCid: string, overCid: string) => {
-      if (activeCid === overCid) return;
-      cancelPendingSnapshot();
-      setParagraphs((prev) => {
-        const oldIdx = prev.findIndex((p) => p.cid === activeCid);
-        const newIdx = prev.findIndex((p) => p.cid === overCid);
-        if (oldIdx === -1 || newIdx === -1) return prev;
-        const next = [...prev];
-        const [moved] = next.splice(oldIdx, 1);
-        next.splice(newIdx, 0, moved);
-        latestParagraphsRef.current = next;
-        pushSnapshot(next, latestDirtySetRef.current);
-        return next;
-      });
+  // ── 悬浮联动（高亮，不跳转） ──
+  const handleHover = useCallback((index: number, hovering: boolean) => {
+    setHoveredIndex((prev) => (hovering ? index : prev === index ? null : prev));
+  }, []);
+
+  /** 悬浮 PDF 上的布局框 → 联动高亮编辑区对应段落 */
+  const handleBoxHover = useCallback((index: number | null) => {
+    setHoveredIndex(index);
+  }, []);
+
+  /** 点击 PDF 上的布局框 → 编辑区段落滚动居中并闪烁高亮 */
+  const handleBoxSelect = useCallback((index: number) => {
+    document
+      .querySelector(`[data-paragraph-index="${index}"]`)
+      ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    flashStampRef.current += 1;
+    setFlashParagraph({ index, stamp: flashStampRef.current });
+  }, []);
+
+  /** 点击编辑区段落 → PDF 预览滚动居中对应解析框 */
+  const handleParagraphSelect = useCallback(
+    (index: number) => {
+      const hasBox = paragraphLayouts.some((l) => l.index === index);
+      if (!hasBox) return;
+      focusTickRef.current += 1;
+      setFocusRequest({ index, t: focusTickRef.current });
+      // 移动端：切到 PDF 标签页展示解析框
+      if (isMobile && isPdfSource) setMobileTab('pdf');
     },
-    [pushSnapshot, cancelPendingSnapshot],
+    [paragraphLayouts, isMobile, isPdfSource]
   );
 
-  const reorderPending = (() => {
-    const currentOrder = latestParagraphsRef.current.map((p) => p.cid);
-    if (currentOrder.length !== savedOrderRef.current.length) return true;
-    return currentOrder.some((cid, i) => cid !== savedOrderRef.current[i]);
-  })();
+  // 解析框闪烁高亮自动熄灭
+  useEffect(() => {
+    if (!flashParagraph) return;
+    const timer = setTimeout(() => setFlashParagraph(null), 1600);
+    return () => clearTimeout(timer);
+  }, [flashParagraph]);
 
   // ── Save ──
   const handleSave = useCallback(async () => {
     if (!id) return;
-    const needsReorder =
-      latestParagraphsRef.current.length > 0 &&
-      latestParagraphsRef.current.some((p, i) => savedOrderRef.current[i] !== p.cid);
-    const needsTextSave = dirtySet.size > 0;
-    if (!needsReorder && !needsTextSave) return;
+    if (dirtySet.size === 0) return;
 
     setSaving(true);
-    let currentDirtySet = dirtySet;
-    let currentParagraphs = paragraphs;
-
     try {
-      if (needsReorder) {
-        const orderedIndices = latestParagraphsRef.current.map((p) => p.index);
-        await reorderParagraphs(id, orderedIndices);
+      const dirtyItems = Array.from(dirtySet)
+        .map((index) => {
+          const para = paragraphs.find((p) => p.index === index);
+          return para ? { index, text_en: para.text_en } : null;
+        })
+        .filter(Boolean) as { index: number; text_en: string }[];
 
-        const cidToOriginal = new Map<string, string>();
-        for (const [idx, text] of originalTexts.current.entries()) {
-          const para = latestParagraphsRef.current.find((p) => p.index === idx);
-          if (para) cidToOriginal.set(para.cid, text);
-        }
-        const cidToDirty = new Map<string, boolean>();
-        for (const idx of dirtySet) {
-          const para = latestParagraphsRef.current.find((p) => p.index === idx);
-          if (para) cidToDirty.set(para.cid, true);
-        }
-
-        const reindexed = latestParagraphsRef.current.map((p, i) => ({ ...p, index: i }));
-        const newOriginals = new Map<number, string>();
-        for (const para of reindexed) {
-          const orig = cidToOriginal.get(para.cid);
-          newOriginals.set(para.index, orig !== undefined ? orig : para.text_en);
-        }
-        originalTexts.current = newOriginals;
-
-        const newDirty = new Set<number>();
-        for (const para of reindexed) {
-          if (cidToDirty.has(para.cid)) newDirty.add(para.index);
-        }
-
-        setParagraphs(reindexed);
-        latestParagraphsRef.current = reindexed;
-        setDirtySet(newDirty);
-        latestDirtySetRef.current = newDirty;
-        savedOrderRef.current = reindexed.map((p) => p.cid);
-        currentDirtySet = newDirty;
-        currentParagraphs = reindexed;
-      }
-
-      if (needsTextSave) {
-        const dirtyItems = Array.from(currentDirtySet)
-          .map((index) => {
-            const para = currentParagraphs.find((p) => p.index === index);
-            return para ? { index, text_en: para.text_en } : null;
-          })
-          .filter(Boolean) as { index: number; text_en: string }[];
-
-        if (dirtyItems.length > 0) {
-          await updateParagraphs(id, dirtyItems);
-          for (const item of dirtyItems) {
-            originalTexts.current.set(item.index, item.text_en);
-          }
+      if (dirtyItems.length > 0) {
+        await updateParagraphs(id, dirtyItems);
+        for (const item of dirtyItems) {
+          originalTexts.current.set(item.index, item.text_en);
         }
       }
 
@@ -399,8 +418,10 @@ export default function ReviewPage() {
     const snapshot = undo();
     if (snapshot) {
       setParagraphs(snapshot.paragraphs);
+      setParagraphLayouts(snapshot.layouts);
       setDirtySet(new Set(snapshot.dirtyIndices));
       latestParagraphsRef.current = snapshot.paragraphs;
+      latestLayoutsRef.current = snapshot.layouts;
       latestDirtySetRef.current = new Set(snapshot.dirtyIndices);
     }
   }, [undo, flushPendingSnapshot]);
@@ -409,8 +430,10 @@ export default function ReviewPage() {
     const snapshot = redo();
     if (snapshot) {
       setParagraphs(snapshot.paragraphs);
+      setParagraphLayouts(snapshot.layouts);
       setDirtySet(new Set(snapshot.dirtyIndices));
       latestParagraphsRef.current = snapshot.paragraphs;
+      latestLayoutsRef.current = snapshot.layouts;
       latestDirtySetRef.current = new Set(snapshot.dirtyIndices);
     }
   }, [redo]);
@@ -454,7 +477,7 @@ export default function ReviewPage() {
 
   // ── Navigation ──
   const handleStartReading = useCallback(() => {
-    const unsaved = dirtySet.size > 0 || reorderPending;
+    const unsaved = dirtySet.size > 0;
     if (unsaved) {
       setConfirmDialog({
         title: '有未保存的修改',
@@ -467,10 +490,10 @@ export default function ReviewPage() {
     } else {
       navigate(`/document/${id}`);
     }
-  }, [dirtySet, id, navigate, reorderPending]);
+  }, [dirtySet, id, navigate]);
 
   const handleBack = useCallback(() => {
-    const unsaved = dirtySet.size > 0 || reorderPending;
+    const unsaved = dirtySet.size > 0;
     if (unsaved) {
       setConfirmDialog({
         title: '有未保存的修改',
@@ -483,18 +506,18 @@ export default function ReviewPage() {
     } else {
       navigate('/');
     }
-  }, [dirtySet, navigate, reorderPending]);
+  }, [dirtySet, navigate]);
 
   // ── Unsaved changes guard ──
   useEffect(() => {
-    if (dirtySet.size === 0 && !reorderPending) return;
+    if (dirtySet.size === 0) return;
     const handler = (e: BeforeUnloadEvent) => {
       e.preventDefault();
       e.returnValue = '';
     };
     window.addEventListener('beforeunload', handler);
     return () => window.removeEventListener('beforeunload', handler);
-  }, [dirtySet.size, reorderPending]);
+  }, [dirtySet.size]);
 
   // ── Render states ──
   if (loading) {
@@ -524,7 +547,7 @@ export default function ReviewPage() {
     );
   }
 
-  const hasUnsaved = dirtySet.size > 0 || reorderPending;
+  const hasUnsaved = dirtySet.size > 0;
 
   return (
     <div className="flex flex-col h-screen bg-canvas">
@@ -577,7 +600,18 @@ export default function ReviewPage() {
               {/* Tab content */}
               <div className="flex-1 min-h-0 overflow-hidden">
                 {mobileTab === 'pdf' ? (
-                  id && <PDFViewerPanel taskId={id} width={window.innerWidth} selectedPages={selectedPages} />
+                  id && (
+                    <PDFViewerPanel
+                      taskId={id}
+                      width={window.innerWidth}
+                      selectedPages={selectedPages}
+                      paragraphLayouts={paragraphLayouts}
+                      hoveredIndex={hoveredIndex}
+                      onBoxHover={handleBoxHover}
+                      onBoxSelect={handleBoxSelect}
+                      focusRequest={focusRequest}
+                    />
+                  )
                 ) : (
                   <EditableParagraphPanel
                     paragraphs={paragraphs}
@@ -585,7 +619,10 @@ export default function ReviewPage() {
                     onParagraphChange={handleParagraphChange}
                     onDelete={handleDelete}
                     onMergeDown={handleMergeDown}
-                    onReorder={handleReorder}
+                    onHover={handleHover}
+                    onSelect={handleParagraphSelect}
+                    highlightedIndex={hoveredIndex}
+                    flash={flashParagraph}
                   />
                 )}
               </div>
@@ -598,7 +635,10 @@ export default function ReviewPage() {
                 onParagraphChange={handleParagraphChange}
                 onDelete={handleDelete}
                 onMergeDown={handleMergeDown}
-                onReorder={handleReorder}
+                onHover={handleHover}
+                onSelect={handleParagraphSelect}
+                highlightedIndex={hoveredIndex}
+                flash={flashParagraph}
               />
             </div>
           )}
@@ -616,7 +656,18 @@ export default function ReviewPage() {
           {isPdfSource && (
             <>
               <div className="h-full flex-shrink-0" style={{ width: leftWidth }}>
-                {id && <PDFViewerPanel taskId={id} width={leftWidth} selectedPages={selectedPages} />}
+                {id && (
+                  <PDFViewerPanel
+                    taskId={id}
+                    width={leftWidth}
+                    selectedPages={selectedPages}
+                    paragraphLayouts={paragraphLayouts}
+                    hoveredIndex={hoveredIndex}
+                    onBoxHover={handleBoxHover}
+                    onBoxSelect={handleBoxSelect}
+                    focusRequest={focusRequest}
+                  />
+                )}
               </div>
 
               {/* Divider */}
@@ -634,15 +685,24 @@ export default function ReviewPage() {
             </>
           )}
 
-          {/* Right: editable paragraphs */}
-          <div className="flex-1 h-full overflow-hidden">
+          {/* Right: editable paragraphs（非 PDF 源无左栏，居中占 50%，避免过宽） */}
+          <div
+            className={
+              isPdfSource
+                ? 'flex-1 h-full overflow-hidden'
+                : 'w-1/2 mx-auto h-full overflow-hidden'
+            }
+          >
             <EditableParagraphPanel
               paragraphs={paragraphs}
               dirtySet={dirtySet}
               onParagraphChange={handleParagraphChange}
               onDelete={handleDelete}
               onMergeDown={handleMergeDown}
-              onReorder={handleReorder}
+              onHover={handleHover}
+              onSelect={handleParagraphSelect}
+              highlightedIndex={hoveredIndex}
+              flash={flashParagraph}
             />
           </div>
         </div>

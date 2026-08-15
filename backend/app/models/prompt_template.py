@@ -19,7 +19,7 @@ class PromptTemplate(Base):
 
     Each template *name* can have up to two rows:
     - is_default=True  → admin-defined system default
-    - is_default=False → per-user (currently unused) or legacy custom override
+    - is_default=False → legacy/admin custom override (write restricted to superuser)
 
     The ``_get_prompt_overrides`` lookup picks the most specific row first.
     """

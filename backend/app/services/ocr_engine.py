@@ -26,6 +26,7 @@ from app.services.file_types import (
     infer_model_version,
     normalize_ext,
 )
+from app.services.text_cleanup import clean_ocr_text
 
 
 @dataclass
@@ -33,6 +34,7 @@ class TextBlock:
     text: str
     page_number: int = 0
     confidence: float = 0.0
+    bbox: list[float] | None = None
 
 
 @dataclass
@@ -44,6 +46,8 @@ class ParsedDocument:
     total_pages: int = 0
     word_count: int = 0
     paragraph_page_numbers: list[int] = field(default_factory=list)
+    # Parallel to paragraphs: MinerU bbox [x1,y1,x2,y2] (render-image px) or None
+    paragraph_bboxes: list[list[float] | None] = field(default_factory=list)
 
 
 SOURCE_PATTERNS = [
@@ -62,9 +66,36 @@ MIN_PARAGRAPH_LEN = 15
 EXCLUDED_BLOCK_TYPES = {"header", "footer", "page_number"}
 
 
+def _block_bbox(block: dict) -> list[float] | None:
+    """Extract the 4-element bbox [x1,y1,x2,y2] from a MinerU block.
+
+    Some MinerU versions return 5 elements (with confidence) — only the first
+    four are kept. Non-numeric / missing bbox → None.
+    """
+    bbox = block.get("bbox")
+    if not isinstance(bbox, (list, tuple)) or len(bbox) < 4:
+        return None
+    try:
+        return [float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3])]
+    except (TypeError, ValueError):
+        return None
+
+
+def _union_bbox(boxes: list[list[float]]) -> list[float] | None:
+    """Bounding box covering all input boxes (for list items)."""
+    if not boxes:
+        return None
+    return [
+        min(b[0] for b in boxes),
+        min(b[1] for b in boxes),
+        max(b[2] for b in boxes),
+        max(b[3] for b in boxes),
+    ]
+
+
 def _content_list_to_paragraphs(
     content_list: list[dict], selected_pages: list[int] | None = None
-) -> tuple[list[str], list[int], str | None]:
+) -> tuple[list[str], list[int], str | None, list[list[float] | None]]:
     """Convert MinerU content_list.json blocks to clean paragraphs.
 
     Uses block type labels to:
@@ -78,11 +109,13 @@ def _content_list_to_paragraphs(
         selected_pages: If provided, only keep blocks whose page_idx+1
             is in this set. None means keep all pages.
 
-    Returns (paragraphs, page_numbers, title).
+    Returns (paragraphs, page_numbers, title, bboxes).
         page_numbers[i] is the 1-based page number for paragraphs[i].
+        bboxes[i] is the MinerU bbox [x1,y1,x2,y2] (render-image px) or None.
     """
     paragraphs: list[str] = []
     page_numbers: list[int] = []
+    bboxes: list[list[float] | None] = []
     title: str | None = None
     selected_set = set(selected_pages) if selected_pages else None
 
@@ -107,16 +140,25 @@ def _content_list_to_paragraphs(
         if not text:
             continue
 
-        # Clean control characters
-        text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]', '', text)
+        # Deterministic post-OCR cleanup (control chars, hyphenated line
+        # breaks, ligatures, curly quotes, NBSP, doubled punctuation, …).
+        # Idempotent — repeated parsing/retries never accumulate changes.
+        text = clean_ocr_text(text)
 
         # Handle lists: join items
         if btype == "list":
             items = block.get("list_items", [])
             if items:
                 text = "\n".join(item.get("text", "") for item in items if item.get("text"))
+                text = clean_ocr_text(text)
             if not text.strip():
                 continue
+
+        bbox = _block_bbox(block)
+        # For lists, the block-level bbox may be absent — union item bboxes
+        if btype == "list":
+            item_boxes = [_block_bbox(item) for item in block.get("list_items", [])]
+            bbox = _union_bbox([b for b in item_boxes if b]) or bbox
 
         # Handle tables: include as HTML or text dump
         if btype == "table":
@@ -124,17 +166,20 @@ def _content_list_to_paragraphs(
             if html:
                 paragraphs.append(html)
                 page_numbers.append(page_num)
+                bboxes.append(bbox)
             elif text:
                 paragraphs.append(text)
                 page_numbers.append(page_num)
+                bboxes.append(bbox)
             continue
 
         # Handle code blocks
         if btype == "code":
-            code = block.get("code_body") or text
+            code = clean_ocr_text(block.get("code_body") or text)
             if code.strip():
                 paragraphs.append(code)
                 page_numbers.append(page_num)
+                bboxes.append(bbox)
             continue
 
         # Handle equations
@@ -142,6 +187,7 @@ def _content_list_to_paragraphs(
             if text.strip():
                 paragraphs.append(f"[公式] {text}")
                 page_numbers.append(page_num)
+                bboxes.append(bbox)
             continue
 
         # --- text / title blocks ---
@@ -153,8 +199,9 @@ def _content_list_to_paragraphs(
 
         paragraphs.append(text)
         page_numbers.append(page_num)
+        bboxes.append(bbox)
 
-    return paragraphs, page_numbers, title
+    return paragraphs, page_numbers, title, bboxes
 
 
 def _markdown_to_paragraphs(
@@ -197,7 +244,7 @@ def _markdown_to_paragraphs(
         block = re.sub(r'\n+', ' ', block)
         block = re.sub(r'\s+', ' ', block).strip()
         block = re.sub(r'^#{1,6}\s+', '', block)
-        block = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]', '', block)
+        block = clean_ocr_text(block)
 
         if len(block) >= MIN_PARAGRAPH_LEN:
             paragraphs.append(block)
@@ -408,7 +455,7 @@ class OCREngine:
         numbers; falls back to markdown when content_list is unavailable.
         """
         if content_list:
-            paragraphs, page_numbers, title = _content_list_to_paragraphs(
+            paragraphs, page_numbers, title, bboxes = _content_list_to_paragraphs(
                 content_list, selected_pages
             )
             total_pages = max(page_numbers) if page_numbers else 0
@@ -417,6 +464,7 @@ class OCREngine:
             paragraphs, page_numbers, title = _markdown_to_paragraphs(
                 full_md, selected_pages
             )
+            bboxes = [None] * len(paragraphs)
             total_pages = 0
 
         source = None
@@ -429,6 +477,7 @@ class OCREngine:
         # ── Remap page numbers back to original document pages ──
         # After local extraction, MinerU sees pages 1,2,3... so its
         # page_idx values need mapping back to the user's selected pages.
+        # bbox coordinates are per-page render pixels — unaffected by remap.
         if orig_selected_pages and page_numbers:
             page_numbers = [
                 orig_selected_pages[pn - 1]
@@ -446,6 +495,7 @@ class OCREngine:
             word_count=word_count,
             total_pages=total_pages,
             paragraph_page_numbers=page_numbers,
+            paragraph_bboxes=bboxes,
         )
 
     async def _poll_batch(
