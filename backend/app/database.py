@@ -270,6 +270,285 @@ async def run_migrations():
             "ALTER TABLE paragraphs ADD COLUMN bbox_json TEXT",
         )
 
+        # ═══════════════════════════════════════════════════════════════
+        # Migration 011: vocabulary_entries — 单词本（用户级，词典释义）
+        # ═══════════════════════════════════════════════════════════════
+        await _apply(
+            "011a_vocabulary_entries",
+            "CREATE TABLE IF NOT EXISTS vocabulary_entries ("
+            "  id VARCHAR(36) NOT NULL PRIMARY KEY,"
+            "  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,"
+            "  word VARCHAR(200) NOT NULL,"
+            "  word_original VARCHAR(200) NOT NULL,"
+            "  phonetic VARCHAR(200) DEFAULT '',"
+            "  pos VARCHAR(50) DEFAULT '',"
+            "  translation TEXT DEFAULT '',"
+            "  definition_en TEXT DEFAULT '',"
+            "  source_document_id VARCHAR(36) REFERENCES documents(id) ON DELETE SET NULL,"
+            "  context_sentence TEXT,"
+            "  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,"
+            "  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,"
+            "  UNIQUE (user_id, word)"
+            ")",
+        )
+        await _apply(
+            "011b_vocab_idx_user_created",
+            "CREATE INDEX IF NOT EXISTS idx_vocab_user_created ON vocabulary_entries(user_id, created_at)",
+        )
+        await _apply(
+            "011c_vocab_idx_user_pos",
+            "CREATE INDEX IF NOT EXISTS idx_vocab_user_pos ON vocabulary_entries(user_id, pos)",
+        )
+
+        # ═══════════════════════════════════════════════════════════════
+        # Migration 012: vocabulary — multi-source + document order
+        # ═══════════════════════════════════════════════════════════════
+        await _apply(
+            "012a_vocabulary_sources",
+            "CREATE TABLE IF NOT EXISTS vocabulary_sources ("
+            "  id VARCHAR(36) NOT NULL PRIMARY KEY,"
+            "  vocabulary_entry_id VARCHAR(36) NOT NULL REFERENCES vocabulary_entries(id) ON DELETE CASCADE,"
+            "  document_id VARCHAR(36) NOT NULL REFERENCES documents(id) ON DELETE CASCADE,"
+            "  document_title TEXT,"
+            "  paragraph_index INTEGER,"
+            "  token_rank INTEGER,"
+            "  added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,"
+            "  UNIQUE (vocabulary_entry_id, document_id)"
+            ")",
+        )
+        await _apply(
+            "012b_vocab_sources_idx_entry",
+            "CREATE INDEX IF NOT EXISTS idx_vocab_source_entry ON vocabulary_sources(vocabulary_entry_id)",
+        )
+        await _apply(
+            "012c_vocab_sources_idx_doc",
+            "CREATE INDEX IF NOT EXISTS idx_vocab_source_doc ON vocabulary_sources(document_id)",
+        )
+        await _apply(
+            "012d_vocab_latest_paragraph_index",
+            "ALTER TABLE vocabulary_entries ADD COLUMN latest_paragraph_index INTEGER",
+        )
+        await _apply(
+            "012e_vocab_latest_token_rank",
+            "ALTER TABLE vocabulary_entries ADD COLUMN latest_token_rank INTEGER",
+        )
+        await _apply(
+            "012f_vocab_idx_doc_order",
+            "CREATE INDEX IF NOT EXISTS idx_vocab_user_doc_order ON vocabulary_entries(user_id, latest_paragraph_index, latest_token_rank)",
+        )
+
+        # ═══════════════════════════════════════════════════════════════
+        # Migration 013: vocabulary_entries — 补全富字段（与阅读页 WordAnalysis 对齐）
+        # ═══════════════════════════════════════════════════════════════
+        await _apply(
+            "013a_vocab_definition_zh",
+            "ALTER TABLE vocabulary_entries ADD COLUMN definition_zh TEXT DEFAULT ''",
+        )
+        await _apply(
+            "013b_vocab_base_form",
+            "ALTER TABLE vocabulary_entries ADD COLUMN base_form TEXT DEFAULT ''",
+        )
+        await _apply(
+            "013c_vocab_plural_form",
+            "ALTER TABLE vocabulary_entries ADD COLUMN plural_form TEXT DEFAULT ''",
+        )
+        await _apply(
+            "013d_vocab_synonyms_antonyms",
+            "ALTER TABLE vocabulary_entries ADD COLUMN synonyms_antonyms TEXT DEFAULT '{\"synonyms\": []}'",
+        )
+        await _apply(
+            "013e_vocab_cognates",
+            "ALTER TABLE vocabulary_entries ADD COLUMN cognates TEXT DEFAULT '[]'",
+        )
+        await _apply(
+            "013f_vocab_collocations",
+            "ALTER TABLE vocabulary_entries ADD COLUMN collocations TEXT DEFAULT '[]'",
+        )
+
+        # Best-effort one-time backfill: copy rich fields from word_analyses
+        # (matched by lowercased word + source document). Never blocks startup.
+        try:
+            if "013g_vocab_rich_backfill" not in applied:
+                await conn.exec_driver_sql(
+                    "UPDATE vocabulary_entries SET "
+                    "definition_zh = COALESCE((SELECT wa.definition_zh FROM word_analyses wa "
+                    "  WHERE LOWER(wa.word)=vocabulary_entries.word AND wa.document_id=vocabulary_entries.source_document_id "
+                    "  AND wa.definition_zh IS NOT NULL AND wa.definition_zh <> '' LIMIT 1), definition_zh), "
+                    "base_form = COALESCE((SELECT wa.base_form FROM word_analyses wa "
+                    "  WHERE LOWER(wa.word)=vocabulary_entries.word AND wa.document_id=vocabulary_entries.source_document_id "
+                    "  AND wa.base_form IS NOT NULL AND wa.base_form <> '' LIMIT 1), base_form), "
+                    "plural_form = COALESCE((SELECT wa.plural_form FROM word_analyses wa "
+                    "  WHERE LOWER(wa.word)=vocabulary_entries.word AND wa.document_id=vocabulary_entries.source_document_id "
+                    "  AND wa.plural_form IS NOT NULL AND wa.plural_form <> '' LIMIT 1), plural_form), "
+                    "synonyms_antonyms = COALESCE((SELECT wa.synonyms_antonyms FROM word_analyses wa "
+                    "  WHERE LOWER(wa.word)=vocabulary_entries.word AND wa.document_id=vocabulary_entries.source_document_id "
+                    "  AND wa.synonyms_antonyms IS NOT NULL AND wa.synonyms_antonyms <> '' AND wa.synonyms_antonyms <> '{\"synonyms\": []}' LIMIT 1), synonyms_antonyms), "
+                    "cognates = COALESCE((SELECT wa.cognates FROM word_analyses wa "
+                    "  WHERE LOWER(wa.word)=vocabulary_entries.word AND wa.document_id=vocabulary_entries.source_document_id "
+                    "  AND wa.cognates IS NOT NULL AND wa.cognates <> '' AND wa.cognates <> '[]' LIMIT 1), cognates), "
+                    "collocations = COALESCE((SELECT wa.collocations FROM word_analyses wa "
+                    "  WHERE LOWER(wa.word)=vocabulary_entries.word AND wa.document_id=vocabulary_entries.source_document_id "
+                    "  AND wa.collocations IS NOT NULL AND wa.collocations <> '' AND wa.collocations <> '[]' LIMIT 1), collocations) "
+                    "WHERE source_document_id IS NOT NULL"
+                )
+                await conn.exec_driver_sql(
+                    "INSERT INTO _migrations (name) VALUES ('013g_vocab_rich_backfill')"
+                )
+                logger.info("Migration 013g: rich-field backfill applied")
+        except Exception as exc:
+            logger.warning("Migration 013g: backfill skipped (%s)", exc)
+            try:
+                await conn.exec_driver_sql(
+                    "INSERT INTO _migrations (name) VALUES ('013g_vocab_rich_backfill')"
+                )
+            except Exception:
+                pass
+
+        # Best-effort one-time backfill: populate latest_paragraph_index from
+        # word_analyses (reliable even when the documents.paragraphs table is
+        # empty/purged). Never blocks startup.
+        try:
+            if "013h_vocab_para_backfill" not in applied:
+                await conn.exec_driver_sql(
+                    "UPDATE vocabulary_entries SET latest_paragraph_index = ("
+                    "  SELECT MIN(wa.paragraph_index) FROM word_analyses wa"
+                    "  WHERE wa.document_id = vocabulary_entries.source_document_id"
+                    "    AND LOWER(wa.word) = vocabulary_entries.word"
+                    ") WHERE source_document_id IS NOT NULL"
+                    "  AND latest_paragraph_index IS NULL"
+                    "  AND ("
+                    "    SELECT MIN(wa.paragraph_index) FROM word_analyses wa"
+                    "    WHERE wa.document_id = vocabulary_entries.source_document_id"
+                    "      AND LOWER(wa.word) = vocabulary_entries.word"
+                    "  ) IS NOT NULL"
+                )
+                await conn.exec_driver_sql(
+                    "INSERT INTO _migrations (name) VALUES ('013h_vocab_para_backfill')"
+                )
+                logger.info("Migration 013h: paragraph-index backfill applied")
+        except Exception as exc:
+            logger.warning("Migration 013h: backfill skipped (%s)", exc)
+            try:
+                await conn.exec_driver_sql(
+                    "INSERT INTO _migrations (name) VALUES ('013h_vocab_para_backfill')"
+                )
+            except Exception:
+                pass
+
+        # Best-effort one-time backfill: reconstruct vocabulary_sources from
+        # word_analyses so the word book can show *every* document a word was
+        # parsed in (not just the latest). Idempotent — existing rows are
+        # skipped. SQLite-oriented (dev DB); wrapped so PG installs skip safely.
+        try:
+            if "013i_vocab_sources_backfill" not in applied:
+                await conn.exec_driver_sql(
+                    "INSERT INTO vocabulary_sources "
+                    "(id, vocabulary_entry_id, document_id, document_title, paragraph_index, added_at) "
+                    "SELECT hex(randomblob(16)), ve.id, wa.document_id, d.title, MIN(wa.paragraph_index), CURRENT_TIMESTAMP "
+                    "FROM word_analyses wa "
+                    "JOIN documents d ON REPLACE(d.id,'-','') = REPLACE(wa.document_id,'-','') "
+                    "JOIN vocabulary_entries ve ON REPLACE(ve.user_id,'-','') = REPLACE(d.user_id,'-','') AND ve.word = LOWER(wa.word) "
+                    "WHERE NOT EXISTS ("
+                    "  SELECT 1 FROM vocabulary_sources vs "
+                    "  WHERE vs.vocabulary_entry_id = ve.id AND vs.document_id = wa.document_id"
+                    ") "
+                    "GROUP BY ve.id, wa.document_id, d.title"
+                )
+                await conn.exec_driver_sql(
+                    "INSERT INTO _migrations (name) VALUES ('013i_vocab_sources_backfill')"
+                )
+                logger.info("Migration 013i: vocabulary_sources backfill applied")
+        except Exception as exc:
+            logger.warning("Migration 013i: backfill skipped (%s)", exc)
+            try:
+                await conn.exec_driver_sql(
+                    "INSERT INTO _migrations (name) VALUES ('013i_vocab_sources_backfill')"
+                )
+            except Exception:
+                pass
+
+        # Guarantee each entry has at least its latest source document recorded
+        # (covers words added without a matching word_analyses row).
+        try:
+            if "013j_vocab_sources_latest_backfill" not in applied:
+                await conn.exec_driver_sql(
+                    "INSERT INTO vocabulary_sources "
+                    "(id, vocabulary_entry_id, document_id, document_title, added_at) "
+                    "SELECT hex(randomblob(16)), ve.id, ve.source_document_id, COALESCE(d.title, ''), CURRENT_TIMESTAMP "
+                    "FROM vocabulary_entries ve "
+                    "LEFT JOIN documents d ON REPLACE(d.id,'-','') = REPLACE(ve.source_document_id,'-','') "
+                    "WHERE ve.source_document_id IS NOT NULL "
+                    "  AND NOT EXISTS ("
+                    "    SELECT 1 FROM vocabulary_sources vs "
+                    "    WHERE vs.vocabulary_entry_id = ve.id AND vs.document_id = ve.source_document_id"
+                    "  )"
+                )
+                await conn.exec_driver_sql(
+                    "INSERT INTO _migrations (name) VALUES ('013j_vocab_sources_latest_backfill')"
+                )
+                logger.info("Migration 013j: vocabulary_sources latest backfill applied")
+        except Exception as exc:
+            logger.warning("Migration 013j: backfill skipped (%s)", exc)
+            try:
+                await conn.exec_driver_sql(
+                    "INSERT INTO _migrations (name) VALUES ('013j_vocab_sources_latest_backfill')"
+                )
+            except Exception:
+                pass
+
+        # Best-effort one-time backfill: fill empty phonetics for existing
+        # entries from the base/lemma form (ECDICT stores inflected forms with
+        # an empty phonetic — see dictionary_service.lookup). Local-only,
+        # idempotent, never blocks startup.
+        try:
+            if "013k_vocab_phonetic_backfill" not in applied:
+                await _backfill_vocabulary_phonetics()
+                await conn.exec_driver_sql(
+                    "INSERT INTO _migrations (name) VALUES ('013k_vocab_phonetic_backfill')"
+                )
+                logger.info("Migration 013k: phonetic backfill applied")
+        except Exception as exc:
+            logger.warning("Migration 013k: phonetic backfill skipped (%s)", exc)
+            try:
+                await conn.exec_driver_sql(
+                    "INSERT INTO _migrations (name) VALUES ('013k_vocab_phonetic_backfill')"
+                )
+            except Exception:
+                pass
+
+
+async def _backfill_vocabulary_phonetics():
+    """Fill empty phonetics using the base-form fallback (see dictionary_service)."""
+    from app.services import dictionary_service as ds
+    from sqlalchemy import text
+
+    async with async_session_factory() as db:
+        rows = (
+            await db.execute(
+                text(
+                    "SELECT id, word FROM vocabulary_entries "
+                    "WHERE phonetic IS NULL OR phonetic = ''"
+                )
+            )
+        ).fetchall()
+        for eid, word in rows:
+            ph = None
+            exact = await ds._lookup_local(word)
+            if exact and exact.get("phonetic"):
+                ph = exact["phonetic"]
+            else:
+                for lemma in ds._lemmatize(word):
+                    base = await ds._lookup_local(lemma)
+                    if base and base.get("phonetic"):
+                        ph = base["phonetic"]
+                        break
+            if ph:
+                await db.execute(
+                    text("UPDATE vocabulary_entries SET phonetic = :p WHERE id = :e"),
+                    {"p": ph, "e": eid},
+                )
+        await db.commit()
+
 
 async def close_db():
     """Dispose the database engine."""

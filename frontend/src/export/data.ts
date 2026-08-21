@@ -5,7 +5,7 @@
 import type { ParagraphResult } from '../services/pdfApi';
 import type { WordAnalysisResult } from '../services/wordAnalysisApi';
 import type { SentenceAnalysisResult } from '../services/sentenceAnalysisApi';
-import { wordPositionMap } from '../utils/textTokens';
+import { wordPositionMap, wordAnalysisKey, sentenceAnalysisKey } from '../utils/textTokens';
 
 export interface ExportData {
   title: string;
@@ -19,6 +19,12 @@ export interface ExportData {
   /** 按段落 index 升序 */
   sentences: SentenceAnalysisResult[];
   summary: string | null;
+  /** 索引：段落 index → 段落（避免渲染每块时 find 线性查找） */
+  paragraphsByIndex: Map<number, ParagraphResult>;
+  /** 索引：wordAnalysisKey → 单词解析（块渲染只查一次 Map） */
+  wordsByKey: Record<string, WordAnalysisResult>;
+  /** 索引：sentenceAnalysisKey → 句子解析 */
+  sentencesByKey: Record<string, SentenceAnalysisResult>;
 }
 
 /** 判断单词解析是否为可导出完整结果 */
@@ -70,6 +76,16 @@ export function buildExportData(input: ExportDataInput): ExportData {
         a.paragraph_index - b.paragraph_index || a.sentence_index - b.sentence_index
     );
 
+  // 一次性建索引：渲染阶段（每个块/每行）只做 O(1) 查找
+  const paragraphsByIndex = new Map<number, ParagraphResult>();
+  for (const p of input.paragraphs) paragraphsByIndex.set(p.index, p);
+  const wordsByKey: Record<string, WordAnalysisResult> = {};
+  for (const w of words) wordsByKey[wordAnalysisKey(w.paragraph_index, w.word)] = w;
+  const sentencesByKey: Record<string, SentenceAnalysisResult> = {};
+  for (const s of sentences) {
+    sentencesByKey[sentenceAnalysisKey(s.paragraph_index, s.sentence_index)] = s;
+  }
+
   return {
     title: input.title || 'Untitled',
     titleZh: input.titleZh?.trim() || '',
@@ -78,5 +94,8 @@ export function buildExportData(input: ExportDataInput): ExportData {
     words,
     sentences,
     summary: input.summary,
+    paragraphsByIndex,
+    wordsByKey,
+    sentencesByKey,
   };
 }

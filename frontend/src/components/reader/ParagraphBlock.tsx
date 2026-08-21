@@ -1,7 +1,8 @@
-import React, { useState, useCallback, useMemo, useRef } from 'react';
+import React, { useState, useCallback, useMemo, useRef, memo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { ParagraphResult } from '../../services/pdfApi';
+import type { WordAnalysisResult } from '../../services/wordAnalysisApi';
 import { useReaderStore, FONT_FAMILIES, LINE_HEIGHTS } from '../../stores/readerStore';
 import { useDocumentStore } from '../../stores/documentStore';
 import { triggerScrollToAnalysis } from './StudyPanel';
@@ -18,6 +19,42 @@ export function setOnOpenFocusedAnalysis(
   _onOpenFocusedAnalysis = cb;
 }
 
+/** 打开单词/句子的解析卡片（桌面跳转面板，移动端弹聚焦面板） */
+function openAnalysis(type: 'word' | 'sentence', key: string) {
+  if (_onOpenFocusedAnalysis) {
+    _onOpenFocusedAnalysis(type, key);
+  } else {
+    triggerScrollToAnalysis(key, type === 'word' ? 'words' : 'sentences');
+  }
+}
+
+/**
+ * 只在句子确实包含 Markdown 行内语法时才走 ReactMarkdown。
+ * 绝大多数 OCR 句子是纯文本，直接渲染可省去每次句级 markdown 解析开销。
+ */
+const INLINE_MARKDOWN_RE = /(\*\*|\*|__|_|~~|`|\[[^\]]*\]\([^)]*\))/;
+function hasInlineMarkdown(text: string): boolean {
+  return INLINE_MARKDOWN_RE.test(text);
+}
+
+// tokenize 结果缓存：store 每次更新时 selector 会对每个句子重算，
+// 缓存避免对同一文本反复分词（有界，防长会话内存增长）。
+const _TOKEN_CACHE_MAX = 5000;
+const _tokenCache = new Map<string, ReturnType<typeof tokenizeWords>>();
+
+function cachedTokenizeWords(text: string): ReturnType<typeof tokenizeWords> {
+  let tokens = _tokenCache.get(text);
+  if (!tokens) {
+    tokens = tokenizeWords(text);
+    if (_tokenCache.size >= _TOKEN_CACHE_MAX) {
+      const oldest = _tokenCache.keys().next().value;
+      if (oldest !== undefined) _tokenCache.delete(oldest);
+    }
+    _tokenCache.set(text, tokens);
+  }
+  return tokens;
+}
+
 interface ParagraphBlockProps {
   paragraph: ParagraphResult;
   translation?: string;
@@ -25,176 +62,66 @@ interface ParagraphBlockProps {
   isTouchDevice?: boolean;
 }
 
-/** A clickable word token. On mobile, long-press selects the parent sentence. */
-function WordToken({
-  text,
-  word,
-  paragraphIndex,
-  sentenceIndex,
-  sentenceText,
-  wordIdx: _wordIdx,
-  isTtsActive,
-  isTouchDevice,
-}: {
-  text: string;
-  word: string;
-  paragraphIndex: number;
-  sentenceIndex: number;
-  sentenceText: string;
-  /** 句内词干序号（供朗读高亮定位） */
-  wordIdx: number;
-  /** 朗读卡拉OK高亮中（由父级按 activeWordIdx 计算，避免逐词订阅 store） */
-  isTtsActive: boolean;
-  isTouchDevice: boolean;
-}) {
-  const {
-    selectedWords,
-    wordAnalyses,
-    sentenceAnalyses,
-    toggleWordSelection,
-    toggleSentenceSelection,
-  } = useDocumentStore();
-  const key = wordAnalysisKey(paragraphIndex, word);
-  const isSelected = !!selectedWords[key];
-  const hasAnalysis = !!wordAnalyses[key];
-  const sentenceKey = sentenceAnalysisKey(paragraphIndex, sentenceIndex);
-  const sentenceHasAnalysis = !!sentenceAnalyses[sentenceKey];
-
-  // ── Long press → select sentence or open analysis (mobile only) ──
-  const longPressTimer = useRef<ReturnType<typeof setTimeout>>();
-  const longPressFired = useRef(false);
-  const [longPressActive, setLongPressActive] = useState(false);
-
-  const clearLongPress = useCallback(() => {
-    if (longPressTimer.current) {
-      clearTimeout(longPressTimer.current);
-      longPressTimer.current = undefined;
-    }
-    setLongPressActive(false);
-  }, []);
-
-  const handleTouchStart = useCallback((e: React.TouchEvent) => {
-    if (!isTouchDevice) return;
-    e.stopPropagation(); // prevent SentenceToken from also starting its timer
-    longPressFired.current = false;
-    longPressTimer.current = setTimeout(() => {
-      longPressFired.current = true;
-      setLongPressActive(true);
-      try { navigator.vibrate?.(10); } catch { /* noop */ }
-      if (sentenceHasAnalysis) {
-        if (_onOpenFocusedAnalysis) {
-          _onOpenFocusedAnalysis('sentence', sentenceKey);
-        } else {
-          triggerScrollToAnalysis(sentenceKey, 'sentences');
-        }
-      } else {
-        toggleSentenceSelection(paragraphIndex, sentenceIndex, sentenceText);
-      }
-      // Reset visual after animation
-      setTimeout(() => setLongPressActive(false), 600);
-    }, 300);
-  }, [isTouchDevice, paragraphIndex, sentenceIndex, sentenceText, sentenceKey, sentenceHasAnalysis, toggleSentenceSelection]);
-
-  const handleTouchEnd = useCallback(() => {
-    clearLongPress();
-  }, [clearLongPress]);
-
-  const handleTouchMove = useCallback(() => {
-    clearLongPress();
-  }, [clearLongPress]);
-
-  // ── Click → select word ──
-  const handleClick = useCallback(
-    (e: React.MouseEvent) => {
-      e.stopPropagation();
-      // If long press just fired, skip the click (don't select word)
-      if (longPressFired.current) {
-        longPressFired.current = false;
-        return;
-      }
-      if (hasAnalysis) {
-        if (_onOpenFocusedAnalysis) {
-          _onOpenFocusedAnalysis('word', key);
-        } else {
-          triggerScrollToAnalysis(key, 'words');
-        }
-      } else {
-        toggleWordSelection(paragraphIndex, word.toLowerCase());
-      }
-    },
-    [paragraphIndex, word, toggleWordSelection, hasAnalysis, key]
-  );
-
-  return (
-    <span
-      className={[
-        'word-token',
-        isSelected ? 'word-token-selected' : '',
-        hasAnalysis && !isSelected ? 'word-token-has-analysis' : '',
-        isTtsActive ? 'tts-current-word' : '',
-        longPressActive ? 'long-press-active' : '',
-      ].join(' ')}
-      onClick={handleClick}
-      onTouchStart={handleTouchStart}
-      onTouchEnd={handleTouchEnd}
-      onTouchMove={handleTouchMove}
-    >
-      {text}
-    </span>
-  );
-}
-
-/** Render plain text with clickable word tokens. */
-function renderTokenizedText(
+/**
+ * 把一段文本渲染成“纯 DOM span”的单词 token，而不是每个单词一个 React 组件。
+ * 点击/长按统一由 SentenceToken 容器做事件委托，单词本身不再订阅任何 store。
+ */
+function renderWordTokens(
   text: string,
   paragraphIndex: number,
   sentenceIndex: number,
-  sentenceText: string,
   activeWordIdx: number | null,
-  isTouchDevice: boolean,
-): React.ReactNode {
+  selectedWords: Record<string, boolean>,
+  wordAnalyses: Record<string, WordAnalysisResult>,
+): React.ReactNode[] {
   let wordIdx = 0;
   return tokenizeWords(text).map((token, i) => {
-    if (token.stem) {
-      const currentIdx = wordIdx;
-      wordIdx += 1;
-      return (
-        <WordToken
-          key={i}
-          text={token.raw}
-          word={token.stem}
-          paragraphIndex={paragraphIndex}
-          sentenceIndex={sentenceIndex}
-          sentenceText={sentenceText}
-          wordIdx={currentIdx}
-          isTtsActive={activeWordIdx !== null && activeWordIdx >= 0 && activeWordIdx === currentIdx}
-          isTouchDevice={isTouchDevice}
-        />
-      );
+    if (!token.stem) {
+      return token.raw;
     }
-    return token.raw;
+    const currentIdx = wordIdx;
+    wordIdx += 1;
+    const key = wordAnalysisKey(paragraphIndex, token.stem);
+    const isSelected = !!selectedWords[key];
+    const hasAnalysis = !!wordAnalyses[key];
+    const className = [
+      'word-token',
+      isSelected ? 'word-token-selected' : '',
+      hasAnalysis && !isSelected ? 'word-token-has-analysis' : '',
+      activeWordIdx !== null && activeWordIdx === currentIdx ? 'tts-current-word' : '',
+    ].filter(Boolean).join(' ');
+    return (
+      <span
+        key={i}
+        className={className}
+        data-word-key={key}
+        data-word={token.stem}
+      >
+        {token.raw}
+      </span>
+    );
   });
 }
 
-/** Recursively process React children for word tokens. */
+/** 递归处理 ReactMarkdown 子节点，为其中文本注入单词 token（仅 Markdown 快路径之外使用）。 */
 function processChildren(
   children: React.ReactNode,
   paragraphIndex: number,
   sentenceIndex: number,
-  sentenceText: string,
   activeWordIdx: number | null,
-  isTouchDevice: boolean,
+  selectedWords: Record<string, boolean>,
+  wordAnalyses: Record<string, WordAnalysisResult>,
 ): React.ReactNode {
   return React.Children.map(children, (child) => {
     if (typeof child === 'string') {
-      return renderTokenizedText(child, paragraphIndex, sentenceIndex, sentenceText, activeWordIdx, isTouchDevice);
+      return renderWordTokens(child, paragraphIndex, sentenceIndex, activeWordIdx, selectedWords, wordAnalyses);
     }
     if (React.isValidElement(child)) {
       const childProps = (child.props as any) || {};
       if (childProps.children) {
         return React.cloneElement(child, {
           ...childProps,
-          children: processChildren(childProps.children, paragraphIndex, sentenceIndex, sentenceText, activeWordIdx, isTouchDevice),
+          children: processChildren(childProps.children, paragraphIndex, sentenceIndex, activeWordIdx, selectedWords, wordAnalyses),
         } as any);
       }
     }
@@ -202,21 +129,54 @@ function processChildren(
   });
 }
 
-/** A clickable sentence with selection/analysis states. */
-function SentenceToken({
-  sentence,
-  paragraphIndex,
-  isTouchDevice,
-}: {
+interface SentenceTokenProps {
   sentence: { text: string; index: number };
   paragraphIndex: number;
   isTouchDevice: boolean;
-}) {
+}
+
+/**
+ * 句级组件（非词级）：
+ * - 只订阅"本句相关状态"的签名（primitive string）。任意词/句在其他段落
+ *   发生变化时签名不变 → Zustand 跳过重渲染，消除"选一个词全文重 tokenize"；
+ * - 渲染时从 store 读取当前快照，单词 span 是零 hook 的普通 DOM。
+ */
+const SentenceToken = memo(function SentenceToken({
+  sentence,
+  paragraphIndex,
+  isTouchDevice,
+}: SentenceTokenProps) {
+  const sentenceKey = useMemo(
+    () => sentenceAnalysisKey(paragraphIndex, sentence.index),
+    [paragraphIndex, sentence.index]
+  );
+
+  // 签名：本句内每个词的选中/已解析状态 + 本句选中/已解析状态。
+  const stateSignature = useDocumentStore((s) => {
+    const tokens = cachedTokenizeWords(sentence.text);
+    let selectedBits = '';
+    let analyzedBits = '';
+    for (const token of tokens) {
+      if (!token.stem) continue;
+      const key = wordAnalysisKey(paragraphIndex, token.stem);
+      selectedBits += s.selectedWords[key] ? '1' : '0';
+      analyzedBits += s.wordAnalyses[key] ? '1' : '0';
+    }
+    const sentenceSelected = s.selectedSentences[sentenceKey] ? '1' : '0';
+    const sentenceAnalyzed = s.sentenceAnalyses[sentenceKey] ? '1' : '0';
+    return `${selectedBits}|${analyzedBits}|${sentenceSelected}${sentenceAnalyzed}`;
+  });
+
+  // 本句签名变化时才重渲染；渲染时读取当前 store 快照（非响应式读取）。
   const {
+    selectedWords,
+    wordAnalyses,
     selectedSentences,
     sentenceAnalyses,
+    toggleWordSelection,
     toggleSentenceSelection,
-  } = useDocumentStore();
+  } = useDocumentStore.getState();
+
   // 仅当本句是当前朗读句时才订阅（返回词序号），避免全文逐词/逐句随 timeupdate 重渲染
   const activeWordIdx = useAudioPlayerStore((s) =>
     s.highlight &&
@@ -225,79 +185,115 @@ function SentenceToken({
       ? s.highlight.wordIdx
       : null
   );
-  const key = sentenceAnalysisKey(paragraphIndex, sentence.index);
-  const isSelected = !!selectedSentences[key];
-  const hasAnalysis = !!sentenceAnalyses[key];
+
+  const isSelected = !!selectedSentences[sentenceKey];
+  const hasAnalysis = !!sentenceAnalyses[sentenceKey];
   const isTtsActive = activeWordIdx !== null;
 
-  // ── Long press detection (mobile: reliable fallback for inline spans) ──
-  const longPressTimer = useRef<ReturnType<typeof setTimeout>>();
+  const sentenceRef = useRef<HTMLSpanElement>(null);
+  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const longPressFired = useRef(false);
-  const [longPressActive, setLongPressActive] = useState(false);
+  const longPressEl = useRef<HTMLElement | null>(null);
 
   const clearLongPress = useCallback(() => {
     if (longPressTimer.current) {
       clearTimeout(longPressTimer.current);
-      longPressTimer.current = undefined;
+      longPressTimer.current = null;
     }
-    setLongPressActive(false);
+    if (longPressEl.current) {
+      longPressEl.current.classList.remove('long-press-active');
+      longPressEl.current = null;
+    }
   }, []);
 
-  const handleTouchStart = useCallback(() => {
+  // ── 长按（移动端）：单词或句子本身都触发整句选择/打开句子解析 ──
+  const handleTouchStart = useCallback((e: React.TouchEvent<HTMLSpanElement>) => {
     if (!isTouchDevice) return;
+    const wordEl = (e.target as HTMLElement).closest('.word-token') as HTMLElement | null;
     longPressFired.current = false;
     longPressTimer.current = setTimeout(() => {
       longPressFired.current = true;
-      setLongPressActive(true);
+      const el = wordEl ?? sentenceRef.current;
+      if (el) {
+        el.classList.add('long-press-active');
+        longPressEl.current = el;
+        setTimeout(() => el.classList.remove('long-press-active'), 600);
+      }
       try { navigator.vibrate?.(10); } catch { /* noop */ }
       if (hasAnalysis) {
-        if (_onOpenFocusedAnalysis) {
-          _onOpenFocusedAnalysis('sentence', key);
-        } else {
-          triggerScrollToAnalysis(key, 'sentences');
-        }
+        openAnalysis('sentence', sentenceKey);
       } else {
         toggleSentenceSelection(paragraphIndex, sentence.index, sentence.text);
       }
-      setTimeout(() => setLongPressActive(false), 600);
     }, 300);
-  }, [isTouchDevice, hasAnalysis, key, paragraphIndex, sentence, toggleSentenceSelection]);
+  }, [isTouchDevice, hasAnalysis, sentenceKey, paragraphIndex, sentence.index, sentence.text, toggleSentenceSelection]);
 
   const handleTouchEnd = useCallback(() => clearLongPress(), [clearLongPress]);
   const handleTouchMove = useCallback(() => clearLongPress(), [clearLongPress]);
 
-  const handleClick = useCallback(
-    (e: React.MouseEvent) => {
-      e.stopPropagation();
-      // If long press just fired, skip click
+  // ── 事件委托：点单词 → 选词/打开解析；点句子空白 → 选句/打开解析 ──
+  const handleTextClick = useCallback((e: React.MouseEvent<HTMLSpanElement>) => {
+    const wordEl = (e.target as HTMLElement).closest('.word-token') as HTMLElement | null;
+    if (wordEl) {
+      // 长按刚触发过的 click 直接吞掉，不再重复选词
       if (longPressFired.current) {
         longPressFired.current = false;
         return;
       }
-      if (hasAnalysis) {
-        if (_onOpenFocusedAnalysis) {
-          _onOpenFocusedAnalysis('sentence', key);
-        } else {
-          triggerScrollToAnalysis(key, 'sentences');
-        }
-      } else {
-        toggleSentenceSelection(paragraphIndex, sentence.index, sentence.text);
+      const word = wordEl.dataset.word ?? '';
+      const key = wordEl.dataset.wordKey ?? '';
+      if (key && wordAnalyses[key]) {
+        openAnalysis('word', key);
+      } else if (word) {
+        toggleWordSelection(paragraphIndex, word);
       }
-    },
-    [paragraphIndex, sentence, toggleSentenceSelection, hasAnalysis, key]
-  );
+      return;
+    }
+
+    if (longPressFired.current) {
+      longPressFired.current = false;
+      return;
+    }
+    if (hasAnalysis) {
+      openAnalysis('sentence', sentenceKey);
+    } else {
+      toggleSentenceSelection(paragraphIndex, sentence.index, sentence.text);
+    }
+  }, [wordAnalyses, hasAnalysis, sentenceKey, paragraphIndex, sentence.index, sentence.text, toggleWordSelection, toggleSentenceSelection]);
+
+  const needsMarkdown = useMemo(() => hasInlineMarkdown(sentence.text), [sentence.text]);
+
+  // 纯文本句子：直接生成单词 span（复用上次结果，避免每次渲染重复 tokenize）
+  const plainContent = useMemo(() => {
+    if (needsMarkdown) return null;
+    return renderWordTokens(
+      sentence.text,
+      paragraphIndex,
+      sentence.index,
+      activeWordIdx,
+      selectedWords,
+      wordAnalyses
+    );
+  }, [needsMarkdown, sentence.text, paragraphIndex, sentence.index, activeWordIdx, stateSignature]);
 
   const components = useMemo(
     () => ({
       ...safeMarkdownComponents,
       p: ({ children, ...props }: any) => (
         <span {...props}>
-          {processChildren(children, paragraphIndex, sentence.index, sentence.text, activeWordIdx, isTouchDevice)}
+          {processChildren(children, paragraphIndex, sentence.index, activeWordIdx, selectedWords, wordAnalyses)}
         </span>
       ),
     }),
-    [paragraphIndex, sentence.index, sentence.text, activeWordIdx, isTouchDevice]
+    [paragraphIndex, sentence.index, activeWordIdx, stateSignature]
   );
+
+  const sentenceClassName = [
+    'sentence-token',
+    isSelected ? 'sentence-token-selected' : '',
+    hasAnalysis && !isSelected ? 'sentence-token-has-analysis' : '',
+    isTtsActive ? 'tts-current-sentence' : '',
+  ].filter(Boolean).join(' ');
 
   return (
     <span className="sentence-wrap">
@@ -316,29 +312,41 @@ function SentenceToken({
         </svg>
       </button>
       <span
-        className={`sentence-token ${isSelected ? 'sentence-token-selected' : ''} ${hasAnalysis && !isSelected ? 'sentence-token-has-analysis' : ''} ${isTtsActive ? 'tts-current-sentence' : ''} ${longPressActive ? 'long-press-active' : ''}`}
-        onClick={handleClick}
+        ref={sentenceRef}
+        className={sentenceClassName}
+        onClick={handleTextClick}
         onTouchStart={handleTouchStart}
         onTouchEnd={handleTouchEnd}
         onTouchMove={handleTouchMove}
         data-paragraph-index={paragraphIndex}
         data-sentence-index={sentence.index}
       >
-        <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
-          {sentence.text}
-        </ReactMarkdown>
+        {needsMarkdown ? (
+          <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
+            {sentence.text}
+          </ReactMarkdown>
+        ) : (
+          plainContent
+        )}
       </span>
     </span>
   );
-}
+});
 
-export default function ParagraphBlock({
+/**
+ * 段落级 memo：翻译流式更新只让“译文真正变化”的段落重渲染，
+ * 其余段落在 reconciliation 阶段被跳过。
+ */
+const ParagraphBlock = memo(function ParagraphBlock({
   paragraph,
   translation,
   isTranslating,
   isTouchDevice = false,
 }: ParagraphBlockProps) {
-  const { fontSize, fontFamily, lineHeight } = useReaderStore();
+  // 分别订阅三个排版字段，避免 readerStore 任一字段变化导致全文重渲染
+  const fontSize = useReaderStore((s) => s.fontSize);
+  const fontFamily = useReaderStore((s) => s.fontFamily);
+  const lineHeight = useReaderStore((s) => s.lineHeight);
   const [showTranslation, setShowTranslation] = useState(false);
 
   const fontFamilyValue = FONT_FAMILIES.find(f => f.key === fontFamily)?.value ?? FONT_FAMILIES[0].value;
@@ -399,4 +407,6 @@ export default function ParagraphBlock({
       ) : null}
     </div>
   );
-}
+});
+
+export default ParagraphBlock;

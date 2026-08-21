@@ -19,8 +19,22 @@ export interface ParagraphAudioResult {
 
 /** 会话级缓存：key = `docId:index:textHash:accent:rate` → blob URL + 边界 */
 const cache = new Map<string, ParagraphAudioResult>();
+/** LRU 上限：超限淘汰并 revoke 旧 blob URL，避免长会话内存持续增长 */
+const CACHE_MAX = 24;
 /** 并发去重：正在请求中的 key 复用同一 Promise */
 const pending = new Map<string, Promise<ParagraphAudioResult>>();
+
+function cacheSet(key: string, result: ParagraphAudioResult): void {
+  if (cache.size >= CACHE_MAX) {
+    const oldestKey = cache.keys().next().value;
+    if (oldestKey !== undefined) {
+      const oldest = cache.get(oldestKey);
+      cache.delete(oldestKey);
+      if (oldest) URL.revokeObjectURL(oldest.url);
+    }
+  }
+  cache.set(key, result);
+}
 
 /** 简单字符串哈希：段落文本参与缓存键，编辑后自动失效旧音频 */
 function textHash(text: string): string {
@@ -82,7 +96,7 @@ export async function getParagraphAudio(
         boundaries: data.boundaries || [],
         duration_ms: data.duration_ms || 0,
       };
-      cache.set(key, result);
+      cacheSet(key, result);
       return result;
     })().finally(() => {
       pending.delete(key);

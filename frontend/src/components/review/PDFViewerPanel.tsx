@@ -1,10 +1,11 @@
-import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef, memo } from 'react';
 import { Document, Page, pdfjs } from 'react-pdf';
+import pdfjsWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { fetchPDFBlob } from '../../services/pdfApi';
 import { bboxToCss, type ParagraphLayoutItem } from '../../utils/pdfBbox';
 
-// Set PDF.js worker
-pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
+// Set PDF.js worker（本地打包，避免运行时依赖 unpkg CDN）
+pdfjs.GlobalWorkerOptions.workerSrc = pdfjsWorkerUrl;
 
 interface PDFViewerPanelProps {
   taskId: string;
@@ -12,10 +13,6 @@ interface PDFViewerPanelProps {
   selectedPages?: number[] | null;
   /** 各段落的 MinerU 布局框（PDF 源才有） */
   paragraphLayouts?: ParagraphLayoutItem[];
-  /** 编辑区当前悬浮/高亮的段落 index（对应框高亮） */
-  hoveredIndex?: number | null;
-  /** 悬浮 PDF 上的框 → 联动高亮编辑区段落（不跳转） */
-  onBoxHover?: (index: number | null) => void;
   /** 点击 PDF 上的框 → 编辑区段落滚动居中并高亮 */
   onBoxSelect?: (index: number) => void;
   /** 点击编辑区段落后请求：对应解析框滚动到 PDF 预览居中位置 */
@@ -210,13 +207,37 @@ function fitLineRobust(xs: number[], ys: number[]): { f: number; c: number } | n
   return result;
 }
 
+/** react-pdf Page 是普通函数组件，包一层 memo：分栏宽度/页码不变时跳过重渲染 */
+const PdfPage = memo(function PdfPage({
+  pageNumber,
+  width,
+}: {
+  pageNumber: number;
+  width: number;
+}) {
+  return (
+    <Page
+      pageNumber={pageNumber}
+      width={width}
+      renderTextLayer={false}
+      renderAnnotationLayer={false}
+      loading={
+        <div
+          className="flex items-center justify-center bg-canvas-soft"
+          style={{ width, height: width * 1.4 }}
+        >
+          <div className="animate-spin h-5 w-5 border-2 border-primary border-t-transparent rounded-full" />
+        </div>
+      }
+    />
+  );
+});
+
 export default function PDFViewerPanel({
   taskId,
   width,
   selectedPages,
   paragraphLayouts,
-  hoveredIndex,
-  onBoxHover,
   onBoxSelect,
   focusRequest,
 }: PDFViewerPanelProps) {
@@ -227,9 +248,63 @@ export default function PDFViewerPanel({
   const [calib, setCalib] = useState<Calibration | null>(null);
   /** 点击编辑区段落后闪亮的解析框 index（t 递增用于重放动画） */
   const [flashBox, setFlashBox] = useState<{ index: number; t: number } | null>(null);
+  /** 已挂载（进入视口附近）的页码集合 —— 视口外页面只渲染占位符，不栅格化 */
+  const [mountedPages, setMountedPages] = useState<Set<number>>(new Set());
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const boxRefs = useRef<Map<number, HTMLDivElement>>(new Map());
   const flashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const mountedPagesRef = useRef<Set<number>>(new Set());
+  const pageObserverRef = useRef<IntersectionObserver | null>(null);
+
+  // ── 页面虚拟化：IntersectionObserver 按需挂载 PdfPage ──
+  // 只渲染视口附近（±800px）的页面；已挂载页保持挂载（滚动回来不再重新栅格化）。
+  // 选中页模式（≤10 页）下 observer 会很快把全部页挂上，行为与原来一致。
+  useEffect(() => {
+    const observer = pageObserverRef.current;
+    return () => observer?.disconnect();
+  }, []);
+
+  useEffect(() => {
+    if (!numPages) return;
+    const initial = new Set<number>();
+    for (const p of [1, 2]) {
+      if (p <= numPages) initial.add(p);
+    }
+    mountedPagesRef.current = initial;
+    setMountedPages(initial);
+  }, [numPages]);
+
+  const observePage = useCallback((pageNum: number, el: HTMLDivElement | null) => {
+    if (!el || mountedPagesRef.current.has(pageNum)) return;
+    if (!pageObserverRef.current) {
+      pageObserverRef.current = new IntersectionObserver(
+        (entries) => {
+          let changed = false;
+          for (const entry of entries) {
+            if (!entry.isIntersecting) continue;
+            const p = Number((entry.target as HTMLElement).dataset.pageNum);
+            if (Number.isFinite(p) && !mountedPagesRef.current.has(p)) {
+              mountedPagesRef.current.add(p);
+              changed = true;
+            }
+            pageObserverRef.current?.unobserve(entry.target);
+          }
+          if (changed) setMountedPages(new Set(mountedPagesRef.current));
+        },
+        { rootMargin: '800px 0px' },
+      );
+    }
+    el.dataset.pageNum = String(pageNum);
+    pageObserverRef.current.observe(el);
+  }, []);
+
+  // 稳定 ref 回调：从元素自身的 data-page-num 读页码，避免每渲染
+  // 换一个内联回调导致 React 反复 detach/attach（IO 重复 observe 噪音）
+  const pageSlotRef = useCallback((el: HTMLDivElement | null) => {
+    if (!el) return;
+    const p = Number(el.dataset.pageNum);
+    if (Number.isFinite(p)) observePage(p, el);
+  }, [observePage]);
 
   // 点击编辑区段落 → 对应解析框滚动到预览区居中并闪烁高亮。
   // numPages 入依赖：移动端切到 PDF 标签页时本组件全新挂载，PDF 加载完成
@@ -304,9 +379,15 @@ export default function PDFViewerPanel({
     return map;
   }, [paragraphLayouts]);
 
-  const pagesToRender: number[] = selectedPages && selectedPages.length > 0
-    ? selectedPages
-    : Array.from({ length: numPages || 0 }, (_, i) => i + 1);
+  // useMemo 保持数组引用稳定：否则自校准 effect 会随任意 render（hover/flash）
+  // 拿到新数组而反复 abort 并重跑整篇 pdfjs getTextContent。
+  const pagesToRender = useMemo<number[]>(
+    () =>
+      selectedPages && selectedPages.length > 0
+        ? selectedPages
+        : Array.from({ length: numPages || 0 }, (_, i) => i + 1),
+    [selectedPages, numPages],
+  );
 
   // ── 文本自校准 ──
   // 用 pdf.js 提取真实文本位置（getTextContent，无需渲染），把段落框与文本做线性拟合，
@@ -450,6 +531,9 @@ export default function PDFViewerPanel({
             const pageHeight = hasOverlay
               ? pageWidth * (pageBoxes![0].layout.pts_h / pageBoxes![0].layout.pts_w)
               : undefined;
+            // 未挂载页的占位高度：有框页用真实比例，无框页按 A4 估算
+            const estHeight = pageHeight ?? pageWidth * 1.4;
+            const isMounted = mountedPages.has(pageNum);
 
             return (
               <div
@@ -460,57 +544,65 @@ export default function PDFViewerPanel({
                   第 {pageNum} 页
                 </div>
                 <div
+                  ref={pageSlotRef}
+                  data-page-num={pageNum}
                   className="relative mx-auto"
                   style={
                     hasOverlay
                       ? { width: pageWidth, height: pageHeight }
-                      : { width: pageWidth }
+                      : { width: pageWidth, minHeight: estHeight }
                   }
                 >
-                  <Page
-                    pageNumber={pageNum}
-                    width={pageWidth}
-                    renderTextLayer={false}
-                    renderAnnotationLayer={false}
-                    loading={
-                      <div
-                        className="flex items-center justify-center bg-canvas-soft"
-                        style={{ width: pageWidth, height: pageWidth * 1.4 }}
-                      >
-                        <div className="animate-spin h-5 w-5 border-2 border-primary border-t-transparent rounded-full" />
-                      </div>
-                    }
-                  />
-                  {hasOverlay &&
-                    pageBoxes!.map((item) => {
-                      const rect = boxToCss(item);
-                      const isHovered = hoveredIndex === item.index;
-                      const isFlashed = flashBox?.index === item.index;
-                      return (
-                        <div
-                          key={isFlashed ? `box-${item.index}-${flashBox!.t}` : `box-${item.index}`}
-                          ref={(el) => {
-                            if (el) boxRefs.current.set(item.index, el);
-                            else boxRefs.current.delete(item.index);
-                          }}
-                          className={`absolute border transition-colors duration-100 cursor-pointer ${
-                            isHovered
-                              ? 'border-blue-600 border-2 bg-blue-500/15'
-                              : 'border-blue-500/70'
-                          } hover:bg-blue-500/20 ${isFlashed ? 'layout-box-flash' : ''}`}
-                          style={{
-                            left: rect.x,
-                            top: rect.y,
-                            width: rect.w,
-                            height: rect.h,
-                          }}
-                          onMouseEnter={() => onBoxHover?.(item.index)}
-                          onMouseLeave={() => onBoxHover?.(null)}
-                          onClick={() => onBoxSelect?.(item.index)}
-                          title={`段落 ${item.index + 1}`}
-                        />
-                      );
-                    })}
+                  {isMounted ? (
+                    <>
+                      <PdfPage pageNumber={pageNum} width={pageWidth} />
+                      {hasOverlay &&
+                        pageBoxes!.map((item) => {
+                          const rect = boxToCss(item);
+                          const isFlashed = flashBox?.index === item.index;
+                          return (
+                            <div
+                              key={isFlashed ? `box-${item.index}-${flashBox!.t}` : `box-${item.index}`}
+                              data-layout-box-index={item.index}
+                              ref={(el) => {
+                                if (el) boxRefs.current.set(item.index, el);
+                                else boxRefs.current.delete(item.index);
+                              }}
+                              className={`absolute border transition-colors duration-100 cursor-pointer ${
+                                isFlashed ? 'layout-box-flash' : ''
+                              } border-blue-500/70 hover:bg-blue-500/20`}
+                              style={{
+                                left: rect.x,
+                                top: rect.y,
+                                width: rect.w,
+                                height: rect.h,
+                              }}
+                              onMouseEnter={() => {
+                                // 悬浮联动：PDF 框 hover → 编辑区段落浅色底
+                                // （DOM class 直连，不经 React 状态，不触发整页重渲染）
+                                document
+                                  .querySelector(`[data-paragraph-index="${item.index}"]`)
+                                  ?.classList.add('review-paragraph-highlight');
+                              }}
+                              onMouseLeave={() => {
+                                document
+                                  .querySelector(`[data-paragraph-index="${item.index}"]`)
+                                  ?.classList.remove('review-paragraph-highlight');
+                              }}
+                              onClick={() => onBoxSelect?.(item.index)}
+                              title={`段落 ${item.index + 1}`}
+                            />
+                          );
+                        })}
+                    </>
+                  ) : (
+                    <div
+                      className="flex items-center justify-center bg-canvas-soft"
+                      style={{ height: estHeight }}
+                    >
+                      <div className="animate-spin h-5 w-5 border-2 border-primary border-t-transparent rounded-full" />
+                    </div>
+                  )}
                 </div>
               </div>
             );

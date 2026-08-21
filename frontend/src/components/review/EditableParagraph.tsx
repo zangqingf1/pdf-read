@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState } from 'react';
+import { useRef, useEffect, useState, memo } from 'react';
 
 export interface ParagraphData {
   cid: string;
@@ -14,26 +14,28 @@ interface EditableParagraphProps {
   onChange: (index: number, text: string) => void;
   onDelete: (index: number) => void;
   onMergeDown: (index: number) => void;
-  /** 悬浮状态上报（与 PDF 预览布局框联动高亮） */
-  onHover: (index: number, hovering: boolean) => void;
   /** 点击段落 → 定位到 PDF 预览中对应解析框 */
   onSelect: (index: number) => void;
-  /** 是否被联动高亮（悬浮 PDF 上的解析框时高亮本段） */
-  highlighted: boolean;
   /** 点击解析框后本段闪烁高亮；stamp 递增用于重放动画 */
   flash: { index: number; stamp: number } | null;
 }
 
-export default function EditableParagraph({
+/** 悬浮联动：本段 hover → 对应 PDF 解析框填充高亮（DOM class 直连，
+ *  不经 React 状态，hover 不再触发整页重渲染） */
+function toggleBoxHover(index: number, on: boolean): void {
+  document
+    .querySelector(`[data-layout-box-index="${index}"]`)
+    ?.classList.toggle('layout-box-hover', on);
+}
+
+const EditableParagraph = memo(function EditableParagraph({
   paragraph,
   isDirty,
   isLast,
   onChange,
   onDelete,
   onMergeDown,
-  onHover,
   onSelect,
-  highlighted,
   flash,
 }: EditableParagraphProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -58,7 +60,7 @@ export default function EditableParagraph({
   }, [paragraph.cid]);
 
   const handleEnter = () => {
-    onHover(paragraph.index, true);
+    toggleBoxHover(paragraph.index, true);
   };
 
   // 移动到本段内部（如操作条）不算离开；移动到别处/窗口外才清除
@@ -67,7 +69,7 @@ export default function EditableParagraph({
     if (related && related.closest(`[data-paragraph-index="${paragraph.index}"]`)) {
       return;
     }
-    onHover(paragraph.index, false);
+    toggleBoxHover(paragraph.index, false);
   };
 
   return (
@@ -108,7 +110,7 @@ export default function EditableParagraph({
           // key 含 flashStamp：同一段落被多次点击时 key 变化 → 重挂载 → 动画重放
           key={isFlashing ? `flash-${flashStamp}` : 'static'}
           className={`px-3 py-2 text-sm font-sans text-ink leading-relaxed whitespace-pre-wrap break-words rounded-md cursor-pointer transition-colors ${
-            isDirty || highlighted ? 'bg-primary/5' : ''
+            isDirty ? 'bg-primary/5' : ''
           } ${isFlashing ? 'review-paragraph-flash' : ''}`}
           onDoubleClick={() => setEditing(true)}
           onClick={() => onSelect(paragraph.index)}
@@ -175,4 +177,6 @@ export default function EditableParagraph({
       </div>
     </div>
   );
-}
+});
+
+export default EditableParagraph;

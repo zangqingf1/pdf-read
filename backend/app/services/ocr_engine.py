@@ -66,6 +66,51 @@ MIN_PARAGRAPH_LEN = 15
 EXCLUDED_BLOCK_TYPES = {"header", "footer", "page_number"}
 
 
+def _read_file_bytes(path: str) -> bytes:
+    """Read a file fully into memory (sync — call via asyncio.to_thread)."""
+    with open(path, "rb") as f:
+        return f.read()
+
+
+def _extract_zip_payload(raw: bytes) -> tuple[str, list[dict] | None]:
+    """Extract full.md + content_list.json from a result zip (sync — call via to_thread)."""
+    with zipfile.ZipFile(io.BytesIO(raw)) as zf:
+        all_names = zf.namelist()
+
+        md_name = None
+        for name in all_names:
+            if name.endswith("full.md"):
+                md_name = name
+                break
+            if name.endswith(".md") and md_name is None:
+                md_name = name
+
+        if md_name is None:
+            raise MinerUAPIError(
+                f"No markdown file found in zip. Contents: {all_names[:10]}"
+            )
+
+        full_md = zf.read(md_name).decode("utf-8")
+
+        content_list = None
+        for name in all_names:
+            if name.endswith("content_list.json"):
+                try:
+                    raw_json = zf.read(name).decode("utf-8")
+                    parsed = json_mod.loads(raw_json)
+                    if (
+                        isinstance(parsed, list)
+                        and parsed
+                        and all(isinstance(b, dict) for b in parsed)
+                    ):
+                        content_list = parsed
+                except (json_mod.JSONDecodeError, UnicodeDecodeError):
+                    pass
+                break
+
+        return full_md, content_list
+
+
 def _block_bbox(block: dict) -> list[float] | None:
     """Extract the 4-element bbox [x1,y1,x2,y2] from a MinerU block.
 
@@ -335,7 +380,9 @@ class OCREngine:
             from app.services.page_utils import extract_pdf_pages
             import logging as _logging
             _log = _logging.getLogger(__name__)
-            temp_pdf_path = extract_pdf_pages(file_path, selected_pages)
+            temp_pdf_path = await asyncio.to_thread(
+                extract_pdf_pages, file_path, selected_pages
+            )
             _log.info(
                 "Page selection: %d pages extracted → uploading subset to MinerU",
                 len(selected_pages),
@@ -348,10 +395,9 @@ class OCREngine:
         else:
             upload_path = file_path
 
-        # Read file bytes (from extracted temp file or original)
+        # Read file bytes (from extracted temp file or original) off the loop
         try:
-            with open(upload_path, "rb") as f:
-                file_bytes = f.read()
+            file_bytes = await asyncio.to_thread(_read_file_bytes, upload_path)
         finally:
             if temp_pdf_path and os.path.exists(temp_pdf_path):
                 os.unlink(temp_pdf_path)
@@ -587,48 +633,8 @@ class OCREngine:
         """
         resp = await self.client.get(zip_url)
         resp.raise_for_status()
-
-        with zipfile.ZipFile(io.BytesIO(resp.content)) as zf:
-            all_names = zf.namelist()
-
-            # ── Find full.md ──
-            md_name = None
-            for name in all_names:
-                if name.endswith("full.md"):
-                    md_name = name
-                    break
-                if name.endswith(".md") and md_name is None:
-                    md_name = name
-
-            if md_name is None:
-                raise MinerUAPIError(
-                    f"No markdown file found in zip. Contents: {all_names[:10]}"
-                )
-
-            full_md = zf.read(md_name).decode("utf-8")
-
-            # ── Find content_list.json ──
-            # NOTE: MinerU-HTML results use a different content_list schema
-            # (elements are pairs/lists, not block dicts). Only treat it as
-            # usable when it is a non-empty list of block dicts; otherwise fall
-            # back to parsing full.md.
-            content_list = None
-            for name in all_names:
-                if name.endswith("content_list.json"):
-                    try:
-                        raw = zf.read(name).decode("utf-8")
-                        parsed = json_mod.loads(raw)
-                        if (
-                            isinstance(parsed, list)
-                            and parsed
-                            and all(isinstance(b, dict) for b in parsed)
-                        ):
-                            content_list = parsed
-                    except (json_mod.JSONDecodeError, UnicodeDecodeError):
-                        pass
-                    break
-
-            return full_md, content_list
+        raw = await resp.aread()
+        return await asyncio.to_thread(_extract_zip_payload, raw)
 
     @staticmethod
     def _check_response(resp: httpx.Response, context: str) -> dict:

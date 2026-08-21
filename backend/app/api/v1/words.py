@@ -10,6 +10,7 @@ from sqlalchemy import select, delete
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import load_only
 
 from app.auth.deps import get_current_user
 from app.config import settings
@@ -28,23 +29,12 @@ router = APIRouter()
 _logger = logging.getLogger(__name__)
 
 
-def _word_upsert_stmt(
-    document_id: str,
-    paragraph_index: int,
-    word: str,
-    values: dict,
-):
-    """Dialect-neutral upsert keyed by (document_id, paragraph_index, word)."""
-    payload = {
-        "document_id": document_id,
-        "paragraph_index": paragraph_index,
-        "word": word,
-        **values,
-    }
+def _word_upsert_multi_stmt(document_id: str, rows: list[dict]):
+    """Dialect-neutral multi-row upsert keyed by (document_id, paragraph_index, word)."""
     if "sqlite" in settings.DATABASE_URL:
-        stmt = sqlite_insert(WordAnalysis).values(**payload)
+        stmt = sqlite_insert(WordAnalysis).values(rows)
     else:
-        stmt = pg_insert(WordAnalysis).values(**payload)
+        stmt = pg_insert(WordAnalysis).values(rows)
     excluded = stmt.excluded
     return stmt.on_conflict_do_update(
         index_elements=[
@@ -75,11 +65,16 @@ async def _verify_document_ownership(
         doc_uuid = uuid.UUID(document_id)
     except ValueError:
         raise HTTPException(status_code=404, detail=f"Document {document_id} not found")
-    doc = await db.get(Document, doc_uuid)
+    doc = (
+        await db.execute(
+            select(Document)
+            .where(Document.id == doc_uuid)
+            .options(load_only(Document.user_id))
+        )
+    ).scalar_one_or_none()
     if doc is None or doc.user_id != user.id:
         raise HTTPException(status_code=404, detail=f"Document {document_id} not found")
     return doc
-
 
 
 async def _persist_analyses(
@@ -89,6 +84,7 @@ async def _persist_analyses(
 ):
     """Persist word analyses to DB. Uses upsert: same (doc_id, para_index, word)
     overwrites existing record."""
+    rows: list[dict] = []
     for entry in analyses:
         para_index = entry.get("paragraph_index", 0)
         word = entry.get("word", "").strip().lower()
@@ -98,36 +94,38 @@ async def _persist_analyses(
         collocations = entry.get("collocations", [])
         cognates = entry.get("cognates", [])
         syn_ant = entry.get("synonyms_antonyms", {"synonyms": []})
-        await db.execute(
-            _word_upsert_stmt(
-                document_id,
-                para_index,
-                word,
-                {
-                    "phonetic": entry.get("phonetic", ""),
-                    "part_of_speech": entry.get("part_of_speech", ""),
-                    "definition": entry.get("definition", ""),
-                    "definition_zh": entry.get("definition_zh", ""),
-                    "collocations": (
-                        json.dumps(collocations, ensure_ascii=False)
-                        if collocations
-                        else "[]"
-                    ),
-                    "example_sentence": entry.get("example_sentence", ""),
-                    "cognates": (
-                        json.dumps(cognates, ensure_ascii=False) if cognates else "[]"
-                    ),
-                    "synonyms_antonyms": (
-                        json.dumps(syn_ant, ensure_ascii=False)
-                        if syn_ant
-                        else '{"synonyms": []}'
-                    ),
-                    "base_form": entry.get("base_form", ""),
-                    "plural_form": entry.get("plural_form", ""),
-                },
-            )
-        )
+        rows.append({
+            "document_id": document_id,
+            "paragraph_index": para_index,
+            "word": word,
+            "phonetic": entry.get("phonetic", ""),
+            "part_of_speech": entry.get("part_of_speech", ""),
+            "definition": entry.get("definition", ""),
+            "definition_zh": entry.get("definition_zh", ""),
+            "collocations": (
+                json.dumps(collocations, ensure_ascii=False)
+                if collocations
+                else "[]"
+            ),
+            "example_sentence": entry.get("example_sentence", ""),
+            "cognates": (
+                json.dumps(cognates, ensure_ascii=False) if cognates else "[]"
+            ),
+            "synonyms_antonyms": (
+                json.dumps(syn_ant, ensure_ascii=False)
+                if syn_ant
+                else '{"synonyms": []}'
+            ),
+            "base_form": entry.get("base_form", ""),
+            "plural_form": entry.get("plural_form", ""),
+        })
 
+    if rows:
+        # 多值 upsert；按 100 行分块兼顾 SQLite 旧版绑定参数上限。
+        for start in range(0, len(rows), 100):
+            await db.execute(
+                _word_upsert_multi_stmt(document_id, rows[start : start + 100])
+            )
     await db.commit()
 
 
@@ -277,6 +275,9 @@ async def analyze_words_stream(
     # Resolve custom prompt from DB (if set), otherwise use defaults
     system_override, user_override = await resolve_prompt_overrides(db, "analyze_words")
 
+    # 结束请求级读事务：SSE 期间不再持有 DB 事务（流末一次性写库）。
+    await db.commit()
+
     # Flatten entries (same as /analyze) — full paragraph text as context
     flat_entries: list[dict] = []
     for entry in request.entries:
@@ -369,7 +370,7 @@ async def analyze_words_stream(
                             + "\n\n"
                         )
 
-                # Persist if document_id provided
+                # Persist if document_id provided（已先 commit 释放读事务，流末短写）
                 if request.document_id and all_raw:
                     try:
                         await _persist_analyses(request.document_id, all_raw, db)

@@ -87,6 +87,28 @@ export async function generateSummaryStream(
   const decoder = new TextDecoder();
   let buffer = '';
 
+  // ── Chunk throttling: merge token deltas, flush every ~80ms ──
+  // 与单词/句子流一致：token 级事件逐条 setState 会拖垮渲染。
+  const CHUNK_FLUSH_MS = 80;
+  let chunkBuffer = '';
+  let chunkTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const flushChunk = () => {
+    if (chunkBuffer) {
+      onChunk(chunkBuffer);
+      chunkBuffer = '';
+    }
+    if (chunkTimer) {
+      clearTimeout(chunkTimer);
+      chunkTimer = null;
+    }
+  };
+
+  const scheduleChunkFlush = () => {
+    if (chunkTimer) return;
+    chunkTimer = setTimeout(flushChunk, CHUNK_FLUSH_MS);
+  };
+
   // ── Per-read timeout: 300 s without data = connection likely dead ──
   // 后端慢生成时每 60s 发一次 heartbeat, 正常等待不会误杀。
   const READ_TIMEOUT_MS = 300_000;
@@ -127,17 +149,22 @@ export async function generateSummaryStream(
           continue;
         }
         if (event.type === 'done') {
+          flushChunk();
           return event.summary || '';
         }
         if (event.type === 'error') {
+          flushChunk();
           throw new Error(event.message || '总结失败');
         }
         if (event.type === 'chunk' && event.text) {
-          onChunk(event.text);
+          // Merge token deltas — flush on a timer
+          chunkBuffer += event.text;
+          scheduleChunkFlush();
         }
       }
     }
   } catch (err: any) {
+    flushChunk();
     // Distinguish timeout from user-initiated abort
     if (err.name === 'AbortError') {
       if (timedOut && !signal?.aborted) {

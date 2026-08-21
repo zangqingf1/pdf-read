@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useCallback } from 'react';
+import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { getPDFResult, getPDFStatus } from '../services/pdfApi';
 import { translateParagraphsStream } from '../services/translateApi';
@@ -9,6 +9,7 @@ import { analyzeSentencesStream } from '../services/sentenceAnalysisApi';
 import type { SentenceEntry, SentenceAnalysisResult } from '../services/sentenceAnalysisApi';
 import { getStoredDeepseekKey, getStoredAIProvider } from '../components/common/ApiKeyModal';
 import ApiKeyModal from '../components/common/ApiKeyModal';
+import { useShallow } from 'zustand/react/shallow';
 import { useDocumentStore } from '../stores/documentStore';
 import { useReaderStore, BG_COLORS } from '../stores/readerStore';
 import { useResponsiveBreakpoint } from '../hooks/useResponsiveBreakpoint';
@@ -38,7 +39,12 @@ export default function ReaderPage() {
   const [parseStatus, setParseStatus] = useState<string>('');
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const autoRetryCountRef = useRef(0);
+  const pendingWidthRef = useRef(0);
+  const widthRafRef = useRef<number | null>(null);
+  // 轮询回调里只能读到创建时的闭包值 —— error 用 ref 同步，失败后立即停表
+  const errorRef = useRef<string | null>(null);
 
+  // 细粒度订阅：流式文本/进度等与页面外壳无关的字段变化不再触发整页重渲染
   const {
     setDocument,
     reset,
@@ -75,7 +81,43 @@ export default function ReaderPage() {
     setSentenceAnalyses,
     setAnalyzingSentences,
     setSentenceAnalysisError,
-  } = useDocumentStore();
+  } = useDocumentStore(useShallow((s) => ({
+    setDocument: s.setDocument,
+    reset: s.reset,
+    title: s.title,
+    titleZh: s.titleZh,
+    setTitleZh: s.setTitleZh,
+    paragraphs: s.paragraphs,
+    documentId: s.documentId,
+    translations: s.translations,
+    isTranslating: s.isTranslating,
+    translationError: s.translationError,
+    updateTranslations: s.updateTranslations,
+    setTranslating: s.setTranslating,
+    setTranslationError: s.setTranslationError,
+    selectedWords: s.selectedWords,
+    wordAnalyses: s.wordAnalyses,
+    isAnalyzing: s.isAnalyzing,
+    analysisError: s.analysisError,
+    clearWordSelection: s.clearWordSelection,
+    setWordAnalyses: s.setWordAnalyses,
+    setAnalyzing: s.setAnalyzing,
+    setAnalysisError: s.setAnalysisError,
+    setAnalysisProgress: s.setAnalysisProgress,
+    removePendingWordAnalyses: s.removePendingWordAnalyses,
+    appendStreamingText: s.appendStreamingText,
+    clearStreamingTexts: s.clearStreamingTexts,
+    appendSentenceStreamingText: s.appendSentenceStreamingText,
+    clearSentenceStreamingTexts: s.clearSentenceStreamingTexts,
+    selectedSentences: s.selectedSentences,
+    sentenceAnalyses: s.sentenceAnalyses,
+    isAnalyzingSentences: s.isAnalyzingSentences,
+    sentenceAnalysisError: s.sentenceAnalysisError,
+    clearSentenceSelection: s.clearSentenceSelection,
+    setSentenceAnalyses: s.setSentenceAnalyses,
+    setAnalyzingSentences: s.setAnalyzingSentences,
+    setSentenceAnalysisError: s.setSentenceAnalysisError,
+  })));
 
   const [showApiKeyModal, setShowApiKeyModal] = useState(false);
   const [translationTrigger, setTranslationTrigger] = useState(0);
@@ -122,14 +164,80 @@ export default function ReaderPage() {
     return () => destroyPlayer();
   }, []);
 
-  const hasAnalyses = Object.keys(wordAnalyses).length > 0
-    || Object.keys(sentenceAnalyses).length > 0
-    || isAnalyzing
-    || isAnalyzingSentences
-    || !!analysisError
-    || !!sentenceAnalysisError;
-  const selectedWordCount = Object.keys(selectedWords).length;
-  const selectedSentenceCount = Object.keys(selectedSentences).length;
+  const hasAnalyses = useMemo(
+    () => Object.keys(wordAnalyses).length > 0
+      || Object.keys(sentenceAnalyses).length > 0
+      || isAnalyzing
+      || isAnalyzingSentences
+      || !!analysisError
+      || !!sentenceAnalysisError,
+    [wordAnalyses, sentenceAnalyses, isAnalyzing, isAnalyzingSentences, analysisError, sentenceAnalysisError]
+  );
+  const selectedWordCount = useMemo(() => Object.keys(selectedWords).length, [selectedWords]);
+  const selectedSentenceCount = useMemo(() => Object.keys(selectedSentences).length, [selectedSentences]);
+  const hasUntranslated = useMemo(
+    () => paragraphs.some((p) => p.text.trim() && !translations[p.index]),
+    [paragraphs, translations]
+  );
+
+  // ── Main Reader 内容（提前 useMemo：组件下方存在 loading/error 早退分支，
+  //    Hooks 不能出现在条件返回之后）──
+  const apiKey = getProviderApiKey(selectedProvider);
+  const readingAreaContent = useMemo(
+    () => (
+      <>
+        {/* API key prompt */}
+        {!apiKey && hasUntranslated && (
+          <div className="mb-6 p-4 bg-canvas-soft border border-hairline rounded-lg flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" strokeWidth="1.5">
+                <circle cx="12" cy="12" r="10" />
+                <path d="M12 16v-4M12 8h.01" />
+              </svg>
+              <span className="text-sm text-body-strong">配置 {getProviderLabel(selectedProvider)} API Key 以启用段落翻译</span>
+            </div>
+            <Button variant="primary" size="sm" onClick={() => setShowApiKeyModal(true)}>
+              配置
+            </Button>
+          </div>
+        )}
+        {/* Error banners */}
+        {translationError && !isTranslating && (
+          <div className="mb-4 p-3 bg-error/10 border border-error/20 rounded-md text-sm text-error">
+            {translationError}
+          </div>
+        )}
+        {analysisError && !isAnalyzing && (
+          <div className="mb-4 p-3 bg-error/10 border border-error/20 rounded-md text-sm text-error">
+            {analysisError}
+          </div>
+        )}
+        {sentenceAnalysisError && !isAnalyzingSentences && (
+          <div className="mb-4 p-3 bg-error/10 border border-error/20 rounded-md text-sm text-error">
+            {sentenceAnalysisError}
+          </div>
+        )}
+        <ReadingArea
+          isTouchDevice={isTouchDevice}
+          apiKey={apiKey}
+          onRequireApiKey={() => setShowApiKeyModal(true)}
+          provider={selectedProvider}
+        />
+      </>
+    ),
+    [
+      apiKey,
+      hasUntranslated,
+      translationError,
+      isTranslating,
+      analysisError,
+      isAnalyzing,
+      sentenceAnalysisError,
+      isAnalyzingSentences,
+      isTouchDevice,
+      selectedProvider,
+    ],
+  );
 
   // Track parse status for polling
   const parseStatusRef = useRef<string>('');
@@ -163,15 +271,32 @@ export default function ReaderPage() {
     };
     const handleMove = (e: MouseEvent | TouchEvent) => {
       const delta = getClientX(e) - dragStartX.current;
-      const newWidth = Math.max(300, Math.min(window.innerWidth - 320, dragStartWidth.current + delta));
-      setLeftWidth(newWidth);
+      pendingWidthRef.current = Math.max(300, Math.min(window.innerWidth - 320, dragStartWidth.current + delta));
+      // rAF 合并同帧多次 mousemove，避免正文分栏逐事件重排
+      if (widthRafRef.current === null) {
+        widthRafRef.current = requestAnimationFrame(() => {
+          widthRafRef.current = null;
+          setLeftWidth(pendingWidthRef.current);
+        });
+      }
     };
-    const handleEnd = () => setIsDragging(false);
+    const handleEnd = () => {
+      if (widthRafRef.current !== null) {
+        cancelAnimationFrame(widthRafRef.current);
+        widthRafRef.current = null;
+      }
+      setLeftWidth(pendingWidthRef.current);
+      setIsDragging(false);
+    };
     document.addEventListener('mousemove', handleMove);
     document.addEventListener('mouseup', handleEnd);
     document.addEventListener('touchmove', handleMove, { passive: false });
     document.addEventListener('touchend', handleEnd);
     return () => {
+      if (widthRafRef.current !== null) {
+        cancelAnimationFrame(widthRafRef.current);
+        widthRafRef.current = null;
+      }
       document.removeEventListener('mousemove', handleMove);
       document.removeEventListener('mouseup', handleEnd);
       document.removeEventListener('touchmove', handleMove);
@@ -232,10 +357,18 @@ export default function ReaderPage() {
             parseStatusRef.current = 'processing';
           } else if (status === 404) {
             setError('文档不存在');
+            errorRef.current = '文档不存在';
             setLoading(false);
           } else {
-            setError(err?.response?.data?.detail || '加载失败');
+            const detail = err?.response?.data?.detail || '加载失败';
+            setError(detail);
+            errorRef.current = detail;
             setLoading(false);
+          }
+          // 失败即停表：闭包里的 error 永远是初始 null，继续轮询只会白费请求
+          if (pollRef.current) {
+            clearInterval(pollRef.current);
+            pollRef.current = null;
           }
         }
       }
@@ -247,9 +380,10 @@ export default function ReaderPage() {
       if (
         parseStatusRef.current === 'completed' ||
         parseStatusRef.current === 'awaiting_selection' ||
-        error
+        errorRef.current
       ) {
         if (pollRef.current) clearInterval(pollRef.current);
+        pollRef.current = null;
         return;
       }
       tryLoadDocument();
@@ -484,6 +618,14 @@ export default function ReaderPage() {
   // ── Analyze selected sentences (streaming) ──
   const sentenceAbortRef = useRef<AbortController | null>(null);
 
+  // ── 卸载时中止进行中的单词/句子分析流：离开页面后不再向 store 写入 ──
+  useEffect(() => {
+    return () => {
+      analysisAbortRef.current?.abort();
+      sentenceAbortRef.current?.abort();
+    };
+  }, []);
+
   const handleAnalyzeSentences = useCallback(async () => {
     const selectedKeys = Object.keys(selectedSentences);
     if (selectedKeys.length === 0) return;
@@ -650,55 +792,6 @@ export default function ReaderPage() {
       </div>
     );
   }
-
-  // ── Main Reader ──
-  const apiKey = getProviderApiKey(selectedProvider);
-  const hasUntranslated = paragraphs.some(
-    (p) => p.text.trim() && !translations[p.index]
-  );
-
-  // Shared reading area content (used by both desktop and mobile paths)
-  const readingAreaContent = (
-    <>
-      {/* API key prompt */}
-      {!apiKey && hasUntranslated && (
-        <div className="mb-6 p-4 bg-canvas-soft border border-hairline rounded-lg flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" strokeWidth="1.5">
-              <circle cx="12" cy="12" r="10" />
-              <path d="M12 16v-4M12 8h.01" />
-            </svg>
-            <span className="text-sm text-body-strong">配置 {getProviderLabel(selectedProvider)} API Key 以启用段落翻译</span>
-          </div>
-          <Button variant="primary" size="sm" onClick={() => setShowApiKeyModal(true)}>
-            配置
-          </Button>
-        </div>
-      )}
-      {/* Error banners */}
-      {translationError && !isTranslating && (
-        <div className="mb-4 p-3 bg-error/10 border border-error/20 rounded-md text-sm text-error">
-          {translationError}
-        </div>
-      )}
-      {analysisError && !isAnalyzing && (
-        <div className="mb-4 p-3 bg-error/10 border border-error/20 rounded-md text-sm text-error">
-          {analysisError}
-        </div>
-      )}
-      {sentenceAnalysisError && !isAnalyzingSentences && (
-        <div className="mb-4 p-3 bg-error/10 border border-error/20 rounded-md text-sm text-error">
-          {sentenceAnalysisError}
-        </div>
-      )}
-      <ReadingArea
-        isTouchDevice={isTouchDevice}
-        apiKey={apiKey}
-        onRequireApiKey={() => setShowApiKeyModal(true)}
-        provider={selectedProvider}
-      />
-    </>
-  );
 
   return (
     <div className="h-screen flex flex-col overflow-hidden transition-colors duration-300" style={{ backgroundColor: bgColorValue }}>

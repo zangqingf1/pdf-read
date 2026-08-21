@@ -10,6 +10,7 @@ from sqlalchemy import select, delete
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import load_only
 
 from app.auth.deps import get_current_user
 from app.config import settings
@@ -28,23 +29,12 @@ router = APIRouter()
 _logger = logging.getLogger(__name__)
 
 
-def _sentence_upsert_stmt(
-    document_id: str,
-    paragraph_index: int,
-    sentence_index: int,
-    values: dict,
-):
-    """Dialect-neutral upsert keyed by (document_id, paragraph_index, sentence_index)."""
-    payload = {
-        "document_id": document_id,
-        "paragraph_index": paragraph_index,
-        "sentence_index": sentence_index,
-        **values,
-    }
+def _sentence_upsert_multi_stmt(document_id: str, rows: list[dict]):
+    """Dialect-neutral multi-row upsert keyed by (document_id, paragraph_index, sentence_index)."""
     if "sqlite" in settings.DATABASE_URL:
-        stmt = sqlite_insert(SentenceAnalysis).values(**payload)
+        stmt = sqlite_insert(SentenceAnalysis).values(rows)
     else:
-        stmt = pg_insert(SentenceAnalysis).values(**payload)
+        stmt = pg_insert(SentenceAnalysis).values(rows)
     excluded = stmt.excluded
     return stmt.on_conflict_do_update(
         index_elements=[
@@ -67,7 +57,13 @@ async def _verify_document_ownership(
         doc_uuid = uuid.UUID(document_id)
     except ValueError:
         raise HTTPException(status_code=404, detail=f"Document {document_id} not found")
-    doc = await db.get(Document, doc_uuid)
+    doc = (
+        await db.execute(
+            select(Document)
+            .where(Document.id == doc_uuid)
+            .options(load_only(Document.user_id))
+        )
+    ).scalar_one_or_none()
     if doc is None or doc.user_id != user.id:
         raise HTTPException(status_code=404, detail=f"Document {document_id} not found")
     return doc
@@ -80,6 +76,7 @@ async def _persist_analyses(
 ):
     """Persist sentence analyses to DB. Uses upsert: same (doc_id, para_index,
     sentence_index) overwrites existing record."""
+    rows: list[dict] = []
     for entry in analyses:
         para_index = entry.get("paragraph_index", 0)
         sent_index = entry.get("sentence_index", 0)
@@ -91,18 +88,20 @@ async def _persist_analyses(
             {"content": content},
             ensure_ascii=False,
         )
-        await db.execute(
-            _sentence_upsert_stmt(
-                document_id,
-                para_index,
-                sent_index,
-                {
-                    "sentence_text": sentence_text,
-                    "structure_json": structure_json,
-                },
-            )
-        )
+        rows.append({
+            "document_id": document_id,
+            "paragraph_index": para_index,
+            "sentence_index": sent_index,
+            "sentence_text": sentence_text,
+            "structure_json": structure_json,
+        })
 
+    if rows:
+        # 多值 upsert；按 100 行分块兼顾 SQLite 旧版绑定参数上限。
+        for start in range(0, len(rows), 100):
+            await db.execute(
+                _sentence_upsert_multi_stmt(document_id, rows[start : start + 100])
+            )
     await db.commit()
 
 
@@ -286,6 +285,9 @@ async def analyze_sentences_stream(
 
     system_override, user_override = await resolve_prompt_overrides(db, "analyze_sentences")
 
+    # 结束请求级读事务：SSE 期间不再持有 DB 事务（流末一次性写库）。
+    await db.commit()
+
     async def event_generator():
         all_raw: list[dict] = []
         try:
@@ -336,7 +338,7 @@ async def analyze_sentences_stream(
                             + "\n\n"
                         )
 
-                # Persist if document_id provided
+                # Persist if document_id provided（已先 commit 释放读事务，流末短写）
                 if request.document_id and all_raw:
                     try:
                         await _persist_analyses(request.document_id, all_raw, db)

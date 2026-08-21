@@ -103,6 +103,9 @@ async def summarize_document_stream(
     ai = create_ai_service(provider=provider, api_key=request.api_key)
     system_override, user_override = await resolve_prompt_overrides(db, "summary")
 
+    # 结束请求级读事务：SSE 期间不再持有 DB 事务（读正文/写总结都在流内短时完成）。
+    await db.commit()
+
     async def event_generator():
         try:
             try:

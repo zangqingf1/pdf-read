@@ -187,10 +187,10 @@ function highlightTokens(text: string, pIndex: number, wordAnalyses: Record<stri
 // ── 整块渲染（测量树与分页 DOM 共用）──
 export function renderWholeBlock(id: string, ctx: BlockCtx): React.ReactNode {
   const { data, prefs } = ctx;
-  const wordAnalyses: Record<string, WordAnalysisResult> = {};
-  for (const w of data.words) wordAnalyses[wordAnalysisKey(w.paragraph_index, w.word)] = w;
-  const sentenceAnalyses: Record<string, SentenceAnalysisResult> = {};
-  for (const s of data.sentences) sentenceAnalyses[sentenceAnalysisKey(s.paragraph_index, s.sentence_index)] = s;
+  // 索引在 buildExportData 时已建好（wordsByKey/sentencesByKey/paragraphsByIndex），
+  // 每个块渲染只做 O(1) 查找，不再重建字典。
+  const wordAnalyses = data.wordsByKey;
+  const sentenceAnalyses = data.sentencesByKey;
 
   switch (id) {
     case blockIds.title:
@@ -216,7 +216,7 @@ export function renderWholeBlock(id: string, ctx: BlockCtx): React.ReactNode {
 
   const pMatch = id.match(/^p:(\d+)$/);
   if (pMatch) {
-    const p = data.paragraphs.find((x) => x.index === Number(pMatch[1]));
+    const p = data.paragraphsByIndex.get(Number(pMatch[1]));
     if (!p) return null;
     return (
       <div className="ep-paragraph">
@@ -245,16 +245,13 @@ export function renderWholeBlock(id: string, ctx: BlockCtx): React.ReactNode {
 
   const wMatch = id.match(/^w:(\d+):(.+)$/);
   if (wMatch) {
-    const pi = Number(wMatch[1]);
-    const analysis = data.words.find((w) => w.paragraph_index === pi && w.word === wMatch[2]);
+    const analysis = wordAnalyses[wordAnalysisKey(Number(wMatch[1]), wMatch[2])];
     if (analysis) return <WordCardView analysis={analysis} prefs={prefs} />;
   }
 
   const sMatch = id.match(/^s:(\d+):(\d+)$/);
   if (sMatch) {
-    const pi = Number(sMatch[1]);
-    const si = Number(sMatch[2]);
-    const analysis = data.sentences.find((s) => s.paragraph_index === pi && s.sentence_index === si);
+    const analysis = sentenceAnalyses[sentenceAnalysisKey(Number(sMatch[1]), Number(sMatch[2]))];
     if (analysis) return <SentenceCardView analysis={analysis} prefs={prefs} />;
   }
 
@@ -329,11 +326,11 @@ export function renderParagraphFrag(
   ctx: BlockCtx
 ): React.ReactNode {
   const { data, prefs } = ctx;
-  const p = data.paragraphs.find((x) => x.index === pIndex);
+  const p = data.paragraphsByIndex.get(pIndex);
   if (!p) return null;
   const norm = paragraphNormText(p);
-  const wordAnalyses: Record<string, WordAnalysisResult> = {};
-  for (const w of data.words) wordAnalyses[wordAnalysisKey(w.paragraph_index, w.word)] = w;
+  // 索引在 buildExportData 已建好，这里直接 O(1) 查表
+  const wordAnalyses = data.wordsByKey;
 
   const enSlice = norm.slice(frag.enFrom, frag.enTo);
   const zh = data.translations[pIndex] ?? '';
@@ -472,7 +469,7 @@ export function analyzedTokenPositions(
   prefs: ExportPreferences,
   pi: number
 ): { id: string; pos: number }[] {
-  const p = data.paragraphs.find((x) => x.index === pi);
+  const p = data.paragraphsByIndex.get(pi);
   if (!p) return [];
   const norm = paragraphNormText(p);
   const out: { id: string; pos: number }[] = [];

@@ -4,8 +4,11 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { safeMarkdownComponents } from '../../utils/markdownComponents';
 import { useDocumentStore } from '../../stores/documentStore';
+import { useShallow } from 'zustand/react/shallow';
 import { useReaderStore, WORD_PANEL_FONT_SIZE_MIN, WORD_PANEL_FONT_SIZE_MAX, BG_COLORS } from '../../stores/readerStore';
 import { deleteWordAnalysis, deleteAllWordAnalyses, WordAnalysisResult } from '../../services/wordAnalysisApi';
+import { batchAddVocabulary } from '../../services/vocabularyApi';
+import { WordRichTags } from './WordTags';
 import { deleteSentenceAnalysis, deleteAllSentenceAnalyses } from '../../services/sentenceAnalysisApi';
 import type { SentenceAnalysisResult } from '../../services/sentenceAnalysisApi';
 import { sentenceBodyMarkdown, sentenceBreakdownChunks } from '../../utils/sentenceSections';
@@ -198,49 +201,12 @@ function WordCard({
         </div>
       )}
 
-      {/* Synonyms */}
-      {(analysis.synonyms_antonyms?.synonyms?.length ?? 0) > 0 && (
-        <div className="mb-2">
-          <span className="text-success text-[0.75em] block mb-1">同义词</span>
-          <div className="flex flex-wrap gap-1.5">
-            {analysis.synonyms_antonyms.synonyms.map((s, i) => (
-              <span key={i} className="inline-flex items-center gap-1 bg-[#f0f7f1] border border-[#c8e6c9] rounded px-2 py-0.5 text-xs">
-                <span className="text-muted-soft">{s.part_of_speech}</span>
-                <span className="font-medium text-body-strong">{s.word}</span>
-              </span>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Cognates */}
-      {analysis.cognates && analysis.cognates.length > 0 && (
-        <div className="mb-2">
-          <span className="text-muted text-[0.75em] block mb-1">同根词</span>
-          <div className="flex flex-wrap gap-1.5">
-            {analysis.cognates.map((c, i) => (
-              <span key={i} className="inline-flex items-center gap-1 bg-surface-cream-strong rounded px-2 py-0.5 text-xs">
-                <span className="text-muted-soft">{c.part_of_speech}</span>
-                <span className="font-medium text-body-strong">{c.word}</span>
-              </span>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Collocations */}
-      {analysis.collocations && analysis.collocations.length > 0 && (
-        <div className="mb-2">
-          <span className="text-muted text-[0.75em] block mb-1">常见搭配</span>
-          <div className="flex flex-wrap gap-1.5">
-            {analysis.collocations.map((c, i) => (
-              <span key={i} className="inline-flex items-center bg-[#eef4fa] border border-[#c8ddf0] rounded px-2 py-0.5 text-xs font-reading">
-                {c}
-              </span>
-            ))}
-          </div>
-        </div>
-      )}
+      {/* Synonyms / Cognates / Collocations (shared with word book) */}
+      <WordRichTags
+        synonyms={analysis.synonyms_antonyms?.synonyms || []}
+        cognates={analysis.cognates || []}
+        collocations={analysis.collocations || []}
+      />
 
       {/* Example Sentence */}
       {analysis.example_sentence && (
@@ -516,18 +482,44 @@ export default function StudyPanel({
     sentenceStreamingTexts,
     selectedWords,
     selectedSentences,
-  } = useDocumentStore();
+  } = useDocumentStore(useShallow((s) => ({
+    documentId: s.documentId,
+    paragraphs: s.paragraphs,
+    wordAnalyses: s.wordAnalyses,
+    sentenceAnalyses: s.sentenceAnalyses,
+    removeWordAnalysis: s.removeWordAnalysis,
+    removeSentenceAnalysis: s.removeSentenceAnalysis,
+    clearWordAnalyses: s.clearWordAnalyses,
+    clearSentenceAnalyses: s.clearSentenceAnalyses,
+    isAnalyzing: s.isAnalyzing,
+    isAnalyzingSentences: s.isAnalyzingSentences,
+    analysisError: s.analysisError,
+    sentenceAnalysisError: s.sentenceAnalysisError,
+    analysisProgress: s.analysisProgress,
+    streamingTexts: s.streamingTexts,
+    sentenceStreamingTexts: s.sentenceStreamingTexts,
+    selectedWords: s.selectedWords,
+    selectedSentences: s.selectedSentences,
+  })));
 
   const {
     wordPanelFontSize,
     increaseWordPanelFontSize,
     decreaseWordPanelFontSize,
     bgColor,
-  } = useReaderStore();
+  } = useReaderStore(useShallow((s) => ({
+    wordPanelFontSize: s.wordPanelFontSize,
+    increaseWordPanelFontSize: s.increaseWordPanelFontSize,
+    decreaseWordPanelFontSize: s.decreaseWordPanelFontSize,
+    bgColor: s.bgColor,
+  })));
   const bgColorValue = BG_COLORS.find(c => c.key === bgColor)?.value ?? BG_COLORS[0].value;
 
   const [activeTab, setActiveTab] = useState<'words' | 'sentences'>('words');
   const [clearConfirming, setClearConfirming] = useState(false);
+  const [vocabAdding, setVocabAdding] = useState(false);
+  const [vocabMsg, setVocabMsg] = useState<string | null>(null);
+  const [vocabMsgError, setVocabMsgError] = useState(false);
 
   // 段落 index → 英文原文（单词卡片按原文出现顺序定位的依据）
   const paragraphTextByIdx = useMemo(() => {
@@ -536,18 +528,23 @@ export default function StudyPanel({
     return m;
   }, [paragraphs]);
 
+  // 段落 index → 词干位置表：只在段落文本变化时重算一次，
+  // 流式解析/翻译写 store 时不再反复 tokenize 全文
+  const wordPositionCache = useMemo(() => {
+    const cache = new Map<number, Map<string, number>>();
+    for (const [pi, text] of paragraphTextByIdx) {
+      cache.set(pi, wordPositionMap(text));
+    }
+    return cache;
+  }, [paragraphTextByIdx]);
+
   // 单词卡：先按段落，段内按词干在原文 token 流中的首次出现下标（原文顺序）
   const wordList = useMemo(() => {
     const list = Object.values(wordAnalyses);
-    const posCache = new Map<number, Map<string, number>>();
     const rank = (pi: number, word: string): number => {
-      let m = posCache.get(pi);
-      if (!m) {
-        m = wordPositionMap(paragraphTextByIdx.get(pi) ?? '');
-        posCache.set(pi, m);
-      }
+      const m = wordPositionCache.get(pi);
       // 词不在段内 / 段不存在 → 排末尾（稳定兜底，不抖动）
-      return m.get(word.toLowerCase()) ?? Number.MAX_SAFE_INTEGER;
+      return m?.get(word.toLowerCase()) ?? Number.MAX_SAFE_INTEGER;
     };
     list.sort((a, b) =>
       a.paragraph_index !== b.paragraph_index
@@ -555,7 +552,7 @@ export default function StudyPanel({
         : rank(a.paragraph_index, a.word) - rank(b.paragraph_index, b.word)
     );
     return list;
-  }, [wordAnalyses, paragraphTextByIdx]);
+  }, [wordAnalyses, wordPositionCache]);
 
   // 句子卡：先按段落，段内按 sentence_index（原文句子顺序）
   const sentenceList = useMemo(() => {
@@ -630,6 +627,37 @@ export default function StudyPanel({
   );
 
   const [clearError, setClearError] = useState<string | null>(null);
+
+  const handleBatchAdd = useCallback(async () => {
+    if (!documentId) {
+      setVocabMsg('文档 ID 不存在');
+      setVocabMsgError(true);
+      return;
+    }
+    if (wordList.length === 0) {
+      setVocabMsg('暂无可加入的单词');
+      setVocabMsgError(true);
+      return;
+    }
+    setVocabAdding(true);
+    setVocabMsg(null);
+    try {
+      const res = await batchAddVocabulary(documentId);
+      const msg = res.added > 0
+        ? `已加入 ${res.added} 个，跳过 ${res.skipped} 个（已在单词本）`
+        : `全部 ${res.total} 个已在单词本中`;
+      setVocabMsg(msg);
+      setVocabMsgError(false);
+      setTimeout(() => setVocabMsg(null), 3000);
+    } catch (e: unknown) {
+      const detail = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+        || (e as Error)?.message || '加入失败';
+      setVocabMsg(detail);
+      setVocabMsgError(true);
+    } finally {
+      setVocabAdding(false);
+    }
+  }, [documentId, wordList]);
 
   const handleClearCurrent = useCallback(async () => {
     if (!documentId) {
@@ -831,6 +859,35 @@ export default function StudyPanel({
                 >
                   关闭
                 </button>
+              </div>
+            )}
+
+            {/* Batch add to vocabulary */}
+            {wordList.length > 0 && (
+              <div className="mb-3 flex items-center justify-between gap-2">
+                <span className="text-xs text-muted">已解析 {wordList.length} 个单词</span>
+                <button
+                  onClick={handleBatchAdd}
+                  disabled={vocabAdding}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-primary text-on-primary rounded-md text-xs font-medium hover:bg-primary-active disabled:opacity-50 transition-colors"
+                >
+                  {vocabAdding ? (
+                    <>
+                      <svg className="animate-spin" width="12" height="12" viewBox="0 0 24 24" fill="none">
+                        <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" opacity="0.3" />
+                        <path d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" fill="currentColor" />
+                      </svg>
+                      加入中...
+                    </>
+                  ) : (
+                    <>一键加入单词本 ({wordList.length})</>
+                  )}
+                </button>
+              </div>
+            )}
+            {vocabMsg && (
+              <div className={`mb-3 p-2.5 rounded-md text-xs ${vocabMsgError ? 'bg-error/10 border border-error/20 text-error' : 'bg-success/10 border border-success/20 text-success'}`}>
+                {vocabMsg}
               </div>
             )}
 

@@ -62,6 +62,9 @@ export default function HomePage() {
           <Button variant="ghost" size="sm" onClick={() => setShowApiKeyModal(true)}>
             API 配置
           </Button>
+          <Button variant="ghost" size="sm" onClick={() => window.location.href = '/vocabulary'}>
+            单词本
+          </Button>
         </div>
       </header>
 

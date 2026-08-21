@@ -6,6 +6,8 @@ export function useSplitPane(defaultRatio: number = 0.55) {
   const [isDragging, setIsDragging] = useState(false);
   const dragStartX = useRef(0);
   const dragStartWidth = useRef(0);
+  const pendingWidthRef = useRef(0);
+  const rafRef = useRef<number | null>(null);
 
   const getClientX = useCallback((e: MouseEvent | TouchEvent): number => {
     if ('touches' in e) {
@@ -39,14 +41,25 @@ export function useSplitPane(defaultRatio: number = 0.55) {
 
     const handleMove = (e: MouseEvent | TouchEvent) => {
       const delta = getClientX(e) - dragStartX.current;
-      const newWidth = Math.max(
+      pendingWidthRef.current = Math.max(
         300,
         Math.min(window.innerWidth - 320, dragStartWidth.current + delta)
       );
-      setLeftWidth(newWidth);
+      // rAF 合并同帧内多次 mousemove：PDF 页面不再逐事件重栅格化
+      if (rafRef.current === null) {
+        rafRef.current = requestAnimationFrame(() => {
+          rafRef.current = null;
+          setLeftWidth(pendingWidthRef.current);
+        });
+      }
     };
 
     const handleEnd = () => {
+      if (rafRef.current !== null) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
+      setLeftWidth(pendingWidthRef.current);
       setIsDragging(false);
     };
 
@@ -56,6 +69,10 @@ export function useSplitPane(defaultRatio: number = 0.55) {
     document.addEventListener('touchend', handleEnd);
 
     return () => {
+      if (rafRef.current !== null) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
       document.removeEventListener('mousemove', handleMove);
       document.removeEventListener('mouseup', handleEnd);
       document.removeEventListener('touchmove', handleMove);

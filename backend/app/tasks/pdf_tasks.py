@@ -19,7 +19,9 @@ async def _parse_pdf_async(task_id: str, file_path: str, mineru_token: str = "")
     async with async_session_factory() as db:
         try:
             doc_id = uuid.UUID(task_id)
-            await pdf_service.parse_document(doc_id, db, mineru_token=mineru_token)
+            await pdf_service.parse_document(
+                doc_id, db, mineru_token=mineru_token, release_lock_before_ocr=True
+            )
             await db.commit()
         except Exception as e:
             stmt = select(Document).where(Document.id == uuid.UUID(task_id))

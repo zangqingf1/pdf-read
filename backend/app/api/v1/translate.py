@@ -7,11 +7,12 @@ import uuid
 
 from fastapi import APIRouter, HTTPException, Depends
 from fastapi.responses import StreamingResponse
-from sqlalchemy import update
+from sqlalchemy import case, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import load_only
 
 from app.auth.deps import get_current_user
-from app.database import get_db
+from app.database import get_db, async_session_factory
 from app.models.document import Document
 from app.models.paragraph import Paragraph
 from app.models.user import User
@@ -30,7 +31,13 @@ async def _verify_document_ownership(
         doc_uuid = uuid.UUID(document_id)
     except ValueError:
         raise HTTPException(status_code=404, detail=f"Document {document_id} not found")
-    doc = await db.get(Document, doc_uuid)
+    doc = (
+        await db.execute(
+            select(Document)
+            .where(Document.id == doc_uuid)
+            .options(load_only(Document.user_id))
+        )
+    ).scalar_one_or_none()
     if doc is None or doc.user_id != user.id:
         raise HTTPException(status_code=404, detail=f"Document {document_id} not found")
     return doc
@@ -47,13 +54,27 @@ async def _save_translations(
     if not translations:
         return
     doc_uuid = uuid.UUID(document_id)
-    for index, text in translations.items():
-        if not text or not text.strip():
-            continue
+    items = [
+        (index, text)
+        for index, text in translations.items()
+        if text and text.strip()
+    ]
+    if not items:
+        return
+    # 单条 CASE UPDATE：100 段翻译从 100 次往返降为几次批量语句。
+    # 按 200 段分块，兼顾 SQLite 旧版 999 绑定参数上限。
+    CHUNK_SIZE = 200
+    for start in range(0, len(items), CHUNK_SIZE):
+        chunk = items[start : start + CHUNK_SIZE]
+        whens = [(Paragraph.index == index, text) for index, text in chunk]
+        index_case = case(*whens)
         await db.execute(
             update(Paragraph)
-            .where(Paragraph.document_id == doc_uuid, Paragraph.index == index)
-            .values(text_zh=text)
+            .where(
+                Paragraph.document_id == doc_uuid,
+                Paragraph.index.in_([index for index, _ in chunk]),
+            )
+            .values(text_zh=index_case)
             .execution_options(synchronize_session=False)
         )
     await db.commit()
@@ -78,20 +99,29 @@ async def _persist_translations_by_index(
     document_id: str,
     indexed: list[tuple[int, str]],
     real_indices: list[int],
-    db: AsyncSession,
+    db: AsyncSession | None,
 ) -> None:
     """Build a {real_index: text} map from position-indexed results and save.
 
     ``indexed`` is a list of (position, text) — e.g. ``enumerate(translations)``
     or an ``ordered`` list rebuilt from a stream dict. ``real_indices[pos]`` is
     the real paragraph index for submitted position ``pos``.
+
+    ``db=None`` (SSE stream) opens a short-lived session so the request-level
+    session/transaction does not span the whole stream.
     """
     index_map: dict[int, str] = {}
     for pos, text in indexed:
         if not text or not text.strip():
             continue
         index_map[real_indices[pos]] = text
-    await _save_translations(document_id, index_map, db)
+    if not index_map:
+        return
+    if db is None:
+        async with async_session_factory() as short_db:
+            await _save_translations(document_id, index_map, short_db)
+    else:
+        await _save_translations(document_id, index_map, db)
 
 
 async def _translate_and_persist_title(
@@ -100,9 +130,12 @@ async def _translate_and_persist_title(
     document_id: str | None,
     system_prompt_override: str | None,
     user_prompt_override: str | None,
-    db: AsyncSession,
+    db: AsyncSession | None,
 ) -> str | None:
-    """翻译大标题并持久化到 documents.title_zh（失败不阻断段落翻译）。"""
+    """翻译大标题并持久化到 documents.title_zh（失败不阻断段落翻译）。
+
+    AI 调用不持有 DB 事务；db=None 时用短会话写入。
+    """
     try:
         clean = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]", "", title).strip()
         if not clean:
@@ -113,11 +146,20 @@ async def _translate_and_persist_title(
             user_prompt_override=user_prompt_override,
         )
         title_zh = (result[0] if result else "").strip() or None
-        if title_zh and document_id:
-            doc = await db.get(Document, uuid.UUID(document_id))
+        if not (title_zh and document_id):
+            return title_zh
+
+        async def _persist(session: AsyncSession) -> None:
+            doc = await session.get(Document, uuid.UUID(document_id))
             if doc is not None:
                 doc.title_zh = title_zh
-                await db.commit()
+                await session.commit()
+
+        if db is None:
+            async with async_session_factory() as short_db:
+                await _persist(short_db)
+        else:
+            await _persist(db)
         return title_zh
     except Exception:
         _logger.exception("Failed to translate/persist title for document %s", document_id)
@@ -276,6 +318,9 @@ async def translate_stream(
 
     # Resolve custom prompt from DB (if set), otherwise use defaults
     system_override, user_override = await resolve_prompt_overrides(db, "translate")
+
+    # 结束请求级读事务：SSE 期间不再持有 DB 事务（流末一次性写库）。
+    await db.commit()
 
     async def event_generator():
         translations: dict[int, str] = {}

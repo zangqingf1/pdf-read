@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { memo, useState } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import { useDocumentStore } from '../../stores/documentStore';
 import ParagraphBlock from './ParagraphBlock';
 import DocumentSummary from './DocumentSummary';
@@ -17,12 +18,15 @@ interface ReadingAreaProps {
   provider?: AIProvider;
 }
 
-export default function ReadingArea({
+const noop = () => {};
+
+export default memo(function ReadingArea({
   isTouchDevice = false,
   apiKey = null,
   onRequireApiKey,
   provider = 'deepseek',
 }: ReadingAreaProps) {
+  // 只订阅阅读区真正渲染的字段；分析/总结等其他 store 字段变化不再触发整区重渲染
   const {
     titleZh,
     paragraphs,
@@ -32,8 +36,19 @@ export default function ReadingArea({
     selectedPages,
     translations,
     isTranslating,
-  } = useDocumentStore();
-  const { fontSize, increaseFontSize, decreaseFontSize } = useReaderStore();
+  } = useDocumentStore(useShallow((s) => ({
+    titleZh: s.titleZh,
+    paragraphs: s.paragraphs,
+    wordCount: s.wordCount,
+    paragraphCount: s.paragraphCount,
+    pageCount: s.pageCount,
+    selectedPages: s.selectedPages,
+    translations: s.translations,
+    isTranslating: s.isTranslating,
+  })));
+  const fontSize = useReaderStore((s) => s.fontSize);
+  const increaseFontSize = useReaderStore((s) => s.increaseFontSize);
+  const decreaseFontSize = useReaderStore((s) => s.decreaseFontSize);
   const playerStatus = useAudioPlayerStore((s) => s.status);
   const [drawerOpen, setDrawerOpen] = useState(false);
 
@@ -68,7 +83,7 @@ export default function ReadingArea({
             </span>
             {selectedPages && selectedPages.length > 0 && (
               <span>
-                页面 {selectedPages.sort((a, b) => a - b).join(', ')}
+                页面 {[...selectedPages].sort((a, b) => a - b).join(', ')}
               </span>
             )}
             {(!selectedPages || selectedPages.length === 0) && pageCount && (
@@ -159,9 +174,9 @@ export default function ReadingArea({
 
       {/* ── Paragraphs ── */}
       <div>
-        {paragraphs.map((para, idx) => (
+        {paragraphs.map((para) => (
           <ParagraphBlock
-            key={idx}
+            key={para.index}
             paragraph={para}
             translation={translations[para.index]}
             isTranslating={isTranslating}
@@ -173,9 +188,9 @@ export default function ReadingArea({
       {/* ── 全文总结（文末）── */}
       <DocumentSummary
         apiKey={apiKey}
-        onRequireApiKey={onRequireApiKey ?? (() => {})}
+        onRequireApiKey={onRequireApiKey ?? noop}
         provider={provider}
       />
     </div>
   );
-}
+});

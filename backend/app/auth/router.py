@@ -11,6 +11,7 @@ Security notes:
   cap, random filenames); arbitrary URL strings are not accepted.
 """
 
+import asyncio
 import uuid
 
 from fastapi import (
@@ -143,7 +144,7 @@ async def register(body: RegisterRequest, db: AsyncSession = Depends(get_db)):
     user = User(
         email=email,
         nickname=nickname,
-        hashed_password=hash_password(body.password),
+        hashed_password=await asyncio.to_thread(hash_password, body.password),
         is_active=True,
         is_verified=True,  # email proof is the verification code itself
     )
@@ -182,7 +183,17 @@ async def login(
     result = await db.execute(stmt)
     user = result.scalar_one_or_none()
 
-    if user is None or not verify_password(body.password, user.hashed_password):
+    if user is None:
+        record_login_failure(email, ip)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="邮箱或密码错误。",
+        )
+
+    password_ok = await asyncio.to_thread(
+        verify_password, body.password, user.hashed_password
+    )
+    if not password_ok:
         record_login_failure(email, ip)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -237,7 +248,7 @@ async def reset_password_confirm(
 
     await consume_verification_code(db, email, "reset_password", body.code)
 
-    user.hashed_password = hash_password(body.new_password)
+    user.hashed_password = await asyncio.to_thread(hash_password, body.new_password)
     user.token_version += 1  # invalidate all previously issued JWTs
     await db.flush()
     return {"message": "密码已重置，请使用新密码登录。"}

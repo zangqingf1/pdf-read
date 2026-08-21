@@ -1,11 +1,12 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { Document, Page } from 'react-pdf';
 import { pdfjs } from 'react-pdf';
+import pdfjsWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { fetchPDFBlob } from '../../services/pdfApi';
 import Button from '../ui/Button';
 
-// Set PDF.js worker — use unpkg for reliability (same as PDFViewerPanel)
-pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
+// Set PDF.js worker（本地打包，避免运行时依赖 unpkg CDN）
+pdfjs.GlobalWorkerOptions.workerSrc = pdfjsWorkerUrl;
 
 const MAX_PAGES = 10;
 
@@ -28,11 +29,55 @@ export default function PageSelector({
 }: PageSelectorProps) {
   const [selected, setSelected] = useState<number[]>([]);
   const gridRef = useRef<HTMLDivElement>(null);
-  const [pageWidth, setPageWidth] = useState(500);
+  // 初始 0 = 尚未测量：测量前不渲染缩略图，避免先以 500px 巨幅渲染再重排
+  const [pageWidth, setPageWidth] = useState(0);
   const [columns, setColumns] = useState<1 | 2 | 3 | 4>(
     typeof window !== 'undefined' && window.innerWidth >= 768 ? 2 : 1
   );
   const [pdfBlobUrl, setPdfBlobUrl] = useState<string | null>(null);
+  /** 已挂载（进入视口附近）的页码 —— 视口外只渲染占位格，不建 canvas */
+  const [mountedPages, setMountedPages] = useState<Set<number>>(
+    () => new Set([1, 2, 3, 4])
+  );
+  const mountedRef = useRef<Set<number>>(new Set([1, 2, 3, 4]));
+  const slotObserverRef = useRef<IntersectionObserver | null>(null);
+
+  // 缩略图懒挂载：长文档不再一次性创建全部页面的 canvas
+  const observeSlot = useCallback((pageNum: number, el: HTMLDivElement | null) => {
+    if (!el || mountedRef.current.has(pageNum)) return;
+    if (!slotObserverRef.current) {
+      slotObserverRef.current = new IntersectionObserver(
+        (entries) => {
+          let changed = false;
+          for (const entry of entries) {
+            if (!entry.isIntersecting) continue;
+            const p = Number((entry.target as HTMLElement).dataset.pageNum);
+            if (Number.isFinite(p) && !mountedRef.current.has(p)) {
+              mountedRef.current.add(p);
+              changed = true;
+            }
+            slotObserverRef.current?.unobserve(entry.target);
+          }
+          if (changed) setMountedPages(new Set(mountedRef.current));
+        },
+        { rootMargin: '400px 0px' },
+      );
+    }
+    el.dataset.pageNum = String(pageNum);
+    slotObserverRef.current.observe(el);
+  }, []);
+
+  // 稳定 ref 回调：从元素自身的 data-page-num 读页码，避免每渲染
+  // 换一个内联回调导致 React 反复 detach/attach（IO 重复 observe 噪音）
+  const pageSlotRef = useCallback((el: HTMLDivElement | null) => {
+    if (!el) return;
+    const p = Number(el.dataset.pageNum);
+    if (Number.isFinite(p)) observeSlot(p, el);
+  }, [observeSlot]);
+
+  useEffect(() => {
+    return () => slotObserverRef.current?.disconnect();
+  }, []);
 
   // Fetch PDF as blob through axios (so auth header is included)
   useEffect(() => {
@@ -147,54 +192,67 @@ export default function PageSelector({
             'grid gap-3',
             columns === 1 ? 'grid-cols-1' : columns === 2 ? 'grid-cols-2' : columns === 3 ? 'grid-cols-3' : 'grid-cols-4',
           ].join(' ')}>
-            {Array.from({ length: pageCount }, (_, i) => {
-              const pageNum = i + 1;
-              const isSelected = selected.includes(pageNum);
-              const isDisabled = isMaxReached && !isSelected;
+            {pageWidth > 0 &&
+              Array.from({ length: pageCount }, (_, i) => {
+                const pageNum = i + 1;
+                const isSelected = selected.includes(pageNum);
+                const isDisabled = isMaxReached && !isSelected;
+                const isMounted = mountedPages.has(pageNum);
 
-              return (
-                <div
-                  key={pageNum}
-                  onClick={() => !isDisabled && togglePage(pageNum)}
-                  className="overflow-hidden rounded-md border-2 transition-all duration-150 bg-white"
-                  style={{
-                    cursor: isDisabled ? 'not-allowed' : 'pointer',
-                    opacity: isDisabled ? 0.4 : 1,
-                    borderColor: isSelected ? 'var(--primary)' : 'var(--hairline)',
-                    boxShadow: isSelected ? '0 2px 8px rgba(200, 116, 85, 0.15)' : 'none',
-                  }}
-                >
-                  <div className="bg-canvas min-h-[100px]">
-                    <Page
-                      pageNumber={pageNum}
-                      width={pageWidth}
-                      renderTextLayer={false}
-                      renderAnnotationLayer={false}
-                      loading={
-                        <div style={{ width: pageWidth, height: pageWidth * 1.4, background: 'var(--surface-card)' }} />
-                      }
-                    />
-                  </div>
-                  <div className="flex items-center justify-between px-3 py-2">
-                    <div
-                      className={`w-4 h-4 rounded border-2 flex items-center justify-center transition-colors ${isSelected ? 'bg-primary border-primary' : 'border-hairline'}`}
-                    >
-                      {isSelected && (
-                        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3">
-                          <path d="M20 6L9 17l-5-5" />
-                        </svg>
+                return (
+                  <div
+                    key={pageNum}
+                    ref={pageSlotRef}
+                    data-page-num={pageNum}
+                    onClick={() => !isDisabled && togglePage(pageNum)}
+                    className="overflow-hidden rounded-md border-2 transition-all duration-150 bg-white"
+                    style={{
+                      cursor: isDisabled ? 'not-allowed' : 'pointer',
+                      opacity: isDisabled ? 0.4 : 1,
+                      borderColor: isSelected ? 'var(--primary)' : 'var(--hairline)',
+                      boxShadow: isSelected ? '0 2px 8px rgba(200, 116, 85, 0.15)' : 'none',
+                    }}
+                  >
+                    <div className="bg-canvas min-h-[100px]">
+                      {isMounted ? (
+                        <Page
+                          pageNumber={pageNum}
+                          width={pageWidth}
+                          renderTextLayer={false}
+                          renderAnnotationLayer={false}
+                          loading={
+                            <div style={{ width: pageWidth, height: pageWidth * 1.4, background: 'var(--surface-card)' }} />
+                          }
+                        />
+                      ) : (
+                        <div
+                          className="flex items-center justify-center"
+                          style={{ width: pageWidth, height: pageWidth * 1.4, background: 'var(--surface-card)' }}
+                        >
+                          <div className="animate-spin h-4 w-4 border-2 border-primary border-t-transparent rounded-full" />
+                        </div>
                       )}
                     </div>
-                    <span
-                      className="text-xs"
-                      style={{ color: isSelected ? 'var(--primary)' : 'var(--muted)', fontWeight: isSelected ? 600 : 400 }}
-                    >
-                      第 {pageNum} 页
-                    </span>
+                    <div className="flex items-center justify-between px-3 py-2">
+                      <div
+                        className={`w-4 h-4 rounded border-2 flex items-center justify-center transition-colors ${isSelected ? 'bg-primary border-primary' : 'border-hairline'}`}
+                      >
+                        {isSelected && (
+                          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3">
+                            <path d="M20 6L9 17l-5-5" />
+                          </svg>
+                        )}
+                      </div>
+                      <span
+                        className="text-xs"
+                        style={{ color: isSelected ? 'var(--primary)' : 'var(--muted)', fontWeight: isSelected ? 600 : 400 }}
+                      >
+                        第 {pageNum} 页
+                      </span>
+                    </div>
                   </div>
-                </div>
-              );
-            })}
+                );
+              })}
           </div>
         </Document>
       </div>

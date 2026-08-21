@@ -1,21 +1,26 @@
-import { Component, type ReactNode, useEffect } from 'react';
+import { Component, lazy, Suspense, type ReactNode, useEffect } from 'react';
 import { Routes, Route } from 'react-router-dom';
-import HomePage from './pages/HomePage';
-import ReaderPage from './pages/ReaderPage';
-import ReviewPage from './pages/ReviewPage';
-import LoginPage from './pages/LoginPage';
-import RegisterPage from './pages/RegisterPage';
-import ForgotPasswordPage from './pages/ForgotPasswordPage';
-import ProfilePage from './pages/ProfilePage';
 import ProtectedRoute from './components/common/ProtectedRoute';
 import AdminRouteGuard from './components/admin/AdminRouteGuard';
 import AdminLayout from './components/admin/AdminLayout';
-import AdminDashboard from './pages/admin/AdminDashboard';
-import AdminUsers from './pages/admin/AdminUsers';
-import AdminDocuments from './pages/admin/AdminDocuments';
-import AdminPrompts from './pages/admin/AdminPrompts';
-import AdminQuotes from './pages/admin/AdminQuotes';
+import { PageSpinner } from './components/ui/Spinner';
 import { useAuthStore } from './stores/authStore';
+
+// 路由级代码分割：react-pdf/pdfjs、导出管线、admin 页面等重依赖
+// 只在进入对应路由时才下载，主 chunk 不再背负全部页面。
+const HomePage = lazy(() => import('./pages/HomePage'));
+const ReaderPage = lazy(() => import('./pages/ReaderPage'));
+const ReviewPage = lazy(() => import('./pages/ReviewPage'));
+const VocabularyPage = lazy(() => import('./pages/VocabularyPage'));
+const LoginPage = lazy(() => import('./pages/LoginPage'));
+const RegisterPage = lazy(() => import('./pages/RegisterPage'));
+const ForgotPasswordPage = lazy(() => import('./pages/ForgotPasswordPage'));
+const ProfilePage = lazy(() => import('./pages/ProfilePage'));
+const AdminDashboard = lazy(() => import('./pages/admin/AdminDashboard'));
+const AdminUsers = lazy(() => import('./pages/admin/AdminUsers'));
+const AdminDocuments = lazy(() => import('./pages/admin/AdminDocuments'));
+const AdminPrompts = lazy(() => import('./pages/admin/AdminPrompts'));
+const AdminQuotes = lazy(() => import('./pages/admin/AdminQuotes'));
 
 // ── Error Boundary (no Ant Design dependency) ──
 class ErrorBoundary extends Component<
@@ -69,7 +74,8 @@ export default function App() {
   return (
     <ErrorBoundary>
       <div className="min-h-screen bg-canvas">
-        <Routes>
+        <Suspense fallback={<PageSpinner />}>
+          <Routes>
           {/* Public routes */}
           <Route path="/login" element={<LoginPage />} />
           <Route path="/register" element={<RegisterPage />} />
@@ -110,6 +116,14 @@ export default function App() {
               </ProtectedRoute>
             }
           />
+          <Route
+            path="/vocabulary"
+            element={
+              <ProtectedRoute>
+                <VocabularyPage />
+              </ProtectedRoute>
+            }
+          />
 
           {/* Admin routes */}
           <Route
@@ -127,6 +141,7 @@ export default function App() {
             <Route path="quotes" element={<AdminQuotes />} />
           </Route>
         </Routes>
+        </Suspense>
       </div>
     </ErrorBoundary>
   );

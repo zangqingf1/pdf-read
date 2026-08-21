@@ -4,6 +4,8 @@ from app.models.paragraph import Paragraph
 from app.models.prompt_template import PromptTemplate
 from app.models.sentence_analysis import SentenceAnalysis
 from app.models.user import User
+from app.models.vocabulary import VocabularyEntry
+from app.models.vocabulary_source import VocabularySource
 from app.models.word_analysis import WordAnalysis
 from app.models.daily_quote import DailyQuote
 
@@ -14,6 +16,8 @@ __all__ = [
     "PromptTemplate",
     "SentenceAnalysis",
     "User",
+    "VocabularyEntry",
+    "VocabularySource",
     "WordAnalysis",
     "DailyQuote",
 ]

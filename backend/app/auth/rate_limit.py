@@ -10,7 +10,7 @@ Celery workers); swap for Redis if scaling out.
 """
 
 import time
-from collections import defaultdict, deque
+from collections import deque
 from datetime import timedelta
 
 from fastapi import HTTPException, status
@@ -18,7 +18,7 @@ from fastapi import HTTPException, status
 from app.config import settings
 
 # key -> deque of failure timestamps (epoch seconds)
-_failures: dict[str, deque[float]] = defaultdict(deque)
+_failures: dict[str, deque[float]] = {}
 
 
 def _key(email: str, ip: str) -> str:
@@ -29,10 +29,27 @@ def _now() -> float:
     return time.time()
 
 
+def _window() -> float:
+    return settings.LOGIN_ATTEMPT_WINDOW_MINUTES * 60
+
+
+def _cleanup_if_needed(now: float) -> None:
+    """Periodically drop empty and fully-expired buckets (prevents memory growth)."""
+    if len(_failures) <= 10000:
+        return
+    cutoff = now - _window()
+    for key in list(_failures.keys()):
+        q = _failures.get(key)
+        if not q or not q or (q[-1] < cutoff):
+            _failures.pop(key, None)
+
+
 def check_login_attempts(email: str, ip: str) -> None:
     """Raise 429 if the email+IP pair is currently locked out."""
-    window = settings.LOGIN_ATTEMPT_WINDOW_MINUTES * 60
-    q = _failures[_key(email, ip)]
+    window = _window()
+    q = _failures.get(_key(email, ip))
+    if not q:
+        return
     cutoff = _now() - window
     while q and q[0] < cutoff:
         q.popleft()
@@ -47,30 +64,29 @@ def check_login_attempts(email: str, ip: str) -> None:
 
 def record_login_failure(email: str, ip: str) -> None:
     """Record a failed attempt (only counts while under the window)."""
-    window = settings.LOGIN_ATTEMPT_WINDOW_MINUTES * 60
+    window = _window()
     key = _key(email, ip)
-    q = _failures[key]
     now = _now()
+    q = _failures.get(key)
+    if q is None:
+        q = deque()
+        _failures[key] = q
     while q and q[0] < now - window:
         q.popleft()
     q.append(now)
-    # Bounded growth: drop empty buckets occasionally.
-    if len(_failures) > 10000:
-        for k in list(_failures.keys()):
-            if not _failures[k]:
-                del _failures[k]
+    _cleanup_if_needed(now)
 
 
 def record_login_success(email: str, ip: str) -> None:
-    """Clear the failure counter after a successful login."""
-    _failures[_key(email, ip)].clear()
+    """Clear the failure counter after a successful login (and free the bucket)."""
+    _failures.pop(_key(email, ip), None)
 
 
 def remaining_lockout(email: str, ip: str) -> int:
     """Seconds until the current lockout expires (0 if not locked out)."""
-    window = settings.LOGIN_ATTEMPT_WINDOW_MINUTES * 60
-    q = _failures[_key(email, ip)]
-    if len(q) < settings.LOGIN_MAX_ATTEMPTS:
+    window = _window()
+    q = _failures.get(_key(email, ip))
+    if not q or len(q) < settings.LOGIN_MAX_ATTEMPTS:
         return 0
     return max(0, int(q[0] + window - _now()))
 

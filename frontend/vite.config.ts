@@ -32,5 +32,22 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     sourcemap: false,
+    rollupOptions: {
+      output: {
+        manualChunks(id: string) {
+          if (!id.includes('node_modules')) return undefined;
+          if (id.includes('react-pdf') || id.includes('pdfjs-dist')) return 'pdf';
+          if (id.includes('react-markdown') || id.includes('remark-gfm') || id.includes('mdast') || id.includes('micromark') || id.includes('unist')) return 'markdown';
+          if (
+            id.includes('/react/') ||
+            id.includes('/react-dom/') ||
+            id.includes('/react-router') ||
+            id.includes('/scheduler/')
+          ) return 'react-vendor';
+          if (id.includes('/axios/') || id.includes('/dayjs/')) return 'http-utils';
+          return undefined;
+        },
+      },
+    },
   },
 });

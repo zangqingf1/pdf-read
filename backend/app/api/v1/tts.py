@@ -5,6 +5,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
+from sqlalchemy import select
 
 from app.auth.deps import get_current_user
 from app.database import get_db
@@ -63,8 +64,6 @@ async def paragraph_tts(
     doc = await db.get(Document, doc_uuid)
     if doc is None or doc.user_id != current_user.id:
         raise HTTPException(status_code=404, detail=f"Document {document_id} not found")
-
-    from sqlalchemy import select
 
     result = await db.execute(
         select(Paragraph).where(

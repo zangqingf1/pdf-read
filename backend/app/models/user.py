@@ -11,6 +11,7 @@ from app.database import Base
 
 if TYPE_CHECKING:
     from app.models.document import Document
+    from app.models.vocabulary import VocabularyEntry
 
 
 class User(Base):
@@ -51,6 +52,9 @@ class User(Base):
     # Relationships
     documents: Mapped[list["Document"]] = relationship(
         "Document", back_populates="owner", cascade="all, delete-orphan"
+    )
+    vocabulary_entries: Mapped[list["VocabularyEntry"]] = relationship(
+        "VocabularyEntry", back_populates="owner", cascade="all, delete-orphan"
     )
 
     def __repr__(self) -> str:

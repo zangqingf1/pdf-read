@@ -58,18 +58,22 @@ router = APIRouter()
 
 
 async def _get_owned_document(
-    task_id: str, user: User, db: AsyncSession
+    task_id: str,
+    user: User,
+    db: AsyncSession,
+    load_paragraphs: bool = False,
 ) -> Document:
     """Fetch a document by ID, verifying it belongs to the current user.
 
-    Returns the document or raises 404 (not found / not owned / malformed ID).
-    Using 404 instead of 403 to avoid leaking document existence info.
+    ``load_paragraphs=True`` only for endpoints that actually need them.
     """
     try:
         doc_uuid = uuid.UUID(task_id)
     except ValueError:
         raise HTTPException(status_code=404, detail=f"Document {task_id} not found")
-    document = await pdf_service.get_document(doc_uuid, db, user_id=user.id)
+    document = await pdf_service.get_document(
+        doc_uuid, db, user_id=user.id, load_paragraphs=load_paragraphs
+    )
     if document is None:
         raise HTTPException(status_code=404, detail=f"Document {task_id} not found")
     return document
@@ -183,7 +187,9 @@ async def _parse_in_background(doc_id: uuid.UUID, file_path: str, token: str):
     """Background task: parse a PDF document in a separate DB session."""
     async with async_session_factory() as bg_db:
         try:
-            await pdf_service.parse_document(doc_id, bg_db, mineru_token=token)
+            await pdf_service.parse_document(
+                doc_id, bg_db, mineru_token=token, release_lock_before_ocr=True
+            )
         except Exception:
             _logger.exception("Background parse failed for document %s", doc_id)
         await bg_db.commit()
@@ -321,7 +327,9 @@ async def get_parse_result(
     Args:
         task_id: The task_id returned from POST /upload.
     """
-    document = await _get_owned_document(task_id, current_user, db)
+    document = await _get_owned_document(
+        task_id, current_user, db, load_paragraphs=True
+    )
 
     if document.parse_status == "failed":
         raise HTTPException(status_code=422, detail="PDF parsing failed")
@@ -531,7 +539,9 @@ async def update_paragraphs(
         task_id: Document UUID.
         body: List of {index, text_en} pairs to update.
     """
-    document = await _get_owned_document(task_id, current_user, db)
+    document = await _get_owned_document(
+        task_id, current_user, db, load_paragraphs=True
+    )
 
     if document.parse_status != "completed":
         raise HTTPException(
@@ -584,7 +594,9 @@ async def delete_paragraph(
     Removes the paragraph at the given index and re-indexes all
     subsequent paragraphs to keep indices contiguous.
     """
-    document = await _get_owned_document(task_id, current_user, db)
+    document = await _get_owned_document(
+        task_id, current_user, db, load_paragraphs=True
+    )
 
     if document.parse_status != "completed":
         raise HTTPException(
@@ -661,7 +673,9 @@ async def merge_paragraphs(
     Appends the text of paragraph index_b to paragraph index_a,
     then deletes paragraph index_b and re-indexes subsequent paragraphs.
     """
-    document = await _get_owned_document(task_id, current_user, db)
+    document = await _get_owned_document(
+        task_id, current_user, db, load_paragraphs=True
+    )
 
     if document.parse_status != "completed":
         raise HTTPException(
@@ -756,7 +770,9 @@ async def reorder_paragraphs(
     Cross-page moves update page_number based on neighbors.
     Unlike updateParagraphs, this does NOT invalidate translations.
     """
-    document = await _get_owned_document(task_id, current_user, db)
+    document = await _get_owned_document(
+        task_id, current_user, db, load_paragraphs=True
+    )
 
     if document.parse_status != "completed":
         raise HTTPException(
@@ -931,31 +947,63 @@ async def batch_delete_documents(
         body: {document_ids: [...]} — max 100 IDs per request.
     """
     import os as _os
+    from sqlalchemy import delete
 
     deleted_count = 0
     failed_ids: list[str] = []
 
+    # 先统一解析 ID：非法 UUID 直接进 failed_ids
+    valid_uuids: list[uuid.UUID] = []
     for doc_id_str in body.document_ids:
         try:
-            doc_uuid = uuid.UUID(doc_id_str)
+            valid_uuids.append(uuid.UUID(doc_id_str))
         except ValueError:
             failed_ids.append(doc_id_str)
-            continue
 
-        document = await pdf_service.get_document(doc_uuid, db, user_id=current_user.id)
-        if document is None:
-            failed_ids.append(doc_id_str)
-            continue
+    if valid_uuids:
+        # 单条 IN 查询：一次过滤归属（user-scoped），顺带取 file_path 供磁盘清理
+        rows = (
+            await db.execute(
+                select(Document.id, Document.file_path).where(
+                    Document.id.in_(valid_uuids),
+                    Document.user_id == current_user.id,
+                )
+            )
+        ).all()
+        found_ids = [row.id for row in rows]
+        # 与旧行为一致：合法但不存在/不属于当前用户的 ID 计入 failed_ids
+        found_set = set(found_ids)
+        for doc_uuid in valid_uuids:
+            if doc_uuid not in found_set:
+                failed_ids.append(str(doc_uuid))
 
-        # Remove PDF file from disk
-        if document.file_path and _os.path.exists(document.file_path):
-            try:
-                _os.remove(document.file_path)
-            except OSError:
-                pass
+        # Remove PDF files from disk (best-effort)
+        for row in rows:
+            if row.file_path and _os.path.exists(row.file_path):
+                try:
+                    _os.remove(row.file_path)
+                except OSError:
+                    pass
 
-        await db.delete(document)
-        deleted_count += 1
+        if found_ids:
+            # bulk DELETE 不触发 ORM cascade：显式先删子表再删文档，
+            # SQLite/PostgreSQL 行为一致，全部在一个事务内完成。
+            # 注意类型：paragraphs.document_id 是 Uuid 列（传 UUID 对象），
+            # word/sentence_analyses.document_id 是 String(36) 列（传字符串）。
+            str_ids = [str(i) for i in found_ids]
+            await db.execute(
+                delete(Paragraph).where(Paragraph.document_id.in_(found_ids))
+            )
+            await db.execute(
+                delete(WordAnalysis).where(WordAnalysis.document_id.in_(str_ids))
+            )
+            await db.execute(
+                delete(SentenceAnalysis).where(SentenceAnalysis.document_id.in_(str_ids))
+            )
+            result = await db.execute(
+                delete(Document).where(Document.id.in_(found_ids))
+            )
+            deleted_count = result.rowcount if result.rowcount is not None else len(found_ids)
 
     await db.commit()
 

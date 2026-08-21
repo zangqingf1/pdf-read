@@ -137,6 +137,34 @@ export async function analyzeSentencesStream(
   const allResults: SentenceAnalysisResult[] = [];
   let buffer = '';
 
+  // ── Chunk throttling: merge token deltas per sentence, flush every ~80ms ──
+  // 与单词流一致：token 级事件可达每秒数百次，逐条 setState 会拖垮渲染。
+  const CHUNK_FLUSH_MS = 80;
+  const chunkBuffers = new Map<string, { text: string; paraIndex: number; sentenceIndex: number }>();
+  const chunkTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+  const flushChunkBuffer = (key: string) => {
+    const buf = chunkBuffers.get(key);
+    if (buf && buf.text) {
+      onChunk({
+        text: buf.text,
+        para_index: buf.paraIndex,
+        sentence_index: buf.sentenceIndex,
+      });
+    }
+    chunkBuffers.delete(key);
+    chunkTimers.delete(key);
+  };
+
+  const scheduleChunkFlush = (key: string) => {
+    if (chunkTimers.has(key)) return;
+    chunkTimers.set(key, setTimeout(() => flushChunkBuffer(key), CHUNK_FLUSH_MS));
+  };
+
+  const flushAllChunks = () => {
+    for (const key of [...chunkTimers.keys()]) flushChunkBuffer(key);
+  };
+
   // ── Per-read timeout: 300 s without data = connection likely dead ──
   // 后端慢批次时每 60s 发一次 heartbeat, 正常等待不会误杀。
   const READ_TIMEOUT_MS = 300_000;
@@ -179,18 +207,27 @@ export async function analyzeSentencesStream(
           continue;
         }
         if (event.type === 'done') {
+          flushAllChunks();
           return allResults;
         }
         if (event.type === 'error') {
+          flushAllChunks();
           throw new Error(event.message || '句子解析失败');
         }
         if (event.type === 'chunk' && event.text && event.para_index != null && event.sentence_index != null) {
-          // Raw AI text token — forward to streaming display
-          onChunk({
-            text: event.text,
-            para_index: event.para_index,
-            sentence_index: event.sentence_index,
-          });
+          // Merge token deltas per sentence — flush on a timer
+          const key = `${event.para_index}:${event.sentence_index}`;
+          const existing = chunkBuffers.get(key);
+          if (existing) {
+            existing.text += event.text;
+          } else {
+            chunkBuffers.set(key, {
+              text: event.text,
+              paraIndex: event.para_index,
+              sentenceIndex: event.sentence_index,
+            });
+            scheduleChunkFlush(key);
+          }
         }
         if (event.type === 'batch' && event.analyses) {
           allResults.push(...event.analyses);
@@ -199,6 +236,7 @@ export async function analyzeSentencesStream(
       }
     }
   } catch (err: any) {
+    flushAllChunks();
     // Distinguish timeout from user-initiated abort
     if (err.name === 'AbortError') {
       if (timedOut && !signal?.aborted) {

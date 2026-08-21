@@ -23,7 +23,7 @@ import hmac
 import logging
 import secrets
 import time
-from collections import defaultdict, deque
+from collections import deque
 from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException, status
@@ -45,7 +45,7 @@ VALID_PURPOSES = ("register", "reset_password")
 
 # Best-effort per-IP send throttling (in-memory; resets on restart).
 # Keyed by IP → deque of epoch seconds.
-_ip_send_log: dict[str, deque[float]] = defaultdict(deque)
+_ip_send_log: dict[str, deque[float]] = {}
 
 
 def generate_code() -> str:
@@ -83,7 +83,10 @@ def _check_ip_limit(ip: str) -> None:
     """Best-effort per-IP hourly cap using in-memory state."""
     window = 3600.0
     now = time.time()
-    q = _ip_send_log[ip]
+    q = _ip_send_log.get(ip)
+    if q is None:
+        q = deque()
+        _ip_send_log[ip] = q
     while q and now - q[0] > window:
         q.popleft()
     if len(q) >= settings.EMAIL_MAX_PER_IP_PER_HOUR:
@@ -95,8 +98,11 @@ def _check_ip_limit(ip: str) -> None:
     # Opportunistic cleanup of stale IP buckets (keep the dict bounded).
     if len(_ip_send_log) > 10000:
         for key in list(_ip_send_log.keys()):
-            if not _ip_send_log[key]:
-                del _ip_send_log[key]
+            entries = _ip_send_log.get(key)
+            while entries and now - entries[0] > window:
+                entries.popleft()
+            if not entries:
+                _ip_send_log.pop(key, None)
 
 
 async def send_verification_code(

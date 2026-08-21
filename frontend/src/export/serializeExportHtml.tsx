@@ -17,10 +17,22 @@ export function escapeHtml(s: string): string {
     .replace(/'/g, '&#39;');
 }
 
-/** 收集全部同源样式表规则（跳过跨域 sheet 与非导出字体 @import/@font-face） */
+/** 收集全部同源样式表规则（跳过跨域 sheet 与非导出字体 @import/@font-face）。
+ *  模块级缓存：同源样式表在会话内基本不变，重复导出不再重新拼接全部规则。 */
+let _cssCache: { fingerprint: string; css: string } | null = null;
+
 export function collectStylesheetsCss(): string {
+  const sheets = Array.from(document.styleSheets);
+  // 指纹 = 每个 sheet 的 href + 规则数（廉价）；规则数不变即视为未变
+  const fingerprint = sheets
+    .map((s) => `${s.href ?? 'inline'}:${s.cssRules?.length ?? -1}`)
+    .join('|');
+  if (_cssCache && _cssCache.fingerprint === fingerprint) {
+    return _cssCache.css;
+  }
+
   let css = '';
-  for (const sheet of Array.from(document.styleSheets)) {
+  for (const sheet of sheets) {
     let rules: CSSRuleList;
     try {
       rules = sheet.cssRules;
@@ -41,8 +53,12 @@ export function collectStylesheetsCss(): string {
       }
     }
   }
+  _cssCache = { fingerprint, css };
   return css;
 }
+
+/** 字体 data URI 缓存：同一字体文件只在会话内拉取/base64 一次 */
+const _fontDataCache = new Map<string, string>();
 
 /** 将导出 CSS 中的本地字体 url 内联为 data URI（服务端 Chrome 渲染 file:// 临时 HTML 无法解析 /fonts/ 相对路径） */
 export async function inlineLocalFonts(css: string): Promise<string> {
@@ -52,6 +68,11 @@ export async function inlineLocalFonts(css: string): Promise<string> {
   const cache = new Map<string, string>();
   await Promise.all(
     urls.map(async (u) => {
+      const cached = _fontDataCache.get(u);
+      if (cached) {
+        cache.set(u, cached);
+        return;
+      }
       try {
         const resp = await fetch(u);
         if (!resp.ok) return;
@@ -62,7 +83,9 @@ export async function inlineLocalFonts(css: string): Promise<string> {
         for (let i = 0; i < bytes.length; i += CHUNK) {
           bin += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
         }
-        cache.set(u, `data:font/woff2;base64,${btoa(bin)}`);
+        const data = `data:font/woff2;base64,${btoa(bin)}`;
+        _fontDataCache.set(u, data);
+        cache.set(u, data);
       } catch {
         /* 保留原 url（本地预览/开发环境仍可解析） */
       }

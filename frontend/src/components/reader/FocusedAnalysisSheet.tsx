@@ -5,6 +5,7 @@ import { safeMarkdownComponents } from '../../utils/markdownComponents';
 import { useDocumentStore } from '../../stores/documentStore';
 import { useReaderStore } from '../../stores/readerStore';
 import { deleteWordAnalysis, type WordAnalysisResult } from '../../services/wordAnalysisApi';
+import { WordRichTags } from './WordTags';
 import { deleteSentenceAnalysis, type SentenceAnalysisResult } from '../../services/sentenceAnalysisApi';
 import { sentenceBodyMarkdown, sentenceBreakdownChunks } from '../../utils/sentenceSections';
 import PhoneticWithSpeakers from './PhoneticWithSpeakers';
@@ -108,49 +109,12 @@ function FocusedWordCard({
         </div>
       )}
 
-      {/* Synonyms */}
-      {(analysis.synonyms_antonyms?.synonyms?.length ?? 0) > 0 && (
-        <div className="mb-2">
-          <span className="text-success text-[0.75em] block mb-1">同义词</span>
-          <div className="flex flex-wrap gap-1.5">
-            {analysis.synonyms_antonyms.synonyms.map((s, i) => (
-              <span key={i} className="inline-flex items-center gap-1 bg-[#f0f7f1] border border-[#c8e6c9] rounded px-2 py-0.5 text-xs">
-                <span className="text-muted-soft">{s.part_of_speech}</span>
-                <span className="font-medium text-body-strong">{s.word}</span>
-              </span>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Cognates */}
-      {analysis.cognates && analysis.cognates.length > 0 && (
-        <div className="mb-2">
-          <span className="text-muted text-[0.75em] block mb-1">同根词</span>
-          <div className="flex flex-wrap gap-1.5">
-            {analysis.cognates.map((c, i) => (
-              <span key={i} className="inline-flex items-center gap-1 bg-[#f5f0e8] rounded px-2 py-0.5 text-xs">
-                <span className="text-muted-soft">{c.part_of_speech}</span>
-                <span className="font-medium text-body-strong">{c.word}</span>
-              </span>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Collocations */}
-      {analysis.collocations && analysis.collocations.length > 0 && (
-        <div className="mb-2">
-          <span className="text-muted text-[0.75em] block mb-1">常见搭配</span>
-          <div className="flex flex-wrap gap-1.5">
-            {analysis.collocations.map((c, i) => (
-              <span key={i} className="inline-flex items-center bg-[#eef4fa] border border-[#c8ddf0] rounded px-2 py-0.5 text-xs font-reading">
-                {c}
-              </span>
-            ))}
-          </div>
-        </div>
-      )}
+      {/* Synonyms / Cognates / Collocations (shared with word book) */}
+      <WordRichTags
+        synonyms={analysis.synonyms_antonyms?.synonyms || []}
+        cognates={analysis.cognates || []}
+        collocations={analysis.collocations || []}
+      />
 
       {/* Example Sentence */}
       {analysis.example_sentence && (

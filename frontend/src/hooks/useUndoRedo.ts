@@ -54,11 +54,14 @@ export function useUndoRedo(maxHistory: number = DEFAULT_MAX_HISTORY) {
       }
 
       const snapshot: UndoableSnapshot = {
-        paragraphs: paragraphs.map((p) => ({ ...p })), // shallow-clone each paragraph
+        // 增量快照：段落/布局对象按约定不可变（页面更新总是 map/filter 生成
+        // 新对象），这里直接共享引用 —— 每步快照 O(1)，不再整篇深拷贝。
+        // 相邻快照间只有被编辑的段落是新对象，内存占用随脏段增长而非全文。
+        paragraphs,
         dirtyIndices: dirtyArr,
         // 布局框与段落同源（删除/合并时同步变），必须随快照保存，
         // 否则 undo/redo 后左侧解析框与右侧文本对应关系会错乱
-        layouts: layouts.map((l) => ({ ...l, layout: { ...l.layout } })),
+        layouts,
       };
 
       // Archive previous present → past

@@ -15,6 +15,21 @@ import type { ParagraphData } from '../components/review/EditableParagraph';
 import type { ParagraphLayoutItem } from '../utils/pdfBbox';
 import { mergeLayoutItems } from '../utils/pdfBbox';
 
+/**
+ * 快照指纹：只对脏段落做哈希（index + 文本），不整篇 JSON.stringify。
+ * 未修改段落不可能进入快照比较路径（删除/合并/撤销走各自直推逻辑）。
+ */
+function snapshotFingerprint(paras: ParagraphData[], dirty: Set<number>): string {
+  if (dirty.size === 0) return '';
+  const byIndex = new Map<number, string>();
+  for (const p of paras) byIndex.set(p.index, p.text_en);
+  const parts: string[] = [];
+  for (const i of Array.from(dirty).sort((a, b) => a - b)) {
+    parts.push(`${i}:${byIndex.get(i) ?? ''}`);
+  }
+  return parts.join('\u0001');
+}
+
 export default function ReviewPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -34,7 +49,6 @@ export default function ReviewPage() {
 
   // ── PDF 布局框 / 悬浮联动 ──
   const [paragraphLayouts, setParagraphLayouts] = useState<ParagraphLayoutItem[]>([]);
-  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
   /** 点击 PDF 解析框 → 编辑区对应段落闪烁高亮 */
   const [flashParagraph, setFlashParagraph] = useState<{ index: number; stamp: number } | null>(null);
   /** 点击编辑区段落 → 请求 PDF 预览滚动居中对应解析框 */
@@ -148,7 +162,7 @@ export default function ReviewPage() {
       debounceTimerRef.current = setTimeout(() => {
         const currentParas = latestParagraphsRef.current;
         const currentDirty = latestDirtySetRef.current;
-        const key = JSON.stringify({ paras: currentParas, dirty: Array.from(currentDirty) });
+        const key = snapshotFingerprint(currentParas, currentDirty);
         if (key !== lastPushedRef.current) {
           lastPushedRef.current = key;
           pushSnapshot(currentParas, currentDirty, latestLayoutsRef.current);
@@ -164,7 +178,7 @@ export default function ReviewPage() {
       debounceTimerRef.current = null;
       const currentParas = latestParagraphsRef.current;
       const currentDirty = latestDirtySetRef.current;
-      const key = JSON.stringify({ paras: currentParas, dirty: Array.from(currentDirty) });
+      const key = snapshotFingerprint(currentParas, currentDirty);
       if (key !== lastPushedRef.current) {
         lastPushedRef.current = key;
         pushSnapshot(currentParas, currentDirty, latestLayoutsRef.current);
@@ -183,15 +197,22 @@ export default function ReviewPage() {
   const handleParagraphChange = useCallback(
     (index: number, text: string) => {
       setParagraphs((prev) => {
+        // 只替换被编辑段落的对象：其余对象引用不变 → memo 段落组件跳过重渲染
         const next = prev.map((p) => (p.index === index ? { ...p, text_en: text } : p));
         latestParagraphsRef.current = next;
         return next;
       });
       setDirtySet((prev) => {
-        const next = new Set(prev);
         const original = originalTexts.current.get(index) ?? '';
-        if (text !== original) next.add(index);
-        else next.delete(index);
+        const shouldDirty = text !== original;
+        const isDirty = prev.has(index);
+        // 脏状态未变化时复用原 Set 引用：memo 组件收到相同 isDirty 跳过重渲染
+        let next = prev;
+        if (shouldDirty !== isDirty) {
+          next = new Set(prev);
+          if (shouldDirty) next.add(index);
+          else next.delete(index);
+        }
         latestDirtySetRef.current = next;
         scheduleTextSnapshot(latestParagraphsRef.current, next);
         return next;
@@ -222,7 +243,6 @@ export default function ReviewPage() {
         latestLayoutsRef.current = nextLayouts;
 
         // 重排后旧的高亮/定位索引失效，清空避免错位
-        setHoveredIndex(null);
         setFlashParagraph(null);
         setFocusRequest(null);
 
@@ -239,7 +259,7 @@ export default function ReviewPage() {
             next.add(i > index ? i - 1 : i);
           }
           latestDirtySetRef.current = next;
-          lastPushedRef.current = JSON.stringify({ paras: reindexed, dirty: Array.from(next) });
+          lastPushedRef.current = snapshotFingerprint(reindexed, next);
           pushSnapshot(reindexed, next, nextLayouts);
           return next;
         });
@@ -294,7 +314,6 @@ export default function ReviewPage() {
         latestLayoutsRef.current = nextLayouts;
 
         // 重排后旧的高亮/定位索引失效，清空避免错位
-        setHoveredIndex(null);
         setFlashParagraph(null);
         setFocusRequest(null);
 
@@ -333,14 +352,9 @@ export default function ReviewPage() {
   );
 
   // ── 悬浮联动（高亮，不跳转） ──
-  const handleHover = useCallback((index: number, hovering: boolean) => {
-    setHoveredIndex((prev) => (hovering ? index : prev === index ? null : prev));
-  }, []);
-
-  /** 悬浮 PDF 上的布局框 → 联动高亮编辑区对应段落 */
-  const handleBoxHover = useCallback((index: number | null) => {
-    setHoveredIndex(index);
-  }, []);
+  // 注意：hover 联动不再经 React 状态 —— 编辑区段落与 PDF 解析框之间
+  // 通过 DOM class 直连（EditableParagraph / PDFViewerPanel 内部处理），
+  // hover 一次不再触发整页（含全部 Page）重渲染。
 
   /** 点击 PDF 上的布局框 → 编辑区段落滚动居中并闪烁高亮 */
   const handleBoxSelect = useCallback((index: number) => {
@@ -606,8 +620,6 @@ export default function ReviewPage() {
                       width={window.innerWidth}
                       selectedPages={selectedPages}
                       paragraphLayouts={paragraphLayouts}
-                      hoveredIndex={hoveredIndex}
-                      onBoxHover={handleBoxHover}
                       onBoxSelect={handleBoxSelect}
                       focusRequest={focusRequest}
                     />
@@ -619,9 +631,7 @@ export default function ReviewPage() {
                     onParagraphChange={handleParagraphChange}
                     onDelete={handleDelete}
                     onMergeDown={handleMergeDown}
-                    onHover={handleHover}
                     onSelect={handleParagraphSelect}
-                    highlightedIndex={hoveredIndex}
                     flash={flashParagraph}
                   />
                 )}
@@ -635,9 +645,7 @@ export default function ReviewPage() {
                 onParagraphChange={handleParagraphChange}
                 onDelete={handleDelete}
                 onMergeDown={handleMergeDown}
-                onHover={handleHover}
                 onSelect={handleParagraphSelect}
-                highlightedIndex={hoveredIndex}
                 flash={flashParagraph}
               />
             </div>
@@ -662,8 +670,6 @@ export default function ReviewPage() {
                     width={leftWidth}
                     selectedPages={selectedPages}
                     paragraphLayouts={paragraphLayouts}
-                    hoveredIndex={hoveredIndex}
-                    onBoxHover={handleBoxHover}
                     onBoxSelect={handleBoxSelect}
                     focusRequest={focusRequest}
                   />
@@ -699,9 +705,7 @@ export default function ReviewPage() {
               onParagraphChange={handleParagraphChange}
               onDelete={handleDelete}
               onMergeDown={handleMergeDown}
-              onHover={handleHover}
               onSelect={handleParagraphSelect}
-              highlightedIndex={hoveredIndex}
               flash={flashParagraph}
             />
           </div>

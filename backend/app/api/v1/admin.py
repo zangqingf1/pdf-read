@@ -4,14 +4,17 @@ import os as _os
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import func, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.auth.deps import require_superuser
 from app.database import get_db
 from app.models.document import Document
+from app.models.paragraph import Paragraph
+from app.models.sentence_analysis import SentenceAnalysis
 from app.models.user import User
+from app.models.word_analysis import WordAnalysis
 from app.schemas.admin import (
     AdminBatchDeleteRequest,
     AdminBatchDeleteResponse,
@@ -272,29 +275,58 @@ async def batch_delete_documents(
     deleted_count = 0
     failed_ids: list[str] = []
 
+    # 先统一解析 ID：非法 UUID 直接进 failed_ids
+    valid_uuids: list[uuid.UUID] = []
     for doc_id_str in body.document_ids:
         try:
-            doc_uuid = uuid.UUID(doc_id_str)
+            valid_uuids.append(uuid.UUID(doc_id_str))
         except ValueError:
             failed_ids.append(doc_id_str)
             continue
 
-        doc = (
-            await db.execute(select(Document).where(Document.id == doc_uuid))
-        ).scalar_one_or_none()
-        if doc is None:
-            failed_ids.append(doc_id_str)
-            continue
+    if valid_uuids:
+        # 单条 IN 查询：一次取出全部目标（跨所有用户），顺带取 file_path
+        rows = (
+            await db.execute(
+                select(Document.id, Document.file_path).where(
+                    Document.id.in_(valid_uuids)
+                )
+            )
+        ).all()
+        found_ids = [row.id for row in rows]
+        # 与旧行为一致：合法但已不存在的 ID 计入 failed_ids
+        found_set = set(found_ids)
+        for doc_uuid in valid_uuids:
+            if doc_uuid not in found_set:
+                failed_ids.append(str(doc_uuid))
 
-        # Remove PDF file from disk
-        if doc.file_path and _os.path.exists(doc.file_path):
-            try:
-                _os.remove(doc.file_path)
-            except OSError:
-                pass
+        # Remove PDF files from disk (best-effort)
+        for row in rows:
+            if row.file_path and _os.path.exists(row.file_path):
+                try:
+                    _os.remove(row.file_path)
+                except OSError:
+                    pass
 
-        await db.delete(doc)
-        deleted_count += 1
+        if found_ids:
+            # bulk DELETE 不触发 ORM cascade：显式先删子表再删文档，
+            # SQLite/PostgreSQL 行为一致，全部在一个事务内完成。
+            # 注意类型：paragraphs.document_id 是 Uuid 列（传 UUID 对象），
+            # word/sentence_analyses.document_id 是 String(36) 列（传字符串）。
+            str_ids = [str(i) for i in found_ids]
+            await db.execute(
+                delete(Paragraph).where(Paragraph.document_id.in_(found_ids))
+            )
+            await db.execute(
+                delete(WordAnalysis).where(WordAnalysis.document_id.in_(str_ids))
+            )
+            await db.execute(
+                delete(SentenceAnalysis).where(SentenceAnalysis.document_id.in_(str_ids))
+            )
+            result = await db.execute(
+                delete(Document).where(Document.id.in_(found_ids))
+            )
+            deleted_count = result.rowcount if result.rowcount is not None else len(found_ids)
 
     await db.commit()
 

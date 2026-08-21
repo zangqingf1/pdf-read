@@ -89,6 +89,10 @@ class Settings(BaseSettings):
     PDF_EXPORT_CONCURRENCY: int = 2
     PDF_EXPORT_VIRTUAL_TIME_MS: int = 5000
 
+    # Dictionary (ECDICT local + online fallback)
+    DICT_DB_PATH: str = "./data/ecdict.db"
+    DICT_API_URL: str = "https://api.dictionaryapi.dev/api/v2/entries/en"
+
 
     class Config:
         env_file = ".env"

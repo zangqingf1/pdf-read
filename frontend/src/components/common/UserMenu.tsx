@@ -82,6 +82,23 @@ export default function UserMenu() {
             个人资料
           </button>
 
+          {/* Vocabulary */}
+          <button
+            onClick={() => {
+              setOpen(false);
+              navigate('/vocabulary');
+            }}
+            className="w-full text-left px-3 py-2 rounded-lg text-sm text-body-strong
+                       hover:text-primary hover:bg-primary/5 transition-colors duration-150
+                       flex items-center gap-2.5"
+          >
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M4 19.5A2.5 2.5 0 016.5 17H20" />
+              <path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z" />
+            </svg>
+            单词本
+          </button>
+
           {/* Admin (superuser only) */}
           {isSuperuser && (
             <button

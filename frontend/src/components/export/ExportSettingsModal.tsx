@@ -12,7 +12,7 @@ import { useDocumentStore } from '../../stores/documentStore';
 import { useExportPreferences } from '../../stores/exportPreferencesStore';
 import { pickExportPrefs } from '../../stores/exportPreferencesStore';
 import { buildExportData } from '../../export/data';
-import { measureAndPaginate } from '../../export/measure';
+import { useExportPagination } from '../../hooks/useExportPagination';
 import { serializeExportHtml } from '../../export/serializeExportHtml';
 import { exportPdf } from '../../services/pdfApi';
 
@@ -77,6 +77,9 @@ export default function ExportSettingsModal({
   const { isMobile } = useResponsiveBreakpoint();
   const [showPreview, setShowPreview] = useState(false);
 
+  // 分页 plan 在弹窗级计算：预览与「导出 PDF」共用同一份测量结果
+  const { plan, getPlan } = useExportPagination(data, prefs);
+
   // 重新打开弹窗时回到设置视图
   useEffect(() => {
     if (open) setShowPreview(false);
@@ -87,7 +90,8 @@ export default function ExportSettingsModal({
     setExporting(true);
     setExportError(null);
     try {
-      const plan = await measureAndPaginate(data, prefs);
+      // 复用预览已算好的 plan（data/prefs 未变时零重复测量）
+      const plan = await getPlan();
       const html = await serializeExportHtml(data, prefs, plan);
       const blob = await exportPdf(html);
       const url = URL.createObjectURL(blob);
@@ -152,13 +156,13 @@ export default function ExportSettingsModal({
     >
       {!isMobile ? (
         <div className="flex-1 min-w-0 flex flex-col md:flex-row min-h-0">
-          <ExportPreview data={data} />
+          <ExportPreview data={data} plan={plan} />
           <ExportSettingsPanel />
         </div>
       ) : showPreview ? (
         // 移动端预览视图：预览画面替换设置画面
         <div className="flex-1 min-h-0 flex flex-col">
-          <ExportPreview data={data} />
+          <ExportPreview data={data} plan={plan} />
         </div>
       ) : (
         // 移动端设置视图：只显示设置，外层承担滚动（面板自身 shrink-0 无 flex-1）

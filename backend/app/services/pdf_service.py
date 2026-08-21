@@ -14,6 +14,7 @@ from datetime import datetime
 from typing import Optional
 from urllib.parse import urlparse
 
+import aiofiles
 from fastapi import UploadFile
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -46,6 +47,23 @@ def _is_restricted_ip(addr: ipaddress._BaseAddress) -> bool:
     if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped is not None:
         addr = addr.ipv4_mapped
     return any(getattr(addr, attr, False) for attr in _RESTRICTED_IP)
+
+
+def _read_pdf_page_dims(file_path: str) -> dict[int, tuple[float, float, float]]:
+    """Read every page's PDF-point size + MinerU render scale (sync, call via to_thread)."""
+    from pypdf import PdfReader
+
+    render_dpi = 200.0
+    max_render_side = 3500.0
+    page_pts_map: dict[int, tuple[float, float, float]] = {}
+    reader = PdfReader(file_path)
+    for i, pg in enumerate(reader.pages, start=1):
+        mb = pg.mediabox
+        w, h = float(mb.width), float(mb.height)
+        # 与 MinerU page_to_image 一致的渲染缩放（含长边钳制）
+        scale = min(render_dpi / 72.0, max_render_side / max(w, h))
+        page_pts_map[i] = (w, h, scale)
+    return page_pts_map
 
 
 async def _validate_public_http_url(url: str) -> None:
@@ -140,7 +158,7 @@ class PDFService:
         size = 0
         first_chunk = b""
         try:
-            with open(file_path, "wb") as f:
+            async with aiofiles.open(file_path, "wb") as f:
                 while True:
                     chunk = await file.read(1024 * 1024)
                     if not chunk:
@@ -153,7 +171,7 @@ class PDFService:
                             f"File size exceeds maximum "
                             f"({settings.MAX_UPLOAD_SIZE_MB}MB)"
                         )
-                    f.write(chunk)
+                    await f.write(chunk)
         except Exception:
             try:
                 os.remove(file_path)
@@ -181,7 +199,7 @@ class PDFService:
         page_count = None
         if ext in PAGE_BASED_EXTENSIONS:
             try:
-                page_count = count_pdf_pages(file_path)
+                page_count = await asyncio.to_thread(count_pdf_pages, file_path)
             except Exception as e:
                 logger.warning("Could not count PDF pages: %s", e)
 
@@ -244,17 +262,18 @@ class PDFService:
         return document
 
     async def parse_document(
-        self, document_id: uuid.UUID, db: AsyncSession, mineru_token: str = ""
+        self,
+        document_id: uuid.UUID,
+        db: AsyncSession,
+        mineru_token: str = "",
+        *,
+        release_lock_before_ocr: bool = False,
     ) -> Document:
         """Run OCR parsing on a document and save structured results.
 
-        Args:
-            document_id: The document to parse.
-            db: Database session.
-            mineru_token: Optional MinerU API token override.
-
-        Returns:
-            The updated Document with paragraphs populated.
+        ``release_lock_before_ocr`` commits the ``processing`` status before
+        the long-running MinerU call so SQLite's single-writer lock is not
+        held for the whole parse. Background/Celery tasks pass True.
         """
         # Get document
         stmt = select(Document).where(Document.id == document_id)
@@ -264,6 +283,9 @@ class PDFService:
         # Update status
         document.parse_status = "processing"
         await db.flush()
+        if release_lock_before_ocr:
+            # 先结束写事务，MinerU 数分钟网络解析期间不占用 SQLite 写锁。
+            await db.commit()
 
         try:
             # Run OCR via MinerU Cloud API.
@@ -307,23 +329,16 @@ class PDFService:
             is_pdf = (document.file_ext or "").lower() == ".pdf"
             if needs_dims and is_pdf and document.file_path:
                 try:
-                    from pypdf import PdfReader
-
-                    render_dpi = 200.0
-                    max_render_side = 3500.0
-                    reader = PdfReader(document.file_path)
-                    for i, pg in enumerate(reader.pages, start=1):
-                        mb = pg.mediabox
-                        w, h = float(mb.width), float(mb.height)
-                        # 与 MinerU page_to_image 一致的渲染缩放（含长边钳制）
-                        scale = min(render_dpi / 72.0, max_render_side / max(w, h))
-                        page_pts_map[i] = (w, h, scale)
+                    page_pts_map = await asyncio.to_thread(
+                        _read_pdf_page_dims, document.file_path
+                    )
                 except Exception:
                     logger.warning(
                         "Could not read PDF page dimensions for layout boxes "
                         "(document %s)", document.id, exc_info=True,
                     )
 
+            paragraphs_to_add: list[Paragraph] = []
             for idx, text in enumerate(parsed.paragraphs):
                 page_num = page_nums[idx] if idx < len(page_nums) else None
                 bbox = bboxes[idx] if idx < len(bboxes) else None
@@ -333,15 +348,15 @@ class PDFService:
                     bbox_json = json.dumps(
                         {"box": bbox, "pts_w": w, "pts_h": h, "scale": scale}
                     )
-                paragraph = Paragraph(
+                paragraphs_to_add.append(Paragraph(
                     document_id=document.id,
                     index=idx,
                     text_en=text,
                     page_number=page_num,
                     bbox_json=bbox_json,
-                )
-                db.add(paragraph)
+                ))
 
+            db.add_all(paragraphs_to_add)
             await db.flush()
 
         except Exception as e:
@@ -353,20 +368,22 @@ class PDFService:
         return document
 
     async def get_document(
-        self, document_id: uuid.UUID, db: AsyncSession,
+        self,
+        document_id: uuid.UUID,
+        db: AsyncSession,
         user_id: uuid.UUID | None = None,
+        load_paragraphs: bool = False,
     ) -> Optional[Document]:
-        """Get a document by ID with paragraphs loaded.
+        """Get a document by ID, optionally eager-loading paragraphs.
 
-        If user_id is provided, the query is scoped to that user (data isolation).
+        ``load_paragraphs`` is off by default: status/file/title/delete 等
+        端点不需要段落，避免把几百段文本全部拉进内存。
         """
         from sqlalchemy.orm import selectinload
 
-        stmt = (
-            select(Document)
-            .where(Document.id == document_id)
-            .options(selectinload(Document.paragraphs))
-        )
+        stmt = select(Document).where(Document.id == document_id)
+        if load_paragraphs:
+            stmt = stmt.options(selectinload(Document.paragraphs))
         if user_id is not None:
             stmt = stmt.where(Document.user_id == user_id)
         result = await db.execute(stmt)
@@ -381,6 +398,7 @@ class PDFService:
         If user_id is provided, only documents owned by that user are returned.
         """
         from sqlalchemy import func as sqlfunc
+        from sqlalchemy.orm import defer
 
         # Count total
         count_stmt = select(sqlfunc.count()).select_from(Document)
@@ -389,9 +407,10 @@ class PDFService:
         total_result = await db.execute(count_stmt)
         total = total_result.scalar_one()
 
-        # Fetch page
+        # Fetch page — 列表不需要 original_text 整篇正文
         stmt = (
             select(Document)
+            .options(defer(Document.original_text))
             .order_by(Document.created_at.desc())
             .limit(limit)
             .offset(offset)

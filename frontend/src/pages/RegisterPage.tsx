@@ -33,6 +33,14 @@ export default function RegisterPage() {
   const [avatarFile, setAvatarFile] = useState<File | null>(null);
   const [avatarPreview, setAvatarPreview] = useState('');
 
+  // 换图/卸载时释放旧 blob URL，避免会话内内存泄漏
+  useEffect(() => {
+    const url = avatarPreview;
+    return () => {
+      if (url) URL.revokeObjectURL(url);
+    };
+  }, [avatarPreview]);
+
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [sendingCode, setSendingCode] = useState(false);

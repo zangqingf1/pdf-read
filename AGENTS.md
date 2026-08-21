@@ -237,3 +237,4 @@ utils/          # textTokens(token化), ttsAlign(WordBoundary↔词token贪婪�
 - **进程与代码同步**: 本地启动必须带 `--reload`（`uvicorn app.main:app --reload --port 8000`），否则代码改动后运行中的服务仍是旧路由（典型症状：接口 404 `{"detail":"Not Found"}`）。用 `Start-Process` 脱管启动（日志重定向到 `backend/uvicorn.{out,err}.log`）可避免会话结束连带杀掉后端
 - 后端装了但代码未用的包: `python-docx`, `slowapi`, `aiofiles`；`passlib` 已从 requirements 移除（bcrypt 直连）；`python-jose` 在用（`auth/security.py`）
 - `frontend/` 根目录有大量 gitignore 的调试残件（`run_debug*.cjs`, `export_probe*`, `repro*`, `paginate_align_test*` 等），不是功能代码，勿被误导/勿提交
+- **下载外部大文件（GitHub 等）的约定**: 本机直连 GitHub 内容下载（`raw.githubusercontent.com`、release 的 `objects.githubusercontent.com`）会被重置/超时；唯一可用的镜像 `ghproxy.net` 限速严重（~0.05 MB/s）。因此**遇到需要下载的 GitHub 文件，不要自己硬下**，直接把仓库/直链告诉用户，由用户自行下载（迅雷/代理更快）后放到指定路径，再继续后续处理

@@ -712,6 +712,9 @@
   scroll-margin-top: 24px;
   padding: 8px 0;
   transition: background-color 0.3s ease;
+  /* 长文档性能优化：视口外的段落跳过布局/绘制，DOM 与交互保持完整 */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 120px;
 }
 
 /* ── 段尾「展开翻译」图标按钮（谷歌翻译 文A 图标，淡灰，约与正文字号同大）── */
@@ -767,6 +770,18 @@
 @keyframes layout-box-flash-anim {
   0% { box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.7); background-color: rgba(59, 130, 246, 0.35); }
   100% { box-shadow: 0 0 0 0 transparent; background-color: transparent; }
+}
+
+/* ── 校对页悬浮联动（DOM class 直连，不经 React 状态）── */
+/* PDF 解析框 hover → 编辑区段落浅色底（与 bg-primary/5 同色系，靠后定义优先） */
+.review-paragraph-highlight {
+  background-color: rgb(204 120 92 / 0.05);
+}
+/* 编辑区段落 hover → PDF 解析框填充高亮（覆盖 border-blue-500/70 常态） */
+.layout-box-hover {
+  border-color: #2563eb !important;
+  border-width: 2px !important;
+  background-color: rgb(59 130 246 / 0.15) !important;
 }
 
 /* ── Word/Sentence card flash ── */

@@ -8,6 +8,7 @@ from app.api.v1.sentences import router as sentences_router
 from app.api.v1.summary import router as summary_router
 from app.api.v1.translate import router as translate_router
 from app.api.v1.tts import router as tts_router
+from app.api.v1.vocabulary import router as vocabulary_router
 from app.api.v1.words import router as words_router
 
 api_v1_router = APIRouter(prefix="/api/v1")
@@ -20,4 +21,5 @@ api_v1_router.include_router(sentences_router, prefix="/sentences", tags=["Sente
 api_v1_router.include_router(summary_router, prefix="/summary", tags=["Summary"])
 api_v1_router.include_router(translate_router, prefix="/translate", tags=["Translate"])
 api_v1_router.include_router(tts_router, prefix="/tts", tags=["TTS"])
+api_v1_router.include_router(vocabulary_router, prefix="/vocabulary", tags=["Vocabulary"])
 api_v1_router.include_router(words_router, prefix="/words", tags=["Words"])

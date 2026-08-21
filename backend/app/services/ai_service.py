@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import random
 import re
 from collections.abc import AsyncGenerator
 
@@ -15,6 +16,82 @@ from app.config import settings
 from app.services.prompt_defaults import DEFAULT_PROMPTS, PLACEHOLDERS
 
 logger = logging.getLogger(__name__)
+
+# ── 进程级共享资源 ─────────────────────────────────────────────────────
+# 客户端按 (base_url, model, api_key) 复用连接池；并发信号量全局唯一，
+# 避免"每个请求一个连接池 / 每方法一个 Semaphore"导致上游并发失控。
+_SHARED_CLIENTS: dict[tuple[str, str, str], httpx.AsyncClient] = {}
+_MAX_SHARED_CLIENTS = 64
+_AI_SEMAPHORES: dict[int, asyncio.Semaphore] = {}
+
+
+def _client_pool_key(base_url: str, model: str, api_key: str) -> tuple[str, str, str]:
+    return (base_url or "", model or "", api_key or "")
+
+
+def _get_shared_ai_semaphore(concurrency: int) -> asyncio.Semaphore:
+    semaphore = _AI_SEMAPHORES.get(concurrency)
+    if semaphore is None:
+        semaphore = asyncio.Semaphore(concurrency)
+        _AI_SEMAPHORES[concurrency] = semaphore
+    return semaphore
+
+
+def _build_ai_client(
+    base_url: str, model: str, api_key: str, concurrency: int
+) -> httpx.AsyncClient:
+    return httpx.AsyncClient(
+        base_url=base_url,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        timeout=httpx.Timeout(120.0, connect=10.0),
+        limits=httpx.Limits(
+            max_connections=concurrency + 5,
+            max_keepalive_connections=concurrency,
+        ),
+    )
+
+
+def _get_shared_ai_client(
+    base_url: str, model: str, api_key: str, concurrency: int
+) -> httpx.AsyncClient:
+    key = _client_pool_key(base_url, model, api_key)
+    client = _SHARED_CLIENTS.get(key)
+    if client is None:
+        client = _build_ai_client(base_url, model, api_key, concurrency)
+        if len(_SHARED_CLIENTS) >= _MAX_SHARED_CLIENTS:
+            oldest_key, oldest_client = next(iter(_SHARED_CLIENTS.items()))
+            _SHARED_CLIENTS.pop(oldest_key, None)
+            try:
+                asyncio.get_running_loop().create_task(oldest_client.aclose())
+            except RuntimeError:
+                pass
+        _SHARED_CLIENTS[key] = client
+    return client
+
+
+async def close_ai_clients() -> None:
+    """App shutdown: close every cached httpx client."""
+    clients = list(_SHARED_CLIENTS.values())
+    _SHARED_CLIENTS.clear()
+    if clients:
+        await asyncio.gather(
+            *(client.aclose() for client in clients), return_exceptions=True
+        )
+
+
+def _retry_delay(attempt: int, exc: Exception | None = None) -> float:
+    """指数退避 + Retry-After + 随机抖动，避免同批任务同步重试惊群。"""
+    delay = float(2 ** attempt)
+    if isinstance(exc, httpx.HTTPStatusError):
+        try:
+            retry_after = int(exc.response.headers.get("Retry-After", ""))
+            delay = max(delay, float(retry_after))
+        except (TypeError, ValueError):
+            pass
+    return delay + random.uniform(0, min(1.0, delay))
 
 
 class _SafeDict(dict):
@@ -103,7 +180,8 @@ def _is_fatal_error(exc: Exception) -> bool:
     """
     if isinstance(exc, httpx.HTTPStatusError):
         status = exc.response.status_code
-        return status in (401, 403)
+        # 401/403 鉴权错误 + 402 余额不足对所有条目同样致命，不重试。
+        return status in (401, 403, 402)
     # ValueError is raised for missing API key — a config error, not transient
     if isinstance(exc, ValueError):
         return True
@@ -146,6 +224,58 @@ def _resolve_prompt(
     if system_prompt:
         messages.append({"role": "system", "content": system_prompt})
     messages.append({"role": "user", "content": formatted_user})
+    return messages
+
+
+# 单词分析 prompt 骨架：段落上下文只格式化一次，每批只替换 words_list。
+# 先经 format_map 时用哨兵占位，之后恢复成字面 {words_list} 供逐批替换。
+_WORDS_LIST_SENTINEL = "\u0000WORDS_LIST\u0000"
+
+
+def _resolve_word_prompt_skeleton(
+    sentence: str,
+    sentence_translation: str | None,
+    *,
+    system_prompt_override: str | None,
+    user_prompt_override: str | None,
+) -> list[dict[str, str]]:
+    """Resolve the analyze_words prompt once per paragraph.
+
+    返回的 messages 中 user 内容保留字面 ``{words_list}`` 占位符；
+    每批请求经 :func:`_messages_with_words` 只做一次字符串替换，
+    避免同段落多批重复携带/格式化整段原文。
+    """
+    messages = _resolve_prompt(
+        "analyze_words",
+        {
+            "words_list": _WORDS_LIST_SENTINEL,
+            "sentence": sentence,  # 兼容旧自定义模板的占位符名
+            "paragraph": sentence,  # 完整段落原文
+            "sentence_translation": sentence_translation or "无",
+        },
+        system_override=system_prompt_override,
+        user_override=user_prompt_override,
+    )
+    for msg in messages:
+        if msg["role"] == "user":
+            msg["content"] = msg["content"].replace(
+                _WORDS_LIST_SENTINEL, "{words_list}"
+            )
+    return messages
+
+
+def _messages_with_words(
+    skeleton: list[dict[str, str]], words_list: str
+) -> list[dict[str, str]]:
+    """Substitute the per-batch word list into a resolved prompt skeleton."""
+    messages: list[dict[str, str]] = []
+    for msg in skeleton:
+        if msg["role"] == "user":
+            messages.append(
+                {"role": "user", "content": msg["content"].replace("{words_list}", words_list)}
+            )
+        else:
+            messages.append(msg)
     return messages
 
 
@@ -206,22 +336,15 @@ class AIService:
             logger.info("Normalized DEEPSEEK_BASE_URL to %s", self.base_url)
         self.model = model or settings.DEEPSEEK_MODEL
         self._client: httpx.AsyncClient | None = None
+        # 共享池中的 client 不属于本实例：close() 只解绑，不销毁池内连接。
+        self._owns_client = False
 
     @property
     def client(self) -> httpx.AsyncClient:
         if self._client is None:
             concurrency = getattr(settings, "AI_CONCURRENCY", 15)
-            self._client = httpx.AsyncClient(
-                base_url=self.base_url,
-                headers={
-                    "Authorization": f"Bearer {self.api_key}",
-                    "Content-Type": "application/json",
-                },
-                timeout=httpx.Timeout(120.0, connect=10.0),
-                limits=httpx.Limits(
-                    max_connections=concurrency + 5,
-                    max_keepalive_connections=concurrency,
-                ),
+            self._client = _get_shared_ai_client(
+                self.base_url, self.model, self.api_key, concurrency
             )
         return self._client
 
@@ -297,7 +420,7 @@ class AIService:
                         attempt + 1,
                     )
                     if attempt < 2:
-                        await asyncio.sleep(2 ** attempt)
+                        await asyncio.sleep(_retry_delay(attempt))
                         continue
                     raise RuntimeError("AI 返回空内容，翻译失败")
 
@@ -307,12 +430,12 @@ class AIService:
                 if _is_fatal_error(e):
                     raise  # Auth / config errors never recover with retries
                 if attempt < 2:
-                    await asyncio.sleep(2 ** attempt)
+                    await asyncio.sleep(_retry_delay(attempt, e))
                 else:
                     raise
             except (json.JSONDecodeError, KeyError, TypeError) as e:
                 if attempt < 2:
-                    await asyncio.sleep(2 ** attempt)
+                    await asyncio.sleep(_retry_delay(attempt, e))
                 else:
                     raise RuntimeError(f"AI service call failed: {e}")
 
@@ -347,7 +470,7 @@ class AIService:
             return [""] * len(paragraphs)
 
         concurrency = getattr(settings, "AI_CONCURRENCY", 15)
-        semaphore = asyncio.Semaphore(concurrency)
+        semaphore = _get_shared_ai_semaphore(concurrency)
 
         async def _translate_one(index: int, text: str) -> tuple[int, str]:
             async with semaphore:
@@ -415,7 +538,7 @@ class AIService:
             return
 
         concurrency = getattr(settings, "AI_CONCURRENCY", 15)
-        semaphore = asyncio.Semaphore(concurrency)
+        semaphore = _get_shared_ai_semaphore(concurrency)
         queue: asyncio.Queue[tuple[int, str]] = asyncio.Queue()
         total = len(indexed)
         completed = 0
@@ -545,7 +668,7 @@ class AIService:
                                 "Summary stream attempt %d returned empty content, retrying",
                                 attempt + 1,
                             )
-                            await asyncio.sleep(2 ** attempt)
+                            await asyncio.sleep(_retry_delay(attempt))
                             continue
                         await queue.put({"type": "error", "message": "AI 返回空内容，总结失败"})
                         return
@@ -571,7 +694,7 @@ class AIService:
                             "Summary stream attempt %d failed, retrying: %s",
                             attempt + 1, e,
                         )
-                        await asyncio.sleep(2 ** attempt)
+                        await asyncio.sleep(_retry_delay(attempt, e))
                         continue
                     logger.exception("Summary stream failed after 3 attempts")
                     await queue.put({"type": "error", "message": f"总结失败: {e}"})
@@ -637,30 +760,17 @@ class AIService:
         self,
         para_index: int,
         words_batch: list[str],
-        sentence: str,
-        sentence_translation: str | None,
-        *,
-        system_prompt_override: str | None,
-        user_prompt_override: str | None,
+        prompt_skeleton: list[dict[str, str]],
     ) -> list[dict] | None:
         """发一个非流式单词分析请求 (JSON mode), 最多重试 3 次。
 
         成功返回规范化结果列表; 彻底失败返回 ``None`` (调用方负责
         补偿或上报)。认证/配置错误 (``_is_fatal_error``) 直接抛出。
+        ``prompt_skeleton`` 由 ``_resolve_word_prompt_skeleton`` 每段落
+        解析一次，这里只替换 words_list，避免每批重复格式化整段原文。
         """
         words_list = ", ".join(words_batch)
-
-        messages = _resolve_prompt(
-            "analyze_words",
-            {
-                "words_list": words_list,
-                "sentence": sentence,  # 兼容旧自定义模板的占位符名
-                "paragraph": sentence,  # 完整段落原文
-                "sentence_translation": sentence_translation or "无",
-            },
-            system_override=system_prompt_override,
-            user_override=user_prompt_override,
-        )
+        messages = _messages_with_words(prompt_skeleton, words_list)
 
         # DeepSeek V4 系列默认开启 thinking 模式: 推理阶段静默无输出
         # (前端表现为"等待 AI 响应"), 且已知会损坏严格 JSON 输出 —
@@ -719,13 +829,13 @@ class AIService:
                 if _is_fatal_error(e):
                     raise  # Auth / config error → fail the whole batch
                 if attempt < 2:
-                    await asyncio.sleep(2 ** attempt)
+                    await asyncio.sleep(_retry_delay(attempt, e))
                 else:
                     logger.exception("Word analysis request failed (HTTP/timeout)")
                     return None
             except (json.JSONDecodeError, KeyError, TypeError):
                 if attempt < 2:
-                    await asyncio.sleep(2 ** attempt)
+                    await asyncio.sleep(_retry_delay(attempt))
                 else:
                     logger.exception("Word analysis request failed (JSON/decode)")
                     return None
@@ -768,30 +878,33 @@ class AIService:
 
         batch_size = getattr(settings, "WORDS_BATCH_SIZE", 8)
         concurrency = getattr(settings, "AI_CONCURRENCY", 15)
-        semaphore = asyncio.Semaphore(concurrency)
+        semaphore = _get_shared_ai_semaphore(concurrency)
 
         async def _analyze_batch(
             para_index: int,
             words_batch: list[str],
-            sentence: str,
-            sentence_translation: str | None,
         ) -> list[dict]:
             async with semaphore:
                 results = await self._request_word_batch(
-                    para_index, words_batch, sentence, sentence_translation,
-                    system_prompt_override=system_prompt_override,
-                    user_prompt_override=user_prompt_override,
+                    para_index, words_batch, prompt_skeletons[para_index]
                 )
                 if results is None:
                     results = []
 
-                # ── 单词补偿: AI 返回不全时对缺失单词逐词补发 ──
-                # 单词级请求更小、失败率更低, 保证"选中即解析"不丢单词。
+                # ── 单词补偿: 先按批量小批补发一次, 仍缺失再逐词兜底 ──
+                # 合并补发把请求数从"每漏一词 1 次"降到"每 8 词 1 次"。
+                missing = self._missing_words(words_batch, results)
+                for start in range(0, len(missing), batch_size):
+                    chunk = missing[start : start + batch_size]
+                    one = await self._request_word_batch(
+                        para_index, chunk, prompt_skeletons[para_index]
+                    )
+                    if one:
+                        results.extend(one)
+
                 for w in self._missing_words(words_batch, results):
                     one = await self._request_word_batch(
-                        para_index, [w], sentence, sentence_translation,
-                        system_prompt_override=system_prompt_override,
-                        user_prompt_override=user_prompt_override,
+                        para_index, [w], prompt_skeletons[para_index]
                     )
                     if one:
                         results.extend(one)
@@ -804,20 +917,27 @@ class AIService:
         for e in entries:
             grouped.setdefault(e["paragraph_index"], []).append(e)
 
-        # Build tasks: for each paragraph group, split words into batches
-        tasks = []
+        # 每段落只格式化一次 prompt（含整段原文上下文），批次间只换 words_list
+        prompt_skeletons: dict[int, list[dict[str, str]]] = {}
         for para_index, group_entries in grouped.items():
             sentence = group_entries[0].get("sentence", "")
             sentence_translation = group_entries[0].get("sentence_translation")
+            prompt_skeletons[para_index] = _resolve_word_prompt_skeleton(
+                sentence,
+                sentence_translation,
+                system_prompt_override=system_prompt_override,
+                user_prompt_override=user_prompt_override,
+            )
 
+        # Build tasks: for each paragraph group, split words into batches
+        tasks = []
+        for para_index, group_entries in grouped.items():
             # Split words into smaller batches
             for i in range(0, len(group_entries), batch_size):
                 chunk = group_entries[i : i + batch_size]
                 words_batch = [e["word"] for e in chunk]
                 tasks.append(
-                    _analyze_batch(
-                        para_index, words_batch, sentence, sentence_translation
-                    )
+                    _analyze_batch(para_index, words_batch)
                 )
 
         # Run all batches concurrently
@@ -866,7 +986,7 @@ class AIService:
 
         batch_size = getattr(settings, "WORDS_BATCH_SIZE", 8)
         concurrency = getattr(settings, "AI_CONCURRENCY", 15)
-        semaphore = asyncio.Semaphore(concurrency)
+        semaphore = _get_shared_ai_semaphore(concurrency)
 
         def _normalize_results(results: list[dict], para_index: int) -> list[dict]:
             """Normalize fields in parsed results (delegates to shared static method)."""
@@ -878,8 +998,7 @@ class AIService:
             batch_id: int,
             para_index: int,
             words_batch: list[str],
-            sentence: str,
-            sentence_translation: str | None,
+            prompt_skeleton: list[dict[str, str]],
         ) -> None:
             """Stream raw tokens for one batch, then parse & push results to queue.
 
@@ -913,17 +1032,8 @@ class AIService:
                 async with semaphore:
                     words_list = ", ".join(words_batch)
 
-                    messages = _resolve_prompt(
-                        "analyze_words",
-                        {
-                            "words_list": words_list,
-                            "sentence": sentence,  # 兼容旧自定义模板的占位符名
-                            "paragraph": sentence,  # 完整段落原文
-                            "sentence_translation": sentence_translation or "无",
-                        },
-                        system_override=system_prompt_override,
-                        user_override=user_prompt_override,
-                    )
+                    # 段落级 prompt 骨架已解析一次，这里只替换 words_list
+                    messages = _messages_with_words(prompt_skeleton, words_list)
 
                     # NOTE: no response_format when streaming — JSON mode is
                     # incompatible with stream=True.  The prompt itself instructs
@@ -941,6 +1051,8 @@ class AIService:
 
                     accumulated = ""
                     stream_failed = False
+                    # 已向前端发过 chunk 后不再重试（重发会重复渲染、浪费 token）
+                    sent_any_chunk = False
 
                     for attempt in range(3):
                         try:
@@ -963,6 +1075,7 @@ class AIService:
                                             content = delta.get("content", "")
                                             if content:
                                                 accumulated += content
+                                                sent_any_chunk = True
                                                 await queue.put({
                                                     "type": "chunk",
                                                     "batch_id": batch_id,
@@ -1004,8 +1117,8 @@ class AIService:
                                     "missing": [],
                                 })
                                 return
-                            if attempt < 2:
-                                await asyncio.sleep(2 ** attempt)
+                            if attempt < 2 and not sent_any_chunk:
+                                await asyncio.sleep(_retry_delay(attempt, e))
                                 accumulated = ""
                             else:
                                 logger.exception(
@@ -1014,8 +1127,8 @@ class AIService:
                                 stream_failed = True
                                 break
                         except (json.JSONDecodeError, KeyError, TypeError):
-                            if attempt < 2:
-                                await asyncio.sleep(2 ** attempt)
+                            if attempt < 2 and not sent_any_chunk:
+                                await asyncio.sleep(_retry_delay(attempt))
                                 accumulated = ""
                             else:
                                 logger.exception(
@@ -1027,17 +1140,22 @@ class AIService:
                         # Shouldn't reach here
                         stream_failed = True
 
-                    # ── Compensate missing words (one-by-one, non-streaming) ──
-                    # The stream either failed entirely or returned fewer words
-                    # than requested — re-request each missing word as its own
-                    # small request (higher success rate than a big batch).
+                    # ── Compensate missing words (merged small batches first) ──
                     if stream_failed:
                         results = []  # 成功路径中 results 已在上方解析赋值
+                    missing = self._missing_words(words_batch, results)
+                    for start in range(0, len(missing), batch_size):
+                        chunk = missing[start : start + batch_size]
+                        one = await self._request_word_batch(
+                            para_index, chunk, prompt_skeleton
+                        )
+                        if one:
+                            results.extend(one)
+
+                    # 合并补发仍缺词时，保留逐词兜底（保证不静默丢词）
                     for w in self._missing_words(words_batch, results):
                         one = await self._request_word_batch(
-                            para_index, [w], sentence, sentence_translation,
-                            system_prompt_override=system_prompt_override,
-                            user_prompt_override=user_prompt_override,
+                            para_index, [w], prompt_skeleton
                         )
                         if one:
                             results.extend(one)
@@ -1067,17 +1185,27 @@ class AIService:
         for e in entries:
             grouped.setdefault(e["paragraph_index"], []).append(e)
 
-        # Build indexed batch list
-        indexed_batches: list[tuple[int, int, list[str], str, str | None]] = []
-        batch_id = 0
+        # 每段落只格式化一次 prompt（含整段原文上下文），批次间只换 words_list
+        prompt_skeletons: dict[int, list[dict[str, str]]] = {}
         for para_index, group_entries in grouped.items():
             sentence = group_entries[0].get("sentence", "")
             sentence_translation = group_entries[0].get("sentence_translation")
+            prompt_skeletons[para_index] = _resolve_word_prompt_skeleton(
+                sentence,
+                sentence_translation,
+                system_prompt_override=system_prompt_override,
+                user_prompt_override=user_prompt_override,
+            )
+
+        # Build indexed batch list
+        indexed_batches: list[tuple[int, int, list[str], list[dict[str, str]]]] = []
+        batch_id = 0
+        for para_index, group_entries in grouped.items():
             for i in range(0, len(group_entries), batch_size):
                 chunk = group_entries[i : i + batch_size]
                 words_batch = [e["word"] for e in chunk]
                 indexed_batches.append(
-                    (batch_id, para_index, words_batch, sentence, sentence_translation)
+                    (batch_id, para_index, words_batch, prompt_skeletons[para_index])
                 )
                 batch_id += 1
 
@@ -1093,8 +1221,8 @@ class AIService:
 
         # Launch all workers concurrently
         tasks = [
-            asyncio.create_task(_stream_batch(bid, pi, wb, s, st))
-            for bid, pi, wb, s, st in indexed_batches
+            asyncio.create_task(_stream_batch(bid, pi, wb, sk))
+            for bid, pi, wb, sk in indexed_batches
         ]
 
         # Stream events as they arrive — chunks AND batch results.
@@ -1173,7 +1301,7 @@ class AIService:
             )
 
         concurrency = getattr(settings, "AI_CONCURRENCY", 15)
-        semaphore = asyncio.Semaphore(concurrency)
+        semaphore = _get_shared_ai_semaphore(concurrency)
 
         async def _analyze_one(entry: dict) -> dict | None:
             async with semaphore:
@@ -1229,7 +1357,7 @@ class AIService:
 
                     except (httpx.HTTPError, httpx.TimeoutException) as e:
                         if attempt < 2 and not _is_fatal_error(e):
-                            await asyncio.sleep(2 ** attempt)
+                            await asyncio.sleep(_retry_delay(attempt, e))
                         else:
                             if _is_fatal_error(e):
                                 raise
@@ -1237,7 +1365,7 @@ class AIService:
                             return None
                     except (json.JSONDecodeError, KeyError, TypeError):
                         if attempt < 2:
-                            await asyncio.sleep(2 ** attempt)
+                            await asyncio.sleep(_retry_delay(attempt))
                         else:
                             logger.exception("Sentence analysis JSON/decode error")
                             return None
@@ -1276,7 +1404,7 @@ class AIService:
             )
 
         concurrency = getattr(settings, "AI_CONCURRENCY", 15)
-        semaphore = asyncio.Semaphore(concurrency)
+        semaphore = _get_shared_ai_semaphore(concurrency)
 
         async def _stream_one(entry: dict) -> None:
             """Stream raw tokens for one sentence, then push completed result."""
@@ -1307,6 +1435,8 @@ class AIService:
                 }
 
                 accumulated = ""
+                # 已向前端发过 chunk 后不再重试，避免重复渲染与 token 浪费
+                sent_any_chunk = False
 
                 for attempt in range(3):
                     try:
@@ -1329,6 +1459,7 @@ class AIService:
                                         content = delta.get("content", "")
                                         if content:
                                             accumulated += content
+                                            sent_any_chunk = True
                                             await queue.put({
                                                 "type": "chunk",
                                                 "text": content,
@@ -1364,8 +1495,8 @@ class AIService:
                                 "sentence_index": entry["sentence_index"],
                             })
                             return
-                        if attempt < 2:
-                            await asyncio.sleep(2 ** attempt)
+                        if attempt < 2 and not sent_any_chunk:
+                            await asyncio.sleep(_retry_delay(attempt, e))
                             accumulated = ""
                         else:
                             logger.exception(
@@ -1380,8 +1511,8 @@ class AIService:
                             })
                             return
                     except (json.JSONDecodeError, KeyError, TypeError):
-                        if attempt < 2:
-                            await asyncio.sleep(2 ** attempt)
+                        if attempt < 2 and not sent_any_chunk:
+                            await asyncio.sleep(_retry_delay(attempt))
                             accumulated = ""
                         else:
                             logger.exception(
@@ -1433,9 +1564,15 @@ class AIService:
         await asyncio.gather(*tasks, return_exceptions=True)
 
     async def close(self):
-        if self._client:
-            await self._client.aclose()
-            self._client = None
+        """Release this instance's reference.
+
+        Shared-pool clients stay alive for other in-flight requests and are
+        closed at app shutdown via :func:`close_ai_clients`.
+        """
+        client = self._client
+        self._client = None
+        if self._owns_client and client is not None:
+            await client.aclose()
 
 
 def create_ai_service(
