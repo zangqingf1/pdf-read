@@ -337,7 +337,7 @@ export default function VocabularyPage() {
                                             sources.length > 0
                                               ? sources
                                               : entry.source_document_id
-                                                ? [{ document_id: entry.source_document_id, document_title: entry.source_document_title }]
+                                                ? [{ document_id: entry.source_document_id, document_title: entry.source_document_title, added_at: null }]
                                                 : [];
                                           if (list.length === 0) {
                                             return <span className="text-xs text-muted-soft">来源已删除</span>;

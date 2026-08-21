@@ -8,6 +8,9 @@
  */
 export const MINERU_BBOX_DPI = 200;
 
+/** MinerU Cloud 归一化坐标空间的宽度（bbox 实际落在约 1000×1000 正方形空间） */
+export const MINERU_NORMALIZED_SPACE = 1000;
+
 export interface PdfLayout {
   /** MinerU bbox [x1, y1, x2, y2]（渲染图像像素） */
   box: number[];
@@ -30,17 +33,38 @@ export interface ParagraphLayoutItem {
 /**
  * 将 MinerU bbox 换算为以 renderWidth 为宽的 CSS 像素矩形。
  *
- * 图像宽 = pts_w × scale，页面等比缩放，y 方向比例与 x 相同：
- *   css = box × renderWidth / (pts_w × scale)
+ * 正常路径（自校准成功）不经过这里。此回退分两种情况：
+ * - MinerU Cloud 的 bbox 实际落在约 1000×1000 归一化坐标空间，存储的 scale
+ *   （200dpi 假设）对其无效 —— 若按 scale 计算会把框放大约 2.8 倍。检测特征：
+ *   box 坐标很小而 pts_w × scale 远大于 1000 → 按「box/1000 × 页宽」归一化换算。
+ * - 真渲染像素坐标：css = box × renderWidth / (pts_w × scale)。
  * scale 缺失（旧文档）时回退 MINERU_BBOX_DPI=200 假设：scale = 200/72。
  */
 export function bboxToCss(
   layout: PdfLayout,
   renderWidth: number
 ): { x: number; y: number; w: number; h: number } {
+  const [x1, y1, x2, y2] = layout.box;
+  const maxCoord = Math.max(x1, y1, x2, y2);
+  const impliedImageW = layout.pts_w * (layout.scale ?? MINERU_BBOX_DPI / 72);
+  // 归一化空间判定：box 坐标落在 ~1000 以内，且按 scale 推算的渲染图远大于该范围
+  //（若真是像素坐标，box 不可能远小于整幅图）——此时按 scale 换算会放大数倍
+  const isNormalized =
+    Number.isFinite(maxCoord) &&
+    maxCoord <= MINERU_NORMALIZED_SPACE + 100 &&
+    impliedImageW > maxCoord * 1.5;
+  if (isNormalized) {
+    // 归一化 ~1000×1000 坐标空间：x 直接映射到页宽，y 按页面纵横比缩放
+    const pageH = renderWidth * (layout.pts_h / layout.pts_w);
+    return {
+      x: (x1 / MINERU_NORMALIZED_SPACE) * renderWidth,
+      y: (y1 / MINERU_NORMALIZED_SPACE) * pageH,
+      w: ((x2 - x1) / MINERU_NORMALIZED_SPACE) * renderWidth,
+      h: ((y2 - y1) / MINERU_NORMALIZED_SPACE) * pageH,
+    };
+  }
   const scale = layout.scale ?? MINERU_BBOX_DPI / 72;
   const sx = renderWidth / (layout.pts_w * scale);
-  const [x1, y1, x2, y2] = layout.box;
   return {
     x: x1 * sx,
     y: y1 * sx,

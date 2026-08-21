@@ -84,12 +84,13 @@ function rectFromItem(
 }
 
 /**
- * 多栏页面同一视觉行左右栏文字会并排 —— 直接按行拼接会让段落文本在拼接串中不连续。
- * 这里先把同一行的文本项按「栏间空隙」切成片段（栏内单词间距远小于栏间距），再按片段
- * x 中心归入左/右栏，各栏内保持 Y 顺序。两栏拼接串彼此独立，段落按其框所在栏匹配。
+ * 把文本项聚成视觉行：同一行内按「栏间空隙」切成片段（栏内单词间距远小于栏间距），
+ * 每个片段是一行。返回扁平列表（按 Y 排序），不做全局分栏 —— 栏结构由调用方
+ * 在段落框局部范围内按 x 空隙重新推断（见 groupLinesByX），可正确处理
+ * 单栏 / 双栏 / 三栏 / 窄栏距等任意版式。
  */
-function splitLinesByColumn(rects: TextRect[], tol: number, colGap: number, midX: number): TextLine[][] {
-  const colLines: TextLine[][] = [[], []];
+function buildTextLines(rects: TextRect[], tol: number, colGap: number): TextLine[] {
+  const lines: TextLine[] = [];
   const push = (seg: TextRect[]) => {
     let left = Infinity, right = -Infinity, top = Infinity, bottom = -Infinity;
     let norm = '';
@@ -100,8 +101,7 @@ function splitLinesByColumn(rects: TextRect[], tol: number, colGap: number, midX
       if (s.bottom > bottom) bottom = s.bottom;
       norm += normalizeText(s.text);
     }
-    const line: TextLine = { left, right, top, bottom, norm, items: seg };
-    colLines[(left + right) / 2 < midX ? 0 : 1].push(line);
+    lines.push({ left, right, top, bottom, norm, items: seg });
   };
 
   const sorted = [...rects].sort((a, b) => a.top - b.top);
@@ -131,7 +131,39 @@ function splitLinesByColumn(rects: TextRect[], tol: number, colGap: number, midX
     }
   }
   flush();
-  return colLines;
+  return lines.sort((a, b) => a.top - b.top);
+}
+
+/**
+ * 把候选行按 x 空隙链式分组（相邻片段横向重叠或间隙小于 gap 归为一组）——
+ * 即「局部栏」：同一段落框附近的候选行里，本栏的行链在一起，渗漏进来的邻栏行自成一组。
+ * 返回按行数降序的组（段落更可能在较大的组里）。
+ */
+function groupLinesByX(cands: TextLine[], gap: number): TextLine[][] {
+  const ivs = [...cands].sort((a, b) => a.left - b.left).map((l) => ({ l: l.left, r: l.right }));
+  const merged: { l: number; r: number }[] = [];
+  for (const iv of ivs) {
+    const last = merged[merged.length - 1];
+    if (last && iv.l <= last.r + gap) {
+      if (iv.r > last.r) last.r = iv.r;
+    } else {
+      merged.push({ ...iv });
+    }
+  }
+  const groups: TextLine[][] = merged.map(() => []);
+  for (const ln of cands) {
+    const c = (ln.left + ln.right) / 2;
+    for (let i = 0; i < merged.length; i++) {
+      if (merged[i].l - gap <= c && c <= merged[i].r + gap) {
+        groups[i].push(ln);
+        break;
+      }
+    }
+  }
+  return groups
+    .filter((g) => g.length > 0)
+    .map((g) => g.sort((a, b) => a.top - b.top))
+    .sort((a, b) => b.length - a.length);
 }
 
 /** 在按行拼接的归一化文本里找段落文本，返回 [起始行, 结束行] */
@@ -394,6 +426,12 @@ export default function PDFViewerPanel({
   // 得到「MinerU 图像像素 → CSS 像素」的仿射映射。MinerU Cloud 的 bbox 实际落在约
   // 1000×1000 正方形坐标空间（x/y 缩放不同），存储的 scale（200dpi 假设）对其无效，
   // 因此必须从真实文本反推 fx/fy/cx/cy；非 Cloud 文档同样适用（fx≈fy）。
+  //
+  // 匹配策略（对单栏/双栏/三栏/窄栏距版式均稳健）：
+  // 1. 每页先用「段落框内容范围 ↔ 文本行内容范围」做粗线性映射（自举）；
+  // 2. 每个段落框映射后外扩一圈，取相交的文本行为候选 —— 段落文字必然落在自己的框内；
+  // 3. 候选行按 x 空隙链式分组（局部栏，邻栏渗漏行自成一组），按组大小降序逐一匹配，
+  //    首个成功组胜出。全程不依赖全局分栏假设。
   const calibPages = useMemo(
     () => pagesToRender.filter((p) => (boxesByPage.get(p)?.length ?? 0) > 0),
     [pagesToRender, boxesByPage],
@@ -427,37 +465,59 @@ export default function PDFViewerPanel({
             rects.push(rectFromItem(it as { str: string; width: number; height: number; transform: number[] }, view, k));
           }
 
-          // 按栏切分行片段（栏间空隙 → 各栏内按 Y 顺序拼接），段落按其框所在栏匹配
-          const midX = refW / 2;
           const colGap = Math.max(6, refW * 0.015);
-          const colLines = splitLinesByColumn(rects, tol, colGap, midX);
-          const boxXs = items.map((i) => i.layout.box[0]);
-          const loX = Math.min(...boxXs);
-          const hiX = Math.max(...boxXs);
-          const colThresh = loX + (hiX - loX) / 2;
+          const lines = buildTextLines(rects, tol, colGap);
+          if (!lines.length || !items.length) continue;
+
+          // 自举映射：mineru box 范围 ↔ 页面文本行内容范围
+          const bxMin = Math.min(...items.map((i) => i.layout.box[0]));
+          const bxMax = Math.max(...items.map((i) => i.layout.box[2]));
+          const byMin = Math.min(...items.map((i) => i.layout.box[1]));
+          const byMax = Math.max(...items.map((i) => i.layout.box[3]));
+          const lxMin = Math.min(...lines.map((l) => l.left));
+          const lxMax = Math.max(...lines.map((l) => l.right));
+          const lyMin = Math.min(...lines.map((l) => l.top));
+          const lyMax = Math.max(...lines.map((l) => l.bottom));
+          const bxSpan = Math.max(1, bxMax - bxMin);
+          const bySpan = Math.max(1, byMax - byMin);
+          const mapX = (x: number) => ((x - bxMin) / bxSpan) * (lxMax - lxMin) + lxMin;
+          const mapY = (y: number) => ((y - byMin) / bySpan) * (lyMax - lyMin) + lyMin;
+          const CAND_EXPAND = 0.2; // 候选窗口外扩比例（吸收自举映射误差）
 
           for (const item of items) {
             if (!item.text) continue;
             const paraNorm = normalizeText(item.text);
             if (!paraNorm) continue;
-            // 优先在框所在栏匹配（跨栏标题等框在左/右栏都可），失败再试另一栏
-            const preferCol = item.layout.box[0] >= colThresh ? 1 : 0;
-            let col = -1;
+            const [bx1, by1, bx2, by2] = item.layout.box;
+            const ex = ((bx2 - bx1) * CAND_EXPAND * (lxMax - lxMin)) / bxSpan;
+            const ey = ((by2 - by1) * CAND_EXPAND * (lyMax - lyMin)) / bySpan;
+            const mx1 = mapX(bx1) - ex;
+            const mx2 = mapX(bx2) + ex;
+            const my1 = mapY(by1) - ey;
+            const my2 = mapY(by2) + ey;
+            const cands = lines.filter(
+              (ln) => ln.left < mx2 && ln.right > mx1 && ln.top < my2 && ln.bottom > my1,
+            );
+
             let range: [number, number] | null = null;
-            for (const c of [preferCol, 1 - preferCol]) {
-              const r = findParagraphRange(colLines[c], paraNorm);
-              if (r) { col = c; range = r; break; }
+            let used: TextLine[] | null = null;
+            for (const g of groupLinesByX(cands, colGap)) {
+              const r = findParagraphRange(g, paraNorm);
+              if (r) {
+                range = r;
+                used = g;
+                break;
+              }
             }
-            if (!range) continue;
+            if (!range || !used) continue;
             let left = Infinity, top = Infinity, right = -Infinity, bottom = -Infinity;
             for (let i = range[0]; i <= range[1]; i++) {
-              const ln = colLines[col][i];
+              const ln = used[i];
               if (ln.left < left) left = ln.left;
               if (ln.right > right) right = ln.right;
               if (ln.top < top) top = ln.top;
               if (ln.bottom > bottom) bottom = ln.bottom;
             }
-            const [bx1, by1, bx2, by2] = item.layout.box;
             xs.push(bx1, bx2);
             cxs.push(left, right);
             ys.push(by1, by2);
