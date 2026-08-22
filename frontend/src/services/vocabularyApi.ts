@@ -71,6 +71,8 @@ export interface VocabularyListResponse {
   page_size: number;
   sort_by: string;
   order: string;
+  /** 按添加日期（YYYY-MM-DD）统计的全量条数（跨页），用于日期分组标题 */
+  day_counts?: Record<string, number>;
 }
 
 export interface BatchAddResponse {

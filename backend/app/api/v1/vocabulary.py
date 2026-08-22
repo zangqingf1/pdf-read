@@ -3,6 +3,7 @@
 import logging
 import re
 import uuid
+from datetime import timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import asc, case, desc, func, or_, select, delete
@@ -42,7 +43,7 @@ async def _verify_doc_ownership(document_id: str, user: User, db: AsyncSession) 
         raise HTTPException(status_code=404, detail=f"Document {document_id} not found")
     doc = (
         await db.execute(
-            select(Document).where(Document.id == doc_uuid).options(load_only(Document.user_id))
+            select(Document).where(Document.id == doc_uuid).options(load_only(Document.user_id, Document.title))
         )
     ).scalar_one_or_none()
     if doc is None or doc.user_id != user.id:
@@ -546,8 +547,8 @@ async def list_entries(
     current_user: User = Depends(get_current_user),
 ):
     base = select(VocabularyEntry).where(VocabularyEntry.user_id == current_user.id)
-    count_base = select(func.count()).select_from(VocabularyEntry).where(VocabularyEntry.user_id == current_user.id)
 
+    conditions = [VocabularyEntry.user_id == current_user.id]
     if q and q.strip():
         like = f"%{q.strip()}%"
         cond = or_(
@@ -557,9 +558,21 @@ async def list_entries(
             VocabularyEntry.definition_en.like(like),
         )
         base = base.where(cond)
-        count_base = count_base.where(cond)
+        conditions.append(cond)
 
-    total = (await db.execute(count_base)).scalar() or 0
+    total = (await db.execute(select(func.count()).select_from(VocabularyEntry).where(*conditions))).scalar() or 0
+
+    # 全量按日统计（本地时区 YYYY-MM-DD），前端日期分组标题显示当日总添加数
+    day_counts: dict[str, int] = {}
+    created_rows = (
+        await db.execute(select(VocabularyEntry.created_at).where(*conditions))
+    ).all()
+    for (ca,) in created_rows:
+        if ca is None:
+            continue
+        dt = ca if ca.tzinfo else ca.replace(tzinfo=timezone.utc)
+        key = dt.astimezone().strftime("%Y-%m-%d")
+        day_counts[key] = day_counts.get(key, 0) + 1
 
     if sort_by == "document_order":
         # Group by source document first (so each document's words stay
@@ -604,6 +617,7 @@ async def list_entries(
         page_size=page_size,
         sort_by=sort_by,
         order=order,
+        day_counts=day_counts,
     )
 
 

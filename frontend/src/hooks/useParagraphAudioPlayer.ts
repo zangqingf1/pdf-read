@@ -10,6 +10,7 @@
  */
 
 import { useAudioPlayerStore } from '../stores/audioPlayerStore';
+import { useReaderStore } from '../stores/readerStore';
 import { useDocumentStore } from '../stores/documentStore';
 import {
   getParagraphAudio,
@@ -88,6 +89,11 @@ function nowDocId(): string | null {
   return useDocumentStore.getState().documentId;
 }
 
+/** 当前口音偏好（全局 readerStore，音标/单词发音/朗读统一） */
+function currentAccent(): 'us' | 'uk' {
+  return useReaderStore.getState().accent;
+}
+
 // ── 预加载下一段到备用元素 ─────────────────────────────────────────
 
 function prefetchNext(paraIdx: number) {
@@ -101,12 +107,13 @@ function prefetchNext(paraIdx: number) {
   const seq = ++prefetchSeq;
   const el = freeEl();
   const targetIdx = next.index;
+  const accent = currentAccent();
   void (async () => {
-    const result = await getParagraphAudio(docId, targetIdx, next.text, st.accent, st.rate);
+    const result = await getParagraphAudio(docId, targetIdx, next.text, accent, st.rate);
     if (seq !== prefetchSeq || !result) return;
     await _prepare(el, result, 0);
     if (seq !== prefetchSeq) return;
-    standby = { docId, paraIdx: targetIdx, accent: st.accent, rate: st.rate, el, result };
+    standby = { docId, paraIdx: targetIdx, accent, rate: st.rate, el, result };
   })().catch(() => {});
 }
 
@@ -263,14 +270,14 @@ async function _loadAndPlay(
     !forceReload &&
     !!standby &&
     standby.paraIdx === paraIdx &&
-    standby.accent === st.accent &&
+    standby.accent === currentAccent() &&
     standby.rate === st.rate;
 
   let result: ParagraphAudioResult | null;
   if (reuseStandby && standby) {
     result = standby.result;
   } else {
-    result = await getParagraphAudio(docId, paraIdx, para?.text ?? '', st.accent, st.rate);
+    result = await getParagraphAudio(docId, paraIdx, para?.text ?? '', currentAccent(), st.rate);
     if (seq !== loadSeq) return;
     if (!result) {
       st.setStatus('error');
@@ -383,7 +390,7 @@ export function setAccent(accent: 'us' | 'uk') {
   const st = store();
   const paraIdx = st.activeParagraph;
   const sentIdx = st.highlight?.sentIdx ?? 0;
-  st.setAccent(accent);
+  useReaderStore.getState().setAccent(accent);
   if (paraIdx !== null && st.status !== 'idle') {
     void playFromSentence(paraIdx, sentIdx, true);
   }

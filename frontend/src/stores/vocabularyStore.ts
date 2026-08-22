@@ -13,6 +13,8 @@ interface VocabularyState {
   total: number;
   page: number;
   pageSize: number;
+  /** 按添加日期（YYYY-MM-DD）统计的全量条数（跨页），来自后端 */
+  dayCounts: Record<string, number>;
   query: string;
   sortBy: 'created_at' | 'document_order';
   order: 'asc' | 'desc';
@@ -31,7 +33,8 @@ export const useVocabularyStore = create<VocabularyState>((set, get) => ({
   items: [],
   total: 0,
   page: 1,
-  pageSize: 20,
+  pageSize: 24,
+  dayCounts: {},
   query: '',
   sortBy: 'created_at',
   order: 'desc',
@@ -60,6 +63,7 @@ export const useVocabularyStore = create<VocabularyState>((set, get) => ({
         total: res.total,
         page: res.page,
         pageSize: res.page_size,
+        dayCounts: res.day_counts ?? {},
         query: nextQuery,
         sortBy: res.sort_by as VocabularyState['sortBy'],
         order: res.order as VocabularyState['order'],

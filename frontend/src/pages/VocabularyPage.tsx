@@ -85,15 +85,40 @@ function docActivity(group: { items: VocabularyEntry[] }): number {
   return max;
 }
 
+/** 当前网格列数（与下方 grid 断点一致：默认 1 列，sm≥640 2 列，lg≥1024 3 列） */
+function calcCols(): number {
+  if (typeof window === 'undefined') return 3;
+  if (window.matchMedia('(min-width: 1024px)').matches) return 3;
+  if (window.matchMedia('(min-width: 640px)').matches) return 2;
+  return 1;
+}
+
 export default function VocabularyPage() {
-  const { items, total, page, pageSize, query, sortBy, order, loading, error, fetchList, setQuery, setSort, remove } = useVocabularyStore();
+  const { items, total, page, pageSize, dayCounts, query, sortBy, order, loading, error, fetchList, setQuery, setSort, remove } = useVocabularyStore();
   const [searchInput, setSearchInput] = useState(query);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
-  // Initial load
+  /** 每页固定排满 PAGE_ROWS 排：按当前列数换算每页条数 */
+  const PAGE_ROWS = 8;
+  const [cols, setCols] = useState(calcCols);
+  const wantedPageSize = cols * PAGE_ROWS;
+
+  // Initial load + 视口变化（列数变化）时按新每页条数重取
   useEffect(() => {
-    fetchList({ page: 1 });
-  }, [fetchList]);
+    fetchList({ page: 1, page_size: wantedPageSize });
+  }, [fetchList, wantedPageSize]);
+
+  useEffect(() => {
+    const queries = [
+      window.matchMedia('(min-width: 640px)'),
+      window.matchMedia('(min-width: 1024px)'),
+    ];
+    const onChange = () => setCols(calcCols());
+    for (const q of queries) q.addEventListener('change', onChange);
+    return () => {
+      for (const q of queries) q.removeEventListener('change', onChange);
+    };
+  }, []);
 
   // Debounced search
   useEffect(() => {
@@ -238,7 +263,7 @@ export default function VocabularyPage() {
                         {groupByDay && (
                           <div className="flex items-center gap-2 mb-3">
                             <span className="text-sm font-medium text-ink">{group.label}</span>
-                            <span className="text-xs text-muted">({[...group.docs.values()].reduce((s, d) => s + d.items.length, 0)} 词)</span>
+                            <span className="text-xs text-muted">({dayCounts[dk] ?? [...group.docs.values()].reduce((s, d) => s + d.items.length, 0)} 词)</span>
                             <div className="flex-1 h-px bg-hairline/60 ml-2" />
                           </div>
                         )}
@@ -262,7 +287,7 @@ export default function VocabularyPage() {
                               <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                                 {[...docGroup.items]
                                   .sort(docAppearanceCompare)
-                                  .map((entry) => (
+                                   .map((entry) => (
                                   <div key={entry.id} className="bg-surface-card border border-hairline rounded-lg p-4 shadow-soft">
                                     <div className="flex flex-col gap-2.5">
                                       {/* Row 1: 单词原文 | 音标 —— 删除按钮 */}
@@ -368,10 +393,18 @@ export default function VocabularyPage() {
                                           );
                                         })()}
                                       </div>
-                                    </div>
-                                  </div>
-                                ))}
-                              </div>
+                                     </div>
+                                   </div>
+                                 ))}
+                                 {/* 末行自动补位：隐形占位卡对齐网格 */}
+                                 {(() => {
+                                   const remainder = docGroup.items.length % cols;
+                                   const pad = remainder > 0 ? cols - remainder : 0;
+                                   return Array.from({ length: pad }, (_, i) => (
+                                     <div key={`pad-${i}`} aria-hidden="true" className="pointer-events-none invisible rounded-lg" />
+                                   ));
+                                 })()}
+                               </div>
                             </div>
                           ))}
                         </div>

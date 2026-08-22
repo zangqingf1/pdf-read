@@ -1,5 +1,6 @@
 import type { SpeechAccent } from '../../services/ttsApi';
 import { splitPhonetic } from '../../utils/phonetic';
+import { useReaderStore } from '../../stores/readerStore';
 import SpeakerButton from './SpeakerButton';
 
 interface PhoneticWithSpeakersProps {
@@ -9,19 +10,25 @@ interface PhoneticWithSpeakersProps {
   size?: 'sm' | 'md';
 }
 
-const SEGMENTS: Array<{ accent: SpeechAccent; label: string; key: 'br' | 'am' }> = [
-  { accent: 'uk', label: 'UK', key: 'br' },
-  { accent: 'us', label: 'US', key: 'am' },
-];
-
-/** 音标分段展示（英音/美音），每段内联一个小喇叭按钮；音标缺失/异常时兜底两个喇叭。 */
+/** 按全局口音偏好展示单段音标 + 单个喇叭；所选口音缺失时回退另一口音，两者皆无则兜底原串。 */
 export default function PhoneticWithSpeakers({
   word,
   phonetic,
   size = 'sm',
 }: PhoneticWithSpeakersProps) {
+  const accent = useReaderStore((s) => s.accent);
   const { br, am } = splitPhonetic(phonetic);
-  const hasSegment = !!(br || am);
+
+  let ipa: string | null;
+  let playAccent: SpeechAccent;
+  if (accent === 'us') {
+    ipa = am ?? br;
+    playAccent = am ? 'us' : 'uk';
+  } else {
+    ipa = br ?? am;
+    playAccent = br ? 'uk' : 'us';
+  }
+
   const btnClass = size === 'md' ? 'w-8 h-8 touch-area' : 'w-5 h-5';
 
   return (
@@ -29,29 +36,15 @@ export default function PhoneticWithSpeakers({
       className="inline-flex items-center gap-x-2 gap-y-0.5 flex-wrap text-muted-soft"
       style={{ fontSize: '0.75em' }}
     >
-      {SEGMENTS.map((seg) => {
-        const ipa = seg.key === 'br' ? br : am;
-        if (ipa) {
-          return (
-            <span key={seg.accent} className="inline-flex items-center gap-1">
-              {seg.label} {ipa}
-              <SpeakerButton word={word} accent={seg.accent} className={btnClass} />
-            </span>
-          );
-        }
-        return null;
-      })}
-      {!hasSegment && (
+      {ipa ? (
+        <span className="inline-flex items-center gap-1">
+          {ipa}
+          <SpeakerButton word={word} accent={playAccent} className={btnClass} />
+        </span>
+      ) : (
         <span className="inline-flex items-center gap-1">
           {phonetic && <span>{phonetic}</span>}
-          {SEGMENTS.map((seg) => (
-            <SpeakerButton
-              key={seg.accent}
-              word={word}
-              accent={seg.accent}
-              className={btnClass}
-            />
-          ))}
+          <SpeakerButton word={word} accent={accent} className={btnClass} />
         </span>
       )}
     </span>

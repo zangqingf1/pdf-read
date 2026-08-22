@@ -56,6 +56,8 @@ class VocabularyListResponse(BaseModel):
     page_size: int
     sort_by: str
     order: str
+    """按添加日期（本地时区 YYYY-MM-DD）统计的全量条数，用于前端日期分组标题。"""
+    day_counts: dict[str, int] = Field(default_factory=dict)
 
 
 class VocabularyBatchDeleteRequest(BaseModel):

@@ -1,6 +1,6 @@
 import { useEffect, useCallback, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { useReaderStore, BG_COLORS, FONT_FAMILIES, LINE_HEIGHTS, FONT_SIZE_MIN, FONT_SIZE_MAX, WORD_PANEL_FONT_SIZE_MIN, WORD_PANEL_FONT_SIZE_MAX } from '../../stores/readerStore';
+import { useReaderStore, BG_COLORS, FONT_FAMILIES, LINE_HEIGHTS, ACCENTS, FONT_SIZE_MIN, FONT_SIZE_MAX, WORD_PANEL_FONT_SIZE_MIN, WORD_PANEL_FONT_SIZE_MAX } from '../../stores/readerStore';
 
 interface TypographyDrawerProps {
   open: boolean;
@@ -15,6 +15,7 @@ export default function TypographyDrawer({ open, onClose }: TypographyDrawerProp
     fontSize, increaseFontSize, decreaseFontSize,
     wordPanelFontSize, increaseWordPanelFontSize, decreaseWordPanelFontSize,
     setBgColor, setFontFamily, setLineHeight,
+    accent, setAccent,
   } = useReaderStore();
   const overlayRef = useRef<HTMLDivElement>(null);
 
@@ -188,6 +189,27 @@ export default function TypographyDrawer({ open, onClose }: TypographyDrawerProp
                 </button>
               ))}
             </div>
+          </section>
+
+          {/* ── Accent ── */}
+          <section>
+            <h4 className="text-xs font-medium text-muted-soft uppercase tracking-wide mb-3">发音口音</h4>
+            <div className="flex gap-2">
+              {ACCENTS.map((a) => (
+                <button
+                  key={a.key}
+                  onClick={() => setAccent(a.key)}
+                  className={`flex-1 px-2 py-2 rounded-md text-sm border transition-all duration-150 ${
+                    accent === a.key
+                      ? 'border-primary bg-surface-card text-primary font-medium'
+                      : 'border-hairline text-body hover:border-muted-soft hover:bg-canvas-soft'
+                  }`}
+                >
+                  {a.label}
+                </button>
+              ))}
+            </div>
+            <p className="mt-2 text-xs text-muted-soft">音标与朗读仅使用所选口音</p>
           </section>
 
           {/* ── Line Height ── */}

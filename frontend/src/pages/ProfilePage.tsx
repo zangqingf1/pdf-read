@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../stores/authStore';
+import { useReaderStore, ACCENTS } from '../stores/readerStore';
 import Button from '../components/ui/Button';
 import Input from '../components/ui/Input';
 import {
@@ -23,6 +24,8 @@ export default function ProfilePage() {
   const user = useAuthStore((s) => s.user);
   const updateProfile = useAuthStore((s) => s.updateProfile);
   const syncUser = useAuthStore((s) => s.syncUser);
+  const accent = useReaderStore((s) => s.accent);
+  const setAccent = useReaderStore((s) => s.setAccent);
 
   const [nickname, setNickname] = useState(user?.nickname ?? '');
   const [error, setError] = useState('');
@@ -189,6 +192,28 @@ export default function ProfilePage() {
               保存
             </Button>
           </form>
+
+          {/* 发音口音（与阅读页排版抽屉共用同一偏好，自动联动） */}
+          <div className="flex flex-col gap-2 border-t border-hairline pt-5">
+            <span className="text-sm font-medium text-body-strong">发音口音</span>
+            <div className="flex gap-2">
+              {ACCENTS.map((a) => (
+                <button
+                  key={a.key}
+                  type="button"
+                  onClick={() => setAccent(a.key)}
+                  className={`flex-1 px-2 py-2 rounded-md text-sm border transition-all duration-150 ${
+                    accent === a.key
+                      ? 'border-primary bg-surface-card text-primary font-medium'
+                      : 'border-hairline text-body hover:border-muted-soft hover:bg-canvas-soft'
+                  }`}
+                >
+                  {a.label}
+                </button>
+              ))}
+            </div>
+            <span className="text-xs text-muted-soft">音标与朗读仅使用所选口音，阅读页同步生效</span>
+          </div>
         </div>
       </div>
     </div>

@@ -33,9 +33,18 @@ const LINE_HEIGHTS = [
   { key: 'wide', label: '极宽', value: 2.5 },
 ] as const;
 
+/** 发音口音（音标展示 + 单词发音 + 段落朗读统一使用） */
+const ACCENTS = [
+  { key: 'us', label: '美音 US' },
+  { key: 'uk', label: '英音 UK' },
+] as const;
+
+type AccentKey = (typeof ACCENTS)[number]['key'];
+
 const BG_COLOR_DEFAULT = 'warm-cream';
 const FONT_FAMILY_DEFAULT = 'georgia';
 const LINE_HEIGHT_DEFAULT = 'normal';
+const ACCENT_DEFAULT: AccentKey = 'us';
 
 interface ReaderState {
   fontSize: number;
@@ -50,6 +59,8 @@ interface ReaderState {
   setFontFamily: (key: string) => void;
   lineHeight: string;
   setLineHeight: (key: string) => void;
+  accent: AccentKey;
+  setAccent: (key: AccentKey) => void;
 }
 
 export const useReaderStore = create<ReaderState>()(
@@ -92,6 +103,8 @@ export const useReaderStore = create<ReaderState>()(
       setBgColor: (key) => set({ bgColor: key }),
       setFontFamily: (key) => set({ fontFamily: key }),
       setLineHeight: (key) => set({ lineHeight: key }),
+      accent: ACCENT_DEFAULT,
+      setAccent: (key) => set({ accent: key }),
     }),
     {
       name: 'reader-preferences',
@@ -101,6 +114,7 @@ export const useReaderStore = create<ReaderState>()(
         bgColor: state.bgColor,
         fontFamily: state.fontFamily,
         lineHeight: state.lineHeight,
+        accent: state.accent,
       }),
     }
   )
@@ -108,6 +122,7 @@ export const useReaderStore = create<ReaderState>()(
 
 export {
   FONT_SIZE_MIN, FONT_SIZE_MAX, WORD_PANEL_FONT_SIZE_MIN, WORD_PANEL_FONT_SIZE_MAX,
-  BG_COLORS, FONT_FAMILIES, LINE_HEIGHTS, BG_COLOR_DEFAULT, FONT_FAMILY_DEFAULT, LINE_HEIGHT_DEFAULT,
+  BG_COLORS, FONT_FAMILIES, LINE_HEIGHTS, ACCENTS,
+  BG_COLOR_DEFAULT, FONT_FAMILY_DEFAULT, LINE_HEIGHT_DEFAULT, ACCENT_DEFAULT,
 };
-export type { ReaderState };
+export type { ReaderState, AccentKey };

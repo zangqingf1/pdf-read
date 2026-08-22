@@ -282,18 +282,17 @@ export default function FocusedAnalysisSheet({
   onClose,
 }: FocusedAnalysisSheetProps) {
   const { wordAnalyses, sentenceAnalyses } = useDocumentStore();
-  const { wordPanelFontSize } = useReaderStore();
+  const { wordPanelFontSize, accent } = useReaderStore();
 
   const wordAnalysis = type === 'word' ? wordAnalyses[analysisKey] : null;
   const sentenceAnalysis = type === 'sentence' ? sentenceAnalyses[analysisKey] : null;
 
-  // 打开单词详情即预取双音色，点击喇叭时命中缓存零延迟播放
+  // 打开单词详情即预取当前口音音色，点击喇叭时命中缓存零延迟播放
   useEffect(() => {
     if (type === 'word' && wordAnalysis?.word) {
-      prefetchSpeak(wordAnalysis.word, 'us');
-      prefetchSpeak(wordAnalysis.word, 'uk');
+      prefetchSpeak(wordAnalysis.word, accent);
     }
-  }, [type, wordAnalysis]);
+  }, [type, wordAnalysis, accent]);
 
   const hasData = type === 'word' ? !!wordAnalysis : !!sentenceAnalysis;
 

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useAudioPlayerStore } from '../../stores/audioPlayerStore';
+import { useReaderStore } from '../../stores/readerStore';
 import { togglePlay, stop, seek, setRate, setAccent } from '../../hooks/useParagraphAudioPlayer';
 
 /** 倍速分组（二级菜单：一级=分组标题，二级=具体倍速） */
@@ -36,7 +37,6 @@ export default function AudioPlayerBar() {
   const {
     status,
     activeParagraph,
-    accent,
     rate,
     followScroll,
     currentTimeMs,
@@ -44,6 +44,7 @@ export default function AudioPlayerBar() {
     error,
     setFollowScroll,
   } = useAudioPlayerStore();
+  const accent = useReaderStore((s) => s.accent);
 
   const [rateMenuOpen, setRateMenuOpen] = useState(false);
   const rateRef = useRef<HTMLDivElement>(null);
