@@ -717,6 +717,11 @@
 .paragraph-indent {
   text-indent: 2em;
 }
+/* flow-root 包含浮动首字：短段落（行数少于下沉字高）时浮动不再突出段落盒、
+   压到下方翻译区 */
+.paragraph-dropcap {
+  display: flow-root;
+}
 .paragraph-dropcap::first-letter {
   float: left;
   font-size: 2.8em;
@@ -1111,8 +1116,9 @@
 .export-doc .ep-en-cont {
   text-indent: 0;
 }
-/* 首段：首字下沉，不缩进 */
+/* 首段：首字下沉，不缩进；flow-root 包含浮动首字（短段落时不下压译文） */
 .export-doc .ep-en.ep-dropcap {
+  display: flow-root;
   text-indent: 0;
 }
 .export-doc .ep-en.ep-dropcap::first-letter {

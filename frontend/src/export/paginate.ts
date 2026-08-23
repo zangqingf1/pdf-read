@@ -35,10 +35,12 @@ export interface MeasuredBlock {
   keepNext?: boolean;
   /** 段落/总结 <p>：可行级拆分跨页 */
   lines?: LineInfo;
-  /** 卡片碎片序列（仅当 h > 页高时启用拆分） */
+  /** 卡片碎片序列（仅当 h 超过拆分阈值时启用拆分） */
   frags?: FragMeasure[];
   /** 卡片对应 token 在段内归一化文本中的字符偏移（同页对齐用；未定位词 = Infinity） */
   pos?: number;
+  /** 段落实体尾 margin（实测 CSS 值；行级拆分装箱计账用，见 collectTrack） */
+  tail?: number;
 }
 
 /** 段落拆分片段（文本偏移，作用于规范化文本） */
@@ -227,7 +229,7 @@ export function packTrack(
     }
 
     // 超高卡片：逐碎片填充（非首个碎片入新页时标记 contBefore）
-    if (b.frags && b.h > bodyH) {
+    if (b.frags && isSplittable(b, bodyH)) {
       for (let k = 0; k < b.frags.length; k++) {
         const f = b.frags[k];
         const needCont = k > 0;
@@ -308,17 +310,19 @@ export function paginate(
 /** 合成空白占位块 id（渲染为带高度的空 div，补齐行带短侧） */
 export const BLANK = blockIds.blank;
 
-/** 左栏段落尾 margin（.ep-paragraph margin-bottom，须与 GAP_LEFT 一致） */
-const PARA_MARGIN = 14;
-/** 右栏各类块在 flex 渲染列中的尾 margin（须与 index.css 一致） */
-const RIGHT_TAIL: Record<string, number> = {
-  colhead: 12,
-  g: 8,
-  w: 10,
-  s: 10,
-};
+/** 左栏段落尾 margin 常量已废弃：尾距由 MeasuredBlock.tail 实测携带（collectTrack） */
+
 /** 安全余量（与 packTrack 一致，吸收测量/渲染亚像素偏差） */
 const SAFETY = 10;
+/** 卡片碎片拆分阈值比例：卡高超过该比例的页高即按碎片拆分，避免整卡跳页留下大片页底空白 */
+const CARD_SPLIT_RATIO = 0.5;
+/** 同页对齐截断的最大可容忍浪费（占页高比例）：截断损失行高超过该值时放弃本片对齐，回退自然放置填满页高 */
+const ALIGN_WASTE_MAX_RATIO = 0.25;
+
+/** 卡片是否启用碎片拆分（超过阈值的卡整卡跳页会留下大片页底空白） */
+function isSplittable(b: MeasuredBlock, bodyH: number): boolean {
+  return !!b.frags && b.h > bodyH * CARD_SPLIT_RATIO;
+}
 
 /** 行带：左右两侧作为一个整体装箱的单元 */
 interface Band {
@@ -348,23 +352,15 @@ interface BandState {
 
 const isGroupHeader = (id: string) => /^g:\d+$/.test(id);
 
-/** 右栏块在 flex 渲染列中的占高 = 内容高 + 尾 margin */
+/** 右栏块在 flex 渲染列中的占高：测量树已改为与渲染一致的 flex 列，
+ *  wrapper 高度天然包含块自身 margin，无需再手工同步尾距常量 */
 function rightItemDomH(b: MeasuredBlock): number {
-  const tail = /^g:\d+$/.test(b.id)
-    ? RIGHT_TAIL.g
-    : b.id === blockIds.colHeadR
-      ? RIGHT_TAIL.colhead
-      : /^w:/.test(b.id)
-        ? RIGHT_TAIL.w
-        : /^s:/.test(b.id)
-          ? RIGHT_TAIL.s
-          : 0;
-  return b.h + tail;
+  return b.h;
 }
 
-/** 段落行带切片的尾 margin：按行拆分的段落实体才在末尾带 .ep-paragraph 的 14px */
+/** 段落行带切片的尾 margin：按行拆分的段落实体带实测尾距（.ep-paragraph margin-bottom） */
 function tailMargin(band: Band): number {
-  return band.kind === 'para' && band.left.lines ? PARA_MARGIN : 0;
+  return band.kind === 'para' && band.left.lines ? band.left.tail ?? 0 : 0;
 }
 
 /** 行带首片最小高度（keepNext 预判用） */
@@ -508,7 +504,7 @@ function placeRightSlice(
     if (isGroupHeader(b.id) && st.rightFragIdx === 0 && !atPageTop && st.rightIdx + 1 < band.right.length) {
       if (placed + rightItemDomH(b) + rightItemDomH(band.right[st.rightIdx + 1]) > avail) break;
     }
-    const oversized = !!(b.frags && b.h > bodyH);
+    const oversized = isSplittable(b, bodyH);
     if (!oversized) {
       const domH = rightItemDomH(b);
       if (placed + domH > avail && !force) break;
@@ -653,9 +649,14 @@ export function paginateTwoColumn(
               }
             }
             if (jStar >= 1 && jStar < kMaxCum) {
-              // 卡片滞后（可见 token 超可放卡）：左栏截到 token m* 所在行，右栏 cap 到 m*
-              maxLines = jStar;
-              maxCards = 1 + mStar;
+              if ((kMaxCum - jStar) * L.hEn > bodyH * ALIGN_WASTE_MAX_RATIO) {
+                // 截断会截掉太多行（页底大片空白）→ 放弃本片对齐，
+                // 不设限自然放置：左栏填满页高，卡片滞后接受跨页错位
+              } else {
+                // 卡片滞后（可见 token 超可放卡）：左栏截到 token m* 所在行，右栏 cap 到 m*
+                maxLines = jStar;
+                maxCards = 1 + mStar;
+              }
             } else if (jStar >= 1) {
               // 无需截断（可见 token ≤ 可放卡）：右栏 cap 到可见数，防卡片超前
               maxCards = mStar >= 1 ? 1 + mStar : 0;

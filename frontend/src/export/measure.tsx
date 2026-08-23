@@ -24,52 +24,59 @@ import type { ExportData } from './data';
 import type { ExportPreferences } from './exportTypes';
 
 /**
- * 计算元素每行信息：单行高度 + 每行结束处的文本偏移。
- * 克隆探针 + Range API 遍历字符 y 坐标，直接取浏览器真实行边界：
- * 与渲染必然一致（消除探针二分/词边界回退的亚像素漂移），且边界天然落在
- * 词间空隙（浏览器按词换行，中文逐字）——跨页切片不会把单词拆成两半。
+ * 元素内全部文本节点（文档序）。token 高亮 span、首字下沉等内联样式全部保留，
+ * 行界在真实渲染几何上测定，与最终分页 DOM 必然一致。
+ */
+function textNodesIn(el: HTMLElement): Text[] {
+  const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+  const out: Text[] = [];
+  for (let n = walker.nextNode(); n; n = walker.nextNode()) out.push(n as Text);
+  return out;
+}
+
+/**
+ * 计算元素每行信息：行高 + 每行结束处的文本偏移。
+ * 直接在测量树中的真实元素上逐字符取字形盒矩形（非折叠 Range）：
+ * 加粗 token（更宽 → 更早换行）、首字下沉浮动、text-indent 等样式差异
+ * 全部天然包含，消除「纯文本探针 vs 富文本渲染」的系统性漂移。
+ *
+ * 必须用非折叠 Range：折叠 caret 在文本节点/内联 span 边界处锚点漂移，
+ * 且同一文档位置会被相邻两个节点各采样一次——边界恰逢换行时推入重复偏移，
+ * 导致行数虚高（每页页底大片空白）、行界错位（跨页切片切在词中间）。
+ * 字形盒矩形每个字符恰采样一次，永远良定义。
  * 单行或异常返回 null（退回原子装箱）。
  */
 function computeLines(el: HTMLElement): { lineH: number; ends: number[] } | null {
-  const text = el.textContent ?? '';
-  if (!text.trim()) return null;
-  const probe = el.cloneNode(false) as HTMLElement;
-  probe.style.cssText = `${probe.style.cssText || ''};position:absolute;left:0;top:0;visibility:hidden;width:${el.getBoundingClientRect().width}px;`;
-  probe.textContent = 'x';
-  (el.parentElement ?? el).appendChild(probe);
+  const nodes = textNodesIn(el);
+  const total = nodes.reduce((s, t) => s + t.data.length, 0);
+  if (total === 0 || !el.textContent?.trim()) return null;
 
-  const probeH = (t: string): number => {
-    probe.textContent = t;
-    return probe.getBoundingClientRect().height;
-  };
-  const lineH = probeH('x');
-  if (!(probeH(text) > lineH + 0.5)) {
-    probe.remove();
-    return null;
-  }
+  const cs = getComputedStyle(el);
+  const lineH =
+    cs.lineHeight === 'normal' ? parseFloat(cs.fontSize) * 1.2 : parseFloat(cs.lineHeight);
+  if (!Number.isFinite(lineH) || lineH <= 0) return null;
 
-  // Range API：字符位置 y 坐标变化处 = 行首（真实渲染的换行边界）
-  probe.textContent = text;
-  const node = probe.firstChild as Text;
+  // 字符 y 坐标变化处 = 行首（真实渲染的换行边界）。行界记录为「新行首字符
+  // 的全局偏移」= 前一行的独占结尾，与切片 norm.slice(enFrom, enTo) 语义一致。
   const rng = document.createRange();
   const ends: number[] = [];
-  let lastY: number | null = null;
-  for (let i = 1; i <= text.length; i++) {
-    rng.setStart(node, i);
-    rng.setEnd(node, i);
-    const y = rng.getBoundingClientRect().top;
-    if (lastY === null) {
-      lastY = y;
-      continue;
+  let prevTop: number | null = null;
+  let off = 0;
+  for (const node of nodes) {
+    const len = node.data.length;
+    for (let i = 0; i < len; i++) {
+      rng.setStart(node, i);
+      rng.setEnd(node, i + 1);
+      const r = rng.getBoundingClientRect();
+      // 零尺寸矩形（不可见/折叠字符）不参与行界链比较
+      if (r.width === 0 && r.height === 0) continue;
+      if (prevTop !== null && Math.abs(r.top - prevTop) > 0.5) ends.push(off + i);
+      prevTop = r.top;
     }
-    if (Math.abs(y - lastY) > 0.5) {
-      ends.push(i - 1);
-      lastY = y;
-    }
+    off += len;
   }
-  probe.remove();
   if (ends.length === 0) return null; // 单行
-  ends.push(text.length); // 末尾
+  ends.push(total); // 末尾
   return { lineH, ends };
 }
 
@@ -120,6 +127,14 @@ function collectTrack(
     if (def.kind === 'paragraph' || def.kind === 'sum-p') {
       const lines = collectLines(el);
       if (lines) measured.lines = lines;
+      // 段落实体的尾 margin（.ep-paragraph margin-bottom）：flex 测量树中包含在
+      // wrapper 高度里；行级拆分装箱只计行高，尾距由此字段显式携带（实测 CSS 值，
+      // 不再手工同步常量）
+      const inner = el.firstElementChild as HTMLElement | null;
+      if (inner) {
+        const mb = parseFloat(getComputedStyle(inner).marginBottom);
+        if (Number.isFinite(mb) && mb > 0) measured.tail = mb;
+      }
     }
     if (def.kind === 'sentence-card' || def.kind === 'word-card') {
       const splitEl = host.querySelector<HTMLElement>(`.ep-card-split[data-of="${def.id}"]`);
@@ -157,12 +172,14 @@ function MeasureTree({ data, prefs, ctx }: { data: ExportData; prefs: ExportPref
     '--fs-sentence': `${prefs.fontSizeSentence}px`,
   } as CSSProperties;
 
-  // 卡片碎片副本（超高卡片拆分测量用；absolute + host visibility:hidden，不占流可测量）
+  // 卡片碎片副本（超高卡片拆分测量用；absolute + host visibility:hidden，不占流可测量）。
+  // 宽度必须与碎片实际渲染的栏一致（右栏卡 → rightW），否则换行数不同 → 碎片高失真
+  const fragW = single ? contentW : rightW;
   const fragCopies: ReactNode[] = [];
   if (prefs.includeWords) {
     for (const w of data.words) {
       fragCopies.push(
-        <div key={`w-split:${w.paragraph_index}:${w.word}`} className="ep-card-split" data-of={blockIds.w(w.paragraph_index, w.word)}>
+        <div key={`w-split:${w.paragraph_index}:${w.word}`} className="ep-card-split" data-of={blockIds.w(w.paragraph_index, w.word)} style={{ width: fragW }}>
           {wordCardFragRows(w, prefs).map((row) => (
             <div key={row.id} className="ep-frag" id={row.id}>{row.node}</div>
           ))}
@@ -173,7 +190,7 @@ function MeasureTree({ data, prefs, ctx }: { data: ExportData; prefs: ExportPref
   if (prefs.includeSentences) {
     for (const s of data.sentences) {
       fragCopies.push(
-        <div key={`s-split:${s.paragraph_index}:${s.sentence_index}`} className="ep-card-split" data-of={blockIds.s(s.paragraph_index, s.sentence_index)}>
+        <div key={`s-split:${s.paragraph_index}:${s.sentence_index}`} className="ep-card-split" data-of={blockIds.s(s.paragraph_index, s.sentence_index)} style={{ width: fragW }}>
           {sentenceCardFragIds(s, prefs).map((fid) => (
             <div key={fid} style={{ display: 'contents' }}>{renderSentenceFrag(s, fid, false, prefs)}</div>
           ))}
@@ -193,7 +210,11 @@ function MeasureTree({ data, prefs, ctx }: { data: ExportData; prefs: ExportPref
         {fragCopies}
       </div>
       {!single && (
-        <div className="measure-right" data-track="right" style={{ width: rightW, position: 'relative' }}>
+        <div
+          className="measure-right"
+          data-track="right"
+          style={{ width: rightW, display: 'flex', flexDirection: 'column' }}
+        >
           {rightDefs.map((b) => (
             <div key={b.id} data-blk={b.id}>
               {renderWholeBlock(b.id, ctx)}
@@ -245,13 +266,15 @@ export async function measureAndPaginate(data: ExportData, prefs: ExportPreferen
     const headFootH = footBottom - headTop;
     const contSample = host.querySelector<HTMLElement>('#ep-cont-sample');
     const contH = contSample?.getBoundingClientRect().height ?? 20;
+    const contMb = contSample ? parseFloat(getComputedStyle(contSample).marginBottom) : NaN;
+    const contGap = Number.isFinite(contMb) && contMb >= 0 ? contMb : CONT_GAP;
 
     const bodyH = mmToPx(paper.hMm) - PAGE_PADDING * 2 - headFootH;
 
     const L = collectTrack(host, 'left', leftDefs);
     const R = single ? { blocks: [], spacing: [] } : collectTrack(host, 'right', rightDefs);
 
-    return paginate(L.blocks, R.blocks, bodyH, L.spacing, R.spacing, contH, CONT_GAP, single, prefs.alignSamePage);
+    return paginate(L.blocks, R.blocks, bodyH, L.spacing, R.spacing, contH, contGap, single, prefs.alignSamePage);
   } finally {
     root.unmount();
     host.remove();
