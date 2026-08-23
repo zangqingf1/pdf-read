@@ -6,6 +6,7 @@ import { useDocumentStore } from '../../stores/documentStore';
 import { useReaderStore } from '../../stores/readerStore';
 import { deleteWordAnalysis, type WordAnalysisResult } from '../../services/wordAnalysisApi';
 import { WordRichTags } from './WordTags';
+import { ChineseSpoiler } from '../common/ChineseSpoiler';
 import { deleteSentenceAnalysis, type SentenceAnalysisResult } from '../../services/sentenceAnalysisApi';
 import { sentenceBodyMarkdown, sentenceBreakdownChunks } from '../../utils/sentenceSections';
 import PhoneticWithSpeakers from './PhoneticWithSpeakers';
@@ -27,7 +28,6 @@ function FocusedWordCard({
   analysisKey: string;
 }) {
   const { removeWordAnalysis } = useDocumentStore();
-  const [showDefZh, setShowDefZh] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
@@ -76,16 +76,8 @@ function FocusedWordCard({
       {/* Definition */}
       {analysis.definition && (
         <div className="mb-3">
-          <div className="flex items-center justify-between text-muted mb-0.5 text-[0.75em]">
+          <div className="text-muted mb-0.5 text-[0.75em]">
             <span>释义</span>
-            {analysis.definition_zh && (
-              <button
-                onClick={() => setShowDefZh(!showDefZh)}
-                className="text-muted-soft hover:text-muted select-none text-xs touch-area"
-              >
-                {showDefZh ? '隐藏中文' : '展开中文'}
-              </button>
-            )}
           </div>
           <p className="text-body-strong m-0 text-base font-reading">
             {analysis.part_of_speech && (
@@ -93,9 +85,9 @@ function FocusedWordCard({
             )}
             {analysis.definition}
           </p>
-          {showDefZh && analysis.definition_zh && (
+          {analysis.definition_zh && (
             <p className="mt-1 text-muted leading-relaxed m-0 font-chinese text-[0.75em]">
-              {analysis.definition_zh}
+              <ChineseSpoiler>{analysis.definition_zh}</ChineseSpoiler>
             </p>
           )}
         </div>

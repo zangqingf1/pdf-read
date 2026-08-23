@@ -663,11 +663,6 @@
   background-color: #fdf3ef;
 }
 
-/* 句子外层容器（朗读按钮与可选中文本分离，选中/高亮不含播放按钮） */
-.sentence-wrap {
-  display: inline;
-}
-
 /* ── 朗读卡拉OK高亮 ── */
 .tts-current-sentence {
   background-color: rgba(200, 116, 85, 0.12);
@@ -678,33 +673,6 @@
   box-shadow: 0 0 0 1.5px rgba(200, 116, 85, 0.6);
   border-radius: 3px;
   padding: 0 1px;
-}
-
-/* ── 句子朗读按钮 ── */
-.sentence-play-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 16px;
-  height: 16px;
-  margin-right: 4px;
-  vertical-align: middle;
-  border-radius: 4px;
-  color: var(--muted-soft);
-  background-color: rgba(108, 106, 100, 0.12);
-  opacity: 0;
-  transition: opacity 0.15s ease, background-color 0.15s ease;
-}
-.sentence-play-btn:hover {
-  background-color: rgba(108, 106, 100, 0.22);
-}
-.sentence-wrap:hover .sentence-play-btn {
-  opacity: 1;
-}
-@media (pointer: coarse) {
-  .sentence-play-btn {
-    opacity: 1;
-  }
 }
 
 /* ── Paragraph block ── */
@@ -745,8 +713,20 @@
   background-color: rgba(150, 148, 142, 0.18);
 }
 
-/* ── Paragraph flash animation ── */
-.paragraph-flash {
+/* ── 段落首行缩进 + 首段首字下沉 ── */
+.paragraph-indent {
+  text-indent: 2em;
+}
+.paragraph-dropcap::first-letter {
+  float: left;
+  font-size: 2.8em;
+  line-height: 0.85;
+  padding-right: 0.08em;
+  padding-top: 0.06em;
+  font-weight: 600;
+}
+
+/* ── Paragraph flash animation ── */.paragraph-flash {
   animation: paragraph-flash-anim 1.5s ease-out;
 }
 @keyframes paragraph-flash-anim {
@@ -823,6 +803,19 @@
 .translation-reveal-visible {
   max-height: 2000px;
   opacity: 1;
+}
+
+/* ── Chinese spoiler (中文释义模糊遮盖) ── */
+.zh-spoiler {
+  display: inline-block;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: filter 0.1s ease;
+}
+.zh-spoiler-covered {
+  filter: blur(6px);
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 /* ── Drag handle for resizable panels ── */
@@ -1117,6 +1110,18 @@
 /* 续排片段非段首：不缩进 */
 .export-doc .ep-en-cont {
   text-indent: 0;
+}
+/* 首段：首字下沉，不缩进 */
+.export-doc .ep-en.ep-dropcap {
+  text-indent: 0;
+}
+.export-doc .ep-en.ep-dropcap::first-letter {
+  float: left;
+  font-size: 2.8em;
+  line-height: 0.85;
+  padding-right: 0.08em;
+  padding-top: 0.06em;
+  font-weight: 600;
 }
 .export-doc .ep-zh {
   font-size: var(--fs-translation);

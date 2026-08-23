@@ -8,7 +8,6 @@ import { useDocumentStore } from '../../stores/documentStore';
 import { triggerScrollToAnalysis } from './StudyPanel';
 import { splitSentences, tokenizeWords, wordAnalysisKey, sentenceAnalysisKey } from '../../utils/textTokens';
 import { useAudioPlayerStore } from '../../stores/audioPlayerStore';
-import { playFromSentence } from '../../hooks/useParagraphAudioPlayer';
 import { safeMarkdownComponents } from '../../utils/markdownComponents';
 
 // ── Module-level callback: open focused analysis on mobile ──
@@ -296,39 +295,23 @@ const SentenceToken = memo(function SentenceToken({
   ].filter(Boolean).join(' ');
 
   return (
-    <span className="sentence-wrap">
-      <button
-        type="button"
-        className="sentence-play-btn"
-        title="从这句开始朗读"
-        aria-label="从这句开始朗读"
-        onClick={(e) => {
-          e.stopPropagation();
-          void playFromSentence(paragraphIndex, sentence.index);
-        }}
-      >
-        <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-          <path d="M8 5v14l11-7z" />
-        </svg>
-      </button>
-      <span
-        ref={sentenceRef}
-        className={sentenceClassName}
-        onClick={handleTextClick}
-        onTouchStart={handleTouchStart}
-        onTouchEnd={handleTouchEnd}
-        onTouchMove={handleTouchMove}
-        data-paragraph-index={paragraphIndex}
-        data-sentence-index={sentence.index}
-      >
-        {needsMarkdown ? (
-          <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
-            {sentence.text}
-          </ReactMarkdown>
-        ) : (
-          plainContent
-        )}
-      </span>
+    <span
+      ref={sentenceRef}
+      className={sentenceClassName}
+      onClick={handleTextClick}
+      onTouchStart={handleTouchStart}
+      onTouchEnd={handleTouchEnd}
+      onTouchMove={handleTouchMove}
+      data-paragraph-index={paragraphIndex}
+      data-sentence-index={sentence.index}
+    >
+      {needsMarkdown ? (
+        <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
+          {sentence.text}
+        </ReactMarkdown>
+      ) : (
+        plainContent
+      )}
     </span>
   );
 });
@@ -361,7 +344,7 @@ const ParagraphBlock = memo(function ParagraphBlock({
       data-paragraph-index={paragraph.index}
     >
       {/* Sentence-level rendering + 段尾展开翻译图标按钮 */}
-      <p className="text-ink !mb-0">
+      <p className={`text-ink !mb-0${paragraph.index === 0 ? ' paragraph-dropcap' : ' paragraph-indent'}`}>
         {sentences.map((sentence) => (
           <SentenceToken
             key={sentence.index}

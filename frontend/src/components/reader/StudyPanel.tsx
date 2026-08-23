@@ -14,6 +14,7 @@ import type { SentenceAnalysisResult } from '../../services/sentenceAnalysisApi'
 import { sentenceBodyMarkdown, sentenceBreakdownChunks } from '../../utils/sentenceSections';
 import { wordPositionMap } from '../../utils/textTokens';
 import EmptyState from '../ui/EmptyState';
+import { ChineseSpoiler } from '../common/ChineseSpoiler';
 import PhoneticWithSpeakers from './PhoneticWithSpeakers';
 
 // ── Module-level callback for reverse navigation ──
@@ -99,7 +100,6 @@ function WordCard({
   onDelete: () => void;
 }) {
   const [deleting, setDeleting] = useState(false);
-  const [showDefZh, setShowDefZh] = useState(false);
   const [confirming, setConfirming] = useState(false);
 
   const handleDelete = useCallback(async () => {
@@ -164,16 +164,8 @@ function WordCard({
       {/* Definition */}
       {analysis.definition && (
         <div className="mb-2">
-          <div className="flex items-center justify-between text-muted mb-0.5" style={{ fontSize: '0.75em' }}>
+          <div className="text-muted mb-0.5" style={{ fontSize: '0.75em' }}>
             <span>释义</span>
-            {analysis.definition_zh && (
-              <button
-                onClick={() => setShowDefZh(!showDefZh)}
-                className="cursor-pointer text-muted-soft hover:text-muted select-none inline-flex items-center gap-0.5 text-xs"
-              >
-                {showDefZh ? '隐藏中文' : '展开中文'}
-              </button>
-            )}
           </div>
           <p className="text-body-strong m-0 font-reading">
             {analysis.part_of_speech && (
@@ -181,9 +173,9 @@ function WordCard({
             )}
             {analysis.definition}
           </p>
-          {showDefZh && analysis.definition_zh && (
+          {analysis.definition_zh && (
             <p className="mt-0.5 text-muted leading-relaxed m-0 font-chinese" style={{ fontSize: '0.75em' }}>
-              {analysis.definition_zh}
+              <ChineseSpoiler>{analysis.definition_zh}</ChineseSpoiler>
             </p>
           )}
         </div>

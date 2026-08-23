@@ -220,7 +220,7 @@ export function renderWholeBlock(id: string, ctx: BlockCtx): React.ReactNode {
     if (!p) return null;
     return (
       <div className="ep-paragraph">
-        <div className="ep-en">{highlightTokens(paragraphNormText(p), p.index, wordAnalyses, true, sentenceAnalyses)}</div>
+        <div className={`ep-en${p.index === 0 ? ' ep-dropcap' : ''}`}>{highlightTokens(paragraphNormText(p), p.index, wordAnalyses, true, sentenceAnalyses)}</div>
         {prefs.includeTranslation && data.translations[p.index] && (
           <div className="ep-zh">{data.translations[p.index]}</div>
         )}
@@ -336,8 +336,11 @@ export function renderParagraphFrag(
   const zh = data.translations[pIndex] ?? '';
   const zhSlice = zh.slice(frag.zhFrom, frag.zhTo);
 
-  // 首片段（enFrom=0）是段落真正的段首，保留首行缩进；仅续排片段不缩进
-  const enCls = frag.enFrom === 0 ? 'ep-en' : 'ep-en ep-en-cont';
+  // 首片段（enFrom=0）是段落真正的段首：首段用首字下沉（不缩进），其余段保留首行缩进；仅续排片段不缩进
+  const isFirst = p.index === 0;
+  const enCls = frag.enFrom !== 0
+    ? 'ep-en ep-en-cont'
+    : isFirst ? 'ep-en ep-dropcap' : 'ep-en';
 
   return (
     <div className="ep-paragraph">

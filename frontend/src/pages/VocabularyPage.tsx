@@ -7,6 +7,7 @@ import Badge from '../components/ui/Badge';
 import EmptyState from '../components/ui/EmptyState';
 import Spinner from '../components/ui/Spinner';
 import PhoneticWithSpeakers from '../components/reader/PhoneticWithSpeakers';
+import { ChineseSpoiler } from '../components/common/ChineseSpoiler';
 
 function formatDate(iso: string | null): string {
   if (!iso) return '';
@@ -317,19 +318,23 @@ export default function VocabularyPage() {
                                         </button>
                                       </div>
 
-                                      {/* Part 2: 词典源释义（不同词性换行显示） */}
+                                      {/* Part 2: 词典源释义（不同词性换行显示；中文默认模糊遮盖，点击揭示） */}
                                       <div className="flex flex-col gap-1">
                                         {(() => {
                                           const segs = parseTranslationByPos(entry.translation);
                                           if (segs.length > 0) {
-                                            return segs.map((s, i) => (
-                                              <div key={i} className="flex items-start gap-2 text-sm leading-relaxed">
-                                                {s.pos && (
-                                                  <span className="flex-shrink-0 text-muted text-xs mt-0.5 font-reading">{s.pos}</span>
-                                                )}
-                                                <span className="text-body-strong font-chinese">{s.text}</span>
-                                              </div>
-                                            ));
+                                            return (
+                                              <ChineseSpoiler className="flex w-full flex-col gap-1">
+                                                {segs.map((s, i) => (
+                                                  <div key={i} className="flex items-start gap-2 text-sm leading-relaxed">
+                                                    {s.pos && (
+                                                      <span className="flex-shrink-0 text-muted text-xs mt-0.5 font-reading">{s.pos}</span>
+                                                    )}
+                                                    <span className="text-body-strong font-chinese">{s.text}</span>
+                                                  </div>
+                                                ))}
+                                              </ChineseSpoiler>
+                                            );
                                           }
                                           if (entry.definition_en) {
                                             return (
