@@ -45,7 +45,7 @@ export default function DailyQuote() {
       {!loaded ? (
         <Skeleton />
       ) : quote ? (
-        <div className="h-full overflow-hidden bg-surface-card border border-hairline shadow-soft rounded-lg p-6 md:p-8 relative animate-slide-up">
+        <div className="h-full overflow-hidden bg-surface-card border border-hairline shadow-soft rounded-lg px-6 py-5 md:p-8 relative animate-slide-up flex flex-col justify-center">
           {/* 装饰引号 */}
           <svg
             className="absolute -top-2 -right-3 md:-top-4 md:-right-4 text-primary/10 pointer-events-none"

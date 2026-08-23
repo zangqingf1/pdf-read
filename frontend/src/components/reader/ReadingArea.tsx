@@ -57,6 +57,51 @@ export default memo(function ReadingArea({
 
   return (
     <div>
+      {/* ── Document header（mobile）── */}
+      <div className="md:hidden mb-6 pb-4 border-b border-hairline">
+        <EditableTitle headingClassName="text-display-sm font-display text-ink mb-1 text-center" />
+        {titleZh && (
+          <p className="text-base font-display text-body text-center mb-2">
+            {titleZh}
+          </p>
+        )}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3 text-xs text-muted">
+            <span>{total} 段落</span>
+            <span>{wordCount?.toLocaleString() || '—'} 词</span>
+          </div>
+          <button
+            onClick={() => {
+              if (playerStatus === 'idle') {
+                const first = [...paragraphs].sort((a, b) => a.index - b.index)[0];
+                if (first) void playFromParagraph(first.index);
+              } else {
+                togglePlay();
+              }
+            }}
+            className="h-8 px-2.5 flex items-center gap-1.5 rounded-md hover:bg-surface-card active:scale-95 transition-all touch-area text-primary"
+            title="朗读全文（点击从第一句开始）"
+          >
+            {playerStatus === 'loading' ? (
+              <svg className="animate-spin" width="14" height="14" viewBox="0 0 24 24" fill="none">
+                <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" opacity="0.25" />
+                <path d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" fill="currentColor" opacity="0.75" />
+              </svg>
+            ) : playerStatus === 'playing' ? (
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                <path d="M9 18V6M15 18V6" />
+              </svg>
+            ) : (
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                <path d="M11 5L6 9H2v6h4l5 4V5z" />
+                <path d="M15.54 8.46a5 5 0 010 7.07M19.07 4.93a10 10 0 010 14.14" />
+              </svg>
+            )}
+            <span className="text-xs">{playerStatus === 'idle' ? '朗读' : playerStatus === 'playing' ? '暂停' : '继续'}</span>
+          </button>
+        </div>
+      </div>
+
       {/* ── Document header ── */}
       <div className="hidden md:block mb-10 pb-6 border-b border-hairline">
         <EditableTitle headingClassName="text-display-md font-display text-ink mb-1" />
