@@ -238,3 +238,4 @@ utils/          # textTokens(token化), ttsAlign(WordBoundary↔词token贪婪�
 - 后端装了但代码未用的包: `python-docx`, `slowapi`, `aiofiles`；`passlib` 已从 requirements 移除（bcrypt 直连）；`python-jose` 在用（`auth/security.py`）
 - `frontend/` 根目录有大量 gitignore 的调试残件（`run_debug*.cjs`, `export_probe*`, `repro*`, `paginate_align_test*` 等），不是功能代码，勿被误导/勿提交
 - **下载外部大文件（GitHub 等）的约定**: 本机直连 GitHub 内容下载（`raw.githubusercontent.com`、release 的 `objects.githubusercontent.com`）会被重置/超时；唯一可用的镜像 `ghproxy.net` 限速严重（~0.05 MB/s）。因此**遇到需要下载的 GitHub 文件，不要自己硬下**，直接把仓库/直链告诉用户，由用户自行下载（迅雷/代理更快）后放到指定路径，再继续后续处理
+- **Git 提交/同步约定**: 本工作区（`D:\C++\English PDF read`）的 remote 是 `git@github.com:zangqingf1/pdf-read.git`。用户要求"更新到 git / 提交"时：在本工作区 commit 后 **push 到 origin**，再到部署克隆目录 `D:\33294\github\pdf-read` 执行 `git pull origin master` 同步（该目录 remote 是 https 同一仓库，是用户实际使用的发布目录）
