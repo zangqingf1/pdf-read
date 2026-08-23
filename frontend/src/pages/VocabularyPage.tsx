@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { useVocabularyStore } from '../stores/vocabularyStore';
 import { type VocabularyEntry } from '../services/vocabularyApi';
@@ -37,6 +37,29 @@ function dayKey(iso: string | null): string {
   } catch {
     return iso;
   }
+}
+
+/** 跳转到阅读页并定位到包含该单词的段落（paragraph/word 未知时不带对应参数） */
+function docLinkPath(documentId: string, paragraphIndex?: number | null, word?: string | null): string {
+  const params = new URLSearchParams();
+  if (paragraphIndex != null) params.set('paragraph', String(paragraphIndex));
+  if (word) params.set('word', word);
+  const qs = params.toString();
+  return `/document/${documentId}${qs ? `?${qs}` : ''}`;
+}
+
+/** 文档分组标题跳转目标：取组内最早段落位置的条目 */
+function earliestEntry(items: VocabularyEntry[]): VocabularyEntry | null {
+  let min: VocabularyEntry | null = null;
+  for (const it of items) {
+    if (
+      it.latest_paragraph_index != null &&
+      (min === null || (min.latest_paragraph_index ?? Infinity) > it.latest_paragraph_index)
+    ) {
+      min = it;
+    }
+  }
+  return min;
 }
 
 // Split an ECDICT-style Chinese translation (e.g. "n. 书 v. 预订 adj. ...")
@@ -94,6 +117,9 @@ function calcCols(): number {
   return 1;
 }
 
+/** 离开页面时的滚动位置（sessionStorage，返回时一次性消费还原） */
+const VOCAB_SCROLL_KEY = 'vocabulary_scroll';
+
 export default function VocabularyPage() {
   const { items, total, page, pageSize, dayCounts, query, sortBy, order, loading, error, fetchList, setQuery, setSort, remove } = useVocabularyStore();
   const [searchInput, setSearchInput] = useState(query);
@@ -104,10 +130,32 @@ export default function VocabularyPage() {
   const [cols, setCols] = useState(calcCols);
   const wantedPageSize = cols * PAGE_ROWS;
 
-  // Initial load + 视口变化（列数变化）时按新每页条数重取
+  // Initial load + 视口变化（列数变化）时按新每页条数重取。
+  // 返回单词本（store 已有数据且每页条数未变）→ 保持原页码重取，不重置到第 1 页
+  const restoreScrollRef = useRef(false);
   useEffect(() => {
-    fetchList({ page: 1, page_size: wantedPageSize });
+    const s = useVocabularyStore.getState();
+    const keepPage = s.items.length > 0 && s.pageSize === wantedPageSize ? s.page : 1;
+    restoreScrollRef.current = keepPage > 1 && sessionStorage.getItem(VOCAB_SCROLL_KEY) != null;
+    fetchList({ page: keepPage, page_size: wantedPageSize });
   }, [fetchList, wantedPageSize]);
+
+  // 离开页面时记录滚动位置（含跳去阅读页、首页等一切离开）
+  useEffect(() => () => {
+    sessionStorage.setItem(VOCAB_SCROLL_KEY, String(window.scrollY));
+  }, []);
+
+  // 数据加载完成后还原滚动位置（一次性消费；全新进入则丢弃旧位置回顶部）
+  useEffect(() => {
+    if (loading || items.length === 0) return;
+    const saved = sessionStorage.getItem(VOCAB_SCROLL_KEY);
+    if (saved == null) return;
+    sessionStorage.removeItem(VOCAB_SCROLL_KEY);
+    if (restoreScrollRef.current) {
+      restoreScrollRef.current = false;
+      requestAnimationFrame(() => window.scrollTo(0, parseInt(saved, 10) || 0));
+    }
+  }, [loading, items.length]);
 
   useEffect(() => {
     const queries = [
@@ -276,9 +324,18 @@ export default function VocabularyPage() {
                               <div className="flex items-center gap-2 mb-2">
                                 <span className="text-xs font-medium text-primary truncate">
                                   {docGroup.docId ? (
-                                    <Link to={`/document/${docGroup.docId}`} className="hover:underline" title={docGroup.title}>
-                                      {docGroup.title}
-                                    </Link>
+                                    (() => {
+                                      const first = earliestEntry(docGroup.items);
+                                      return (
+                                        <Link
+                                          to={docLinkPath(docGroup.docId, first?.latest_paragraph_index, first?.word)}
+                                          className="hover:underline"
+                                          title={docGroup.title}
+                                        >
+                                          {docGroup.title}
+                                        </Link>
+                                      );
+                                    })()
                                   ) : (
                                     docGroup.title
                                   )}
@@ -367,7 +424,7 @@ export default function VocabularyPage() {
                                             sources.length > 0
                                               ? sources
                                               : entry.source_document_id
-                                                ? [{ document_id: entry.source_document_id, document_title: entry.source_document_title, added_at: null }]
+                                                ? [{ document_id: entry.source_document_id, document_title: entry.source_document_title, added_at: null, paragraph_index: entry.latest_paragraph_index, token_rank: null }]
                                                 : [];
                                           if (list.length === 0) {
                                             return <span className="text-xs text-muted-soft">来源已删除</span>;
@@ -378,7 +435,7 @@ export default function VocabularyPage() {
                                                 <div key={s.document_id || i} className="flex items-center justify-between gap-2 text-xs min-w-0">
                                                   {s.document_id ? (
                                                     <Link
-                                                      to={`/document/${s.document_id}`}
+                                                      to={docLinkPath(s.document_id, s.paragraph_index, entry.word)}
                                                       className="text-primary hover:underline truncate"
                                                       title={s.document_title || undefined}
                                                     >

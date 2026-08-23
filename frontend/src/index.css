@@ -685,13 +685,13 @@
   contain-intrinsic-size: auto 120px;
 }
 
-/* ── 段尾「展开翻译」图标按钮（谷歌翻译 文A 图标，淡灰，约与正文字号同大）── */
+/* ── 段尾「展开翻译」图标按钮（行内、垂直居中，淡灰小图标）── */
 .translate-toggle-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 1.2em;
-  height: 1.2em;
+  width: 1em;
+  height: 1em;
   margin-left: 6px;
   vertical-align: middle;
   flex-shrink: 0;
@@ -703,8 +703,8 @@
   transition: color 0.15s ease, border-color 0.15s ease, background-color 0.15s ease;
 }
 .translate-toggle-btn svg {
-  width: 0.7em;
-  height: 0.7em;
+  width: 0.55em;
+  height: 0.55em;
 }
 .translate-toggle-btn:hover,
 .translate-toggle-btn[aria-expanded='true'] {
@@ -779,6 +779,16 @@
 @keyframes card-flash-anim {
   0% { box-shadow: 0 0 0 3px var(--primary); background-color: #fdf3ef; }
   100% { box-shadow: 0 0 0 0 transparent; background-color: transparent; }
+}
+
+/* 单词本跳转：正文单词 token 暖橙闪动（与段落黄色闪动区分） */
+.word-token-jump-flash {
+  animation: word-token-jump-flash-anim 1.8s ease-out;
+}
+@keyframes word-token-jump-flash-anim {
+  0% { background-color: rgb(204 120 92 / 0.55); box-shadow: 0 0 0 3px rgb(204 120 92 / 0.6); }
+  60% { background-color: rgb(204 120 92 / 0.25); box-shadow: 0 0 0 2px rgb(204 120 92 / 0.35); }
+  100% { box-shadow: 0 0 0 0 transparent; }
 }
 
 /* ── Study panel: make Tailwind text sizes relative to container ── */

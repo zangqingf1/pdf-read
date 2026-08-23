@@ -499,10 +499,10 @@ export default function ReviewPage() {
         okText: '直接阅读',
         cancelText: '先去保存',
         danger: true,
-        onOk: () => navigate(`/document/${id}`),
+        onOk: () => navigate(`/document/${id}`, { replace: true }),
       });
     } else {
-      navigate(`/document/${id}`);
+      navigate(`/document/${id}`, { replace: true });
     }
   }, [dirtySet, id, navigate]);
 

@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { getPDFResult, getPDFStatus } from '../services/pdfApi';
 import { translateParagraphsStream } from '../services/translateApi';
 import type { AIProvider } from '../services/translateApi';
@@ -22,7 +22,8 @@ import StudyPanel from '../components/reader/StudyPanel';
 import StudySheet from '../components/reader/StudySheet';
 import FocusedAnalysisSheet from '../components/reader/FocusedAnalysisSheet';
 import { setOnOpenFocusedAnalysis } from '../components/reader/ParagraphBlock';
-import { setOnOpenPanel } from '../components/reader/StudyPanel';
+import { setOnOpenPanel, triggerScrollToAnalysis } from '../components/reader/StudyPanel';
+import { scrollToParagraph } from '../utils/scrollToParagraph';
 import Button from '../components/ui/Button';
 import Spinner, { PageSpinner } from '../components/ui/Spinner';
 
@@ -34,6 +35,9 @@ const MAX_AUTO_RETRIES = 2;
 export default function ReaderPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const focusParagraphParam = searchParams.get('paragraph');
+  const focusWordParam = searchParams.get('word');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [parseStatus, setParseStatus] = useState<string>('');
@@ -406,6 +410,27 @@ export default function ReaderPage() {
       return () => setOnOpenFocusedAnalysis(null);
     }
   }, [isMobile]);
+
+  // ── 外部跳转定位（如单词本来源链接 ?paragraph=N&word=x）：
+  //    段落滚动闪动 + 单词 token 高亮 + 解析面板定位到单词卡片，同步触发。
+  //    面板卡片未就绪时由 _scrollToAnalysis 内部的重试兜底，无需额外延时 ──
+  useEffect(() => {
+    if (!focusParagraphParam || loading || paragraphs.length === 0) return;
+    const index = parseInt(focusParagraphParam, 10);
+    if (Number.isNaN(index)) {
+      setSearchParams({}, { replace: true });
+      return;
+    }
+    const word = focusWordParam;
+    scrollToParagraph(index, { block: isMobile ? 'start' : 'center', word });
+    if (word) {
+      // 移动端先弹出底部解析面板；面板尚未挂载时 triggerScrollToAnalysis
+      // 会自动转为挂起请求，待挂载后执行
+      if (isMobile) setStudySheetOpen(true);
+      triggerScrollToAnalysis(`${index}:${word.toLowerCase()}`, 'words');
+    }
+    setSearchParams({}, { replace: true });
+  }, [focusParagraphParam, focusWordParam, loading, paragraphs.length, isMobile, setSearchParams]);
 
   // ── Register open-panel callback (for clicking analyzed words/sentences when panel is closed) ──
   const handleOpenPanel = useCallback(() => {

@@ -26,7 +26,11 @@ export default function ReaderHeader() {
               <path d="M19 12H5M12 19l-7-7 7-7" />
             </svg>
           }
-          onClick={() => navigate('/')}
+          onClick={() => {
+            // 有站内历史（如从单词本/首页进入）→ 原路返回；直接打开/刷新 → 兜底回首页
+            if (window.history.state?.idx > 0) navigate(-1);
+            else navigate('/');
+          }}
         >
           返回
         </Button>

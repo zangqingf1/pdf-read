@@ -352,8 +352,7 @@ const ParagraphBlock = memo(function ParagraphBlock({
             paragraphIndex={paragraph.index}
             isTouchDevice={isTouchDevice}
           />
-        ))}{' '}
-        {translation && (
+        ))}{translation && (
           <button
             type="button"
             onClick={() => setShowTranslation(!showTranslation)}

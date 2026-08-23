@@ -13,6 +13,7 @@ import { deleteSentenceAnalysis, deleteAllSentenceAnalyses } from '../../service
 import type { SentenceAnalysisResult } from '../../services/sentenceAnalysisApi';
 import { sentenceBodyMarkdown, sentenceBreakdownChunks } from '../../utils/sentenceSections';
 import { wordPositionMap } from '../../utils/textTokens';
+import { scrollToParagraph } from '../../utils/scrollToParagraph';
 import EmptyState from '../ui/EmptyState';
 import { ChineseSpoiler } from '../common/ChineseSpoiler';
 import PhoneticWithSpeakers from './PhoneticWithSpeakers';
@@ -567,20 +568,35 @@ export default function StudyPanel({
   activeTabRef.current = activeTab;
 
   useEffect(() => {
+    let cancelled = false;
     _scrollToAnalysis = (key: string, tab: 'words' | 'sentences') => {
       if (activeTabRef.current !== tab) {
         flushSync(() => setActiveTab(tab));
       }
-      const selector = tab === 'words'
+      // 限定在解析面板内查找：正文 token 也带 data-word-key，且 DOM 顺序在前，
+      // 不加作用域会命中正文单词而非面板卡片
+      const selector = (tab === 'words'
         ? `[data-word-key="${key}"]`
-        : `[data-sentence-key="${key}"]`;
-      const el = document.querySelector(selector);
-      if (el) {
-        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        const flashClass = tab === 'words' ? 'word-card-flash' : 'sentence-card-flash';
-        el.classList.add(flashClass);
-        setTimeout(() => el.classList.remove(flashClass), 1500);
-      }
+        : `[data-sentence-key="${key}"]`);
+      const scopedSelector = `#study-panel ${selector}`;
+      // 卡片可能尚未渲染（外部跳转/数据刚加载）：有界重试 ~1.5s
+      let attempts = 0;
+      const tryScroll = () => {
+        if (cancelled) return;
+        const el = document.querySelector(scopedSelector);
+        if (!el && attempts < 10) {
+          attempts += 1;
+          setTimeout(tryScroll, 150);
+          return;
+        }
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          const flashClass = tab === 'words' ? 'word-card-flash' : 'sentence-card-flash';
+          el.classList.add(flashClass);
+          setTimeout(() => el.classList.remove(flashClass), 1500);
+        }
+      };
+      tryScroll();
     };
 
     // Execute pending scroll if panel was opened via click on analyzed word/sentence
@@ -590,18 +606,13 @@ export default function StudyPanel({
       setTimeout(() => _scrollToAnalysis?.(key, tab), 150);
     }
 
-    return () => { _scrollToAnalysis = null; };
+    return () => { cancelled = true; _scrollToAnalysis = null; };
   }, []);
 
   const handleScrollToParagraph = useCallback((paragraphIndex: number) => {
-    const el = document.querySelector(`[data-paragraph-index="${paragraphIndex}"]`);
-    if (el) {
-      // Mobile: the bottom sheet covers the lower viewport, so align the
-      // paragraph to the top of the reading area instead of centering it
-      el.scrollIntoView({ behavior: 'smooth', block: mobile ? 'start' : 'center' });
-      el.classList.add('paragraph-flash');
-      setTimeout(() => el.classList.remove('paragraph-flash'), 1500);
-    }
+    // Mobile: the bottom sheet covers the lower viewport, so align the
+    // paragraph to the top of the reading area instead of centering it
+    scrollToParagraph(paragraphIndex, { block: mobile ? 'start' : 'center', retries: 1 });
   }, [mobile]);
 
   const handleDeleteWord = useCallback(
@@ -687,7 +698,7 @@ export default function StudyPanel({
   }, [activeTab, documentId, clearWordAnalyses, clearSentenceAnalyses]);
 
   return (
-    <div className="flex-1 min-h-0 flex flex-col border-l border-hairline transition-colors duration-300" style={{ backgroundColor: bgColorValue }}>
+    <div id="study-panel" className="flex-1 min-h-0 flex flex-col border-l border-hairline transition-colors duration-300" style={{ backgroundColor: bgColorValue }}>
       {/* Header — hidden on mobile (StudySheet provides its own header) */}
       <div className="hidden md:flex items-center justify-between px-4 py-3 border-b border-hairline flex-shrink-0">
         <div className="flex items-center gap-2">
