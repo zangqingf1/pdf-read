@@ -174,6 +174,7 @@ export const useDocumentStore = create<DocumentState>((set) => ({
             synonyms_antonyms: wa.synonyms_antonyms,
             base_form: wa.base_form,
             plural_form: wa.plural_form,
+            exam_tags: wa.exam_tags || [],
           };
         }
       }

@@ -404,6 +404,38 @@ async def run_migrations():
             except Exception:
                 pass
 
+        # ═══════════════════════════════════════════════════════════════
+        # Migration 014: 考纲标签（ECDICT 离线判定，JSON 数组字符串）
+        # ═══════════════════════════════════════════════════════════════
+        await _apply(
+            "014a_word_analyses_exam_tags",
+            "ALTER TABLE word_analyses ADD COLUMN exam_tags TEXT DEFAULT '[]'",
+        )
+        await _apply(
+            "014b_vocabulary_exam_tags",
+            "ALTER TABLE vocabulary_entries ADD COLUMN exam_tags TEXT DEFAULT '[]'",
+        )
+
+        # Best-effort one-time backfill: recompute every vocabulary entry's
+        # exam tags straight from ECDICT. Covers entries added before the tag
+        # logic existed (empty) and refreshes values carrying old derived
+        # labels (COCA). Local-only, idempotent, never blocks startup.
+        try:
+            if "014c_vocab_exam_tags_backfill" not in applied:
+                await _backfill_vocabulary_exam_tags()
+                await conn.exec_driver_sql(
+                    "INSERT INTO _migrations (name) VALUES ('014c_vocab_exam_tags_backfill')"
+                )
+                logger.info("Migration 014c: vocabulary exam tags backfill applied")
+        except Exception as exc:
+            logger.warning("Migration 014c: exam tags backfill skipped (%s)", exc)
+            try:
+                await conn.exec_driver_sql(
+                    "INSERT INTO _migrations (name) VALUES ('014c_vocab_exam_tags_backfill')"
+                )
+            except Exception:
+                pass
+
         # Best-effort one-time backfill: populate latest_paragraph_index from
         # word_analyses (reliable even when the documents.paragraphs table is
         # empty/purged). Never blocks startup.
@@ -547,6 +579,41 @@ async def _backfill_vocabulary_phonetics():
                     text("UPDATE vocabulary_entries SET phonetic = :p WHERE id = :e"),
                     {"p": ph, "e": eid},
                 )
+        await db.commit()
+
+
+async def _backfill_vocabulary_exam_tags():
+    """Recompute every entry's exam tags straight from ECDICT (see dictionary_service).
+
+    Overwrites each row whose word yields tags — refreshing empty values and
+    ones carrying old derived labels (COCA) to the native 8-tag scheme in one
+    pass. Rows without an ECDICT hit are left untouched so a missing
+    ecdict.db can never wipe existing data; batch-add computes tags directly
+    for newly added words.
+    """
+    import json as _json
+
+    from app.services import dictionary_service as ds
+    from sqlalchemy import text
+
+    async with async_session_factory() as db:
+        rows = (
+            await db.execute(text("SELECT id, word FROM vocabulary_entries"))
+        ).fetchall()
+        if not rows:
+            return
+        words = [w for _, w in rows]
+        tags_map = await ds.lookup_exam_tags(words)
+        for eid, word in rows:
+            tags = tags_map.get((word or "").lower())
+            if not tags:
+                continue
+            await db.execute(
+                text(
+                    "UPDATE vocabulary_entries SET exam_tags = :t WHERE id = :e"
+                ),
+                {"t": _json.dumps(tags, ensure_ascii=False), "e": eid},
+            )
         await db.commit()
 
 

@@ -53,6 +53,8 @@ export interface WordAnalysisItem {
   };
   base_form: string;
   plural_form: string;
+  /** 考纲标签（后端 ECDICT 离线判定） */
+  exam_tags: string[];
 }
 
 export interface PDFResultResponse {

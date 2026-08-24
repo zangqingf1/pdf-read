@@ -8,6 +8,10 @@ import EmptyState from '../components/ui/EmptyState';
 import Spinner from '../components/ui/Spinner';
 import PhoneticWithSpeakers from '../components/reader/PhoneticWithSpeakers';
 import { ChineseSpoiler } from '../components/common/ChineseSpoiler';
+import { ExamTagBadges } from '../components/reader/WordTags';
+import ExamTagFilterPopover from '../components/common/ExamTagFilterPopover';
+import { filterVisibleExamTags } from '../constants/examTags';
+import { useReaderStore } from '../stores/readerStore';
 
 function formatDate(iso: string | null): string {
   if (!iso) return '';
@@ -124,6 +128,7 @@ export default function VocabularyPage() {
   const { items, total, page, pageSize, dayCounts, query, sortBy, order, loading, error, fetchList, setQuery, setSort, remove } = useVocabularyStore();
   const [searchInput, setSearchInput] = useState(query);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const visibleExamTags = useReaderStore((s) => s.visibleExamTags);
 
   /** 每页固定排满 PAGE_ROWS 排：按当前列数换算每页条数 */
   const PAGE_ROWS = 8;
@@ -256,6 +261,7 @@ export default function VocabularyPage() {
             >
               文档顺序 {sortBy === 'document_order' && (order === 'asc' ? '↑' : '↓')}
             </button>
+            <ExamTagFilterPopover align="right" />
           </div>
         </div>
 
@@ -374,6 +380,22 @@ export default function VocabularyPage() {
                                           )}
                                         </button>
                                       </div>
+
+                                      {/* Row 2: 考纲标签（独立一行） */}
+                                      {(() => {
+                                        const tags = filterVisibleExamTags(
+                                          (() => {
+                                            try {
+                                              return entry.exam_tags ? JSON.parse(entry.exam_tags) as string[] : [];
+                                            } catch {
+                                              return [];
+                                            }
+                                          })(),
+                                          visibleExamTags,
+                                        );
+                                        if (tags.length === 0) return null;
+                                        return <ExamTagBadges tags={tags} />;
+                                      })()}
 
                                       {/* Part 2: 词典源释义（不同词性换行显示；中文默认模糊遮盖，点击揭示） */}
                                       <div className="flex flex-col gap-1">

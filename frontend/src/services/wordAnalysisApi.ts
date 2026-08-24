@@ -25,6 +25,8 @@ export interface WordAnalysisResult {
   };
   base_form: string;
   plural_form: string;
+  /** 考纲标签（后端 ECDICT 离线判定，可能为空数组） */
+  exam_tags?: string[];
   /** Frontend-only flag: true while waiting for streaming result */
   _pending?: boolean;
 }

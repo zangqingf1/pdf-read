@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import { ALL_EXAM_TAG_LABELS } from '../constants/examTags';
 
 const FONT_SIZE_MIN = 14;
 const FONT_SIZE_MAX = 28;
@@ -61,6 +62,10 @@ interface ReaderState {
   setLineHeight: (key: string) => void;
   accent: AccentKey;
   setAccent: (key: AccentKey) => void;
+  /** 考纲标签显隐：仅展示勾选的标签（默认全选） */
+  visibleExamTags: string[];
+  toggleExamTag: (label: string) => void;
+  setAllExamTagsVisible: (labels: string[]) => void;
 }
 
 export const useReaderStore = create<ReaderState>()(
@@ -105,6 +110,16 @@ export const useReaderStore = create<ReaderState>()(
       setLineHeight: (key) => set({ lineHeight: key }),
       accent: ACCENT_DEFAULT,
       setAccent: (key) => set({ accent: key }),
+      visibleExamTags: [...ALL_EXAM_TAG_LABELS],
+      toggleExamTag: (label) =>
+        set((state) => {
+          const has = state.visibleExamTags.includes(label);
+          const next = has
+            ? state.visibleExamTags.filter((t) => t !== label)
+            : [...ALL_EXAM_TAG_LABELS.filter((t) => state.visibleExamTags.includes(t) || t === label)];
+          return { visibleExamTags: next };
+        }),
+      setAllExamTagsVisible: (labels) => set({ visibleExamTags: [...labels] }),
     }),
     {
       name: 'reader-preferences',
@@ -115,6 +130,7 @@ export const useReaderStore = create<ReaderState>()(
         fontFamily: state.fontFamily,
         lineHeight: state.lineHeight,
         accent: state.accent,
+        visibleExamTags: state.visibleExamTags,
       }),
     }
   )

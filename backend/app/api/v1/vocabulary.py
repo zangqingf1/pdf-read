@@ -1,5 +1,6 @@
 """Vocabulary book API — batch add from a document, list with search/sort, delete."""
 
+import json
 import logging
 import re
 import uuid
@@ -95,6 +96,11 @@ def _vocab_upsert_rows(user_id: uuid.UUID, rows: list[dict]):
                 (excluded.collocations == "", VocabularyEntry.collocations),
                 (excluded.collocations == "[]", VocabularyEntry.collocations),
                 else_=excluded.collocations,
+            ),
+            "exam_tags": case(
+                (excluded.exam_tags == "", VocabularyEntry.exam_tags),
+                (excluded.exam_tags == "[]", VocabularyEntry.exam_tags),
+                else_=excluded.exam_tags,
             ),
             "source_document_id": excluded.source_document_id,
             "latest_paragraph_index": excluded.latest_paragraph_index,
@@ -278,6 +284,7 @@ def _to_out(
         synonyms_antonyms=entry.synonyms_antonyms or '{"synonyms": []}',
         cognates=entry.cognates or "[]",
         collocations=entry.collocations or "[]",
+        exam_tags=entry.exam_tags or "[]",
         created_at=entry.created_at,
         updated_at=entry.updated_at,
     )
@@ -361,6 +368,8 @@ async def batch_add(
                     rich["cognates"] = wa.cognates
                 if _wa_field_filled(wa.collocations, "[]"):
                     rich["collocations"] = wa.collocations
+                if _wa_field_filled(wa.exam_tags, "[]"):
+                    rich["exam_tags"] = wa.exam_tags
                 if rich:
                     word_to_rich[lower] = rich
     except Exception:
@@ -383,6 +392,12 @@ async def batch_add(
         dict_map = await dictionary_service.lookup_many(new_words)
     else:
         dict_map = {}
+
+    # Exam tags come straight from local ECDICT (deterministic, cached
+    # in-process) for every target word, so entries always carry tags no
+    # matter when their word was last analyzed. The value carried over from
+    # WordAnalysis stays only as a fallback (e.g. missing ecdict.db).
+    tags_map = await dictionary_service.lookup_exam_tags(target_words)
 
     # Compute ranks for all target words (needed for latest_* of new and existing)
     rank_map = await _compute_ranks(db, request.document_id, target_words)
@@ -410,6 +425,12 @@ async def batch_add(
         synonyms_antonyms = rich.get("synonyms_antonyms", '{"synonyms": []}')
         cognates = rich.get("cognates", "[]")
         collocations = rich.get("collocations", "[]")
+        direct_tags = tags_map.get(lower)
+        exam_tags = (
+            json.dumps(direct_tags, ensure_ascii=False)
+            if direct_tags
+            else rich.get("exam_tags", "[]")
+        )
         rank = rank_map.get(lower, (None, None))[1]
         para_idx = word_to_para.get(lower)
         if para_idx is None:
@@ -434,6 +455,7 @@ async def batch_add(
             "synonyms_antonyms": synonyms_antonyms,
             "cognates": cognates,
             "collocations": collocations,
+            "exam_tags": exam_tags,
             "updated_at": now,
             "created_at": now,
         })
@@ -512,6 +534,14 @@ async def batch_add(
                 entry.cognates = rich["cognates"]
             if "collocations" in rich:
                 entry.collocations = rich["collocations"]
+        # Exam tags always come straight from ECDICT — overwriting on re-add
+        # heals entries whose tags predate this logic (empty, or carrying old
+        # derived labels). The WordAnalysis-carried value is the fallback.
+        direct_tags = tags_map.get(lower)
+        if direct_tags:
+            entry.exam_tags = json.dumps(direct_tags, ensure_ascii=False)
+        elif rich and "exam_tags" in rich:
+            entry.exam_tags = rich["exam_tags"]
         entry.updated_at = now
 
     await db.commit()

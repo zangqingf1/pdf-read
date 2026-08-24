@@ -20,6 +20,7 @@ export type ToggleKey =
   | 'includeBaseForm'
   | 'includeSynonyms'
   | 'includeCognates'
+  | 'includeExamTags'
   | 'singleColumn'
   | 'alignSamePage';
 
@@ -43,6 +44,7 @@ const PREF_KEYS = [
   'includeBaseForm',
   'includeSynonyms',
   'includeCognates',
+  'includeExamTags',
   'singleColumn',
   'alignSamePage',
   'source',
@@ -75,6 +77,7 @@ interface ExportPreferencesStore {
   includeBaseForm: boolean;
   includeSynonyms: boolean;
   includeCognates: boolean;
+  includeExamTags: boolean;
   singleColumn: boolean;
   /** 双栏「同页对齐」：左栏可见的已解析单词/句子与其右栏解析卡尽量同页（更占版面） */
   alignSamePage: boolean;

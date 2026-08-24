@@ -32,6 +32,7 @@ const WORD_DETAIL_TOGGLES: { key: ToggleKey; label: string }[] = [
   { key: 'includeBaseForm', label: '原形' },
   { key: 'includeSynonyms', label: '同义词' },
   { key: 'includeCognates', label: '同根词' },
+  { key: 'includeExamTags', label: '考纲标签' },
 ];
 
 const SENTENCE_DETAIL_TOGGLES: { key: ToggleKey; label: string }[] = [

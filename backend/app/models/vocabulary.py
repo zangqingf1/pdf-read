@@ -54,6 +54,9 @@ class VocabularyEntry(Base):
     synonyms_antonyms: Mapped[str] = mapped_column(Text, default='{"synonyms": []}')
     cognates: Mapped[str] = mapped_column(Text, default="[]")
     collocations: Mapped[str] = mapped_column(Text, default="[]")
+    # JSON array of exam-syllabus tags, looked up directly from local ECDICT
+    # at batch-add time (WordAnalysis-carried values only as fallback).
+    exam_tags: Mapped[str] = mapped_column(Text, default="[]")
     # Document-order sorting anchor — first occurrence in latest document
     latest_paragraph_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
     latest_token_rank: Mapped[int | None] = mapped_column(Integer, nullable=True)

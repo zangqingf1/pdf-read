@@ -62,6 +62,7 @@ app/
 │   ├── url_downloader.py  # URL 内容下载
 │   ├── email_service.py   # SMTP 发送验证码邮件（标准库 smtplib，零新依赖；开发环境 console 兜底）
 │   ├── daily_quote.py     # 每日一句名句库 + 按日期取句（epoch days 取模轮换，无状态）
+│   ├── dictionary_service.py # ECDICT 本地词典（音标/释义）+ lookup_exam_tags 考纲标签批量判定
 │   └── avatar_service.py  # 头像保存/删除（白名单扩展名 + 魔数嗅探 + 随机文件名）
 ├── models/   # 每类一文件: user/email_verification/document/paragraph/word_analysis/sentence_analysis/prompt_template/daily_quote
 ├── schemas/  # 与 api/v1 路由一一对应 + admin
@@ -157,7 +158,7 @@ app/
 - **EmailVerification**: 邮箱验证码记录（注册/重置密码）。仅存 `code_hash`（HMAC-SHA256，key=SECRET_KEY），`expires_at` 到期、`failed_attempts` 超限或 `consumed_at` 消费后即失效（单次使用）
 - **Document**: UUID 主键, `parse_status` (pending→awaiting_selection(仅PDF)→processing→completed/failed), cascade delete。另有 `title_zh`（大标题中文翻译）、`source_type`(`upload`/`url`)、`file_ext`、`source_url`、`summary`+`summary_updated_at`（草稿与 AI 结果共用一列）。`original_text`/`word_count`/`paragraph_count` 为聚合字段，编辑后在后端重算
 - **Paragraph**: `(document_id, index)` 唯一索引, `text_en`, `text_zh`, `page_number`, `bbox_json`（英文变更→译文清空待重译）。`bbox_json` 存 MinerU 布局坐标 JSON `{"box":[x1,y1,x2,y2], "pts_w":.., "pts_h":..}`（PDF 源才有；box 为 MinerU 渲染图像像素，pts_w/pts_h 为 pypdf 读的该页 PDF 点数尺寸，前端据此把框映射到 react-pdf 渲染坐标，见注意事项「PDF 布局解析框」）
-- **WordAnalysis**: `(document_id, paragraph_index, word)` 唯一, upsert。含 phonetic, definition, cognates, synonyms_antonyms 等
+- **WordAnalysis**: `(document_id, paragraph_index, word)` 唯一, upsert。含 phonetic, definition, cognates, synonyms_antonyms, exam_tags（考纲标签 JSON 数组）等
 - **SentenceAnalysis**: `(document_id, paragraph_index, sentence_index)` 唯一, upsert。含 `structure_json`（新格式 `{"content": ...}`，旧格式向前兼容重建）
 - **PromptTemplate**: **复合主键 `(name, is_default)`**, `system_prompt` + `user_prompt`。无 DB 行=出厂默认
 - **DailyQuote**: 每日一句名句库（管理后台「句子管理」维护）。`text_en`/`text_zh`/`author`/`active`(启停)/`created_at`；`GET /quote` 按日期序数对 active 行取模轮换
@@ -194,6 +195,7 @@ stores/         # authStore, documentStore(文档/段落/翻译/解析全状态)
 services/       # 每个 API 域一个文件 (authApi/pdfApi/translateApi/wordAnalysisApi/paragraphTtsApi/...)
 utils/          # textTokens(token化), ttsAlign(WordBoundary↔词token贪婪对齐), sentenceSections,
                 #   phonetic, speak, uuid
+constants/      # examTags(考纲标签常量/配色/显隐过滤)
 ```
 
 **关键设计：**
@@ -228,6 +230,7 @@ utils/          # textTokens(token化), ttsAlign(WordBoundary↔词token贪婪�
 - `_SafeDict` 使未知占位符保留原文; `_is_fatal_error()` 区分认证错误（401/403/缺 key）和瞬时错误
 - 单词分析防丢失: `_request_word_batch()` + `_missing_words()` 做单词级补偿 — AI 批次返回不全/失败时对缺失单词逐词补发; 补偿仍失败则通过 SSE `incomplete` 事件上报, 前端明确提示缺失单词(绝不静默丢弃)
 - 单词分析按**段落分组**(非句子): 同段落单词共享完整段落原文作为上下文 (`{paragraph}` 占位符), 每批 ≤8 词 (`WORDS_BATCH_SIZE`); 兼容旧自定义模板保留 `{sentence}` 占位符(同值填充)
+- **考纲标签** (`exam_tags`): 后端落库时用本地 ECDICT 确定性生成，与 AI 无关。`dictionary_service.lookup_exam_tags()` 批量查 `tag` 列 8 种原生标签（`zk`初中/`gk`高中/`cet4`四级/`cet6`六级/`ky`考研/`ielts`雅思/`toefl`托福/`gre`GRE；无派生标签），屈折变化词兜底到原形（`went`→`go`）；固定顺序输出，进程内缓存。单词本 `batch-add` 对全部词直查 ECDICT 落标签（WordAnalysis 搬运值仅兜底）；存量条目由启动迁移 `014c_vocab_exam_tags_backfill` 全量重算回填。前端 `constants/examTags.ts` + readerStore `visibleExamTags`（默认全选）+ `ExamTagFilterPopover` 控制阅读页/单词本/导出 PDF 三层展示
 - 全文总结: `POST /summary/stream` 后端自取段落全文（超 `SUMMARY_MAX_CHARS` 按 head 60% + tail 40% 截断），`mode=generate/revise` 区分一键总结与 AI 修改；`summarize_stream` 仅首 chunk 前重试（中途断流重试会重复文本）；草稿由前端 1s 防抖 + 失焦/卸载 flush 到 `PUT /summary/draft`（空白=清空），生成期间暂停保存
 - 校对页 `updateParagraphs` 批量保存, `deleteParagraph`/`mergeParagraphs` 自动重排索引; `reorderParagraphs` 同步更新页码。重排/删除用单条 raw `UPDATE` 或临时负索引避免 `UNIQUE (document_id, index)` 冲突（前端已移除拖拽重排 UI，`/reorder` 接口保留未用）
 - **PDF 布局解析框**：`_content_list_to_paragraphs` 提取 MinerU 块 `bbox`（list 取 item 并集；5 元素带置信度格式取前 4；缺省为 None）→ `ParsedDocument.paragraph_bboxes` → `pdf_service` 用 pypdf 读该页 `mediabox` 点数尺寸写入 `Paragraph.bbox_json`（迁移 `010a_paragraphs_bbox_json`，`{"box":[...], "pts_w":.., "pts_h":..}`，另存每页渲染 `scale`）→ `GET /result` 每段返回 `layout`。**前端坐标换算以「文本自校准」为主**（`PDFViewerPanel` 用 pdfjs `getTextContent` 提取真实文本位置，把段落框与文本做线性拟合，得到「MinerU 图像像素 → CSS 像素」的仿射映射 `css = f·box + c`，`fitLineRobust` 带离群点剔除。匹配算法对任意栏数稳健：每页先用「段落框内容范围 ↔ 文本行内容范围」自举映射，每个段落框映射后外扩 20% 取相交文本行为候选，候选行按 x 空隙链式分组（局部栏）后按组大小降序逐一匹配（`buildTextLines` + `groupLinesByX`，无全局分栏假设——旧版硬编码两栏导致三栏/窄栏距文档整篇偏移）；**MinerU Cloud 的 bbox 实际落在约 1000×1000 正方形坐标空间（x/y 缩放不同，如 fx≈0.92、fy≈1.24），存储的 scale（200dpi 假设）对其无效**，必须从真实文本反推 fx/fy/cx/cy；非 Cloud 文档同样适用（fx≈fy）。校准记录 `refW`，换宽度时按 `pageWidth/refW` 等比缩放，框随 PDF 一起变大变小）；自校准失败才回退 `bboxToCss`（先检测归一化空间：box 坐标 ≤~1100 且 `pts_w×scale` 远大于该范围 → 按 `box/1000 × 页宽` 换算；否则 `css = box × renderWidth / (pts_w × scale)`，无 scale 时 `MINERU_BBOX_DPI=200` 常量）。校对页已改文档式显示（无卡片、无拖拽），段落悬浮显示蓝色线框 + 图标条（修订/合并下一段/删除，CSS `group-hover` 控制显隐且 `mt-0` 紧贴段落避免空隙导致 hover 中断），PDF 预览页叠加布局框。**布局框交互**：直角细线无填充，鼠标移过才填充（整体垂直微调偏移 `BOX_V_OFFSET`，正值向下）；悬浮框联动高亮对应段落（不跳转）；**点击框 → 编辑区段落滚动居中并暖黄闪烁高亮**（`review-paragraph-flash`）；**点击段落 → 对应框滚动到 PDF 预览居中并蓝色闪烁高亮**（`layout-box-flash`，移动端自动切到 PDF 标签页，`focusRequest` 用 `{index,t}` 递增触发 + `numPages` 依赖兜底等 PDF 加载完成再定位）。**布局框与段落同步**：`paragraphLayouts` 与 `paragraphs` 同源并行维护，删除段落 → 对应框删除、后续索引前移；合并段落 → 同页两框并集（`mergeLayoutItems`，跨页仅保留前框）后续索引前移；**布局框纳入 undo/redo 快照**（`useUndoRedo` 的 `UndoableSnapshot.layouts`，`pushSnapshot` 同步保存），撤销/重做时框随段落一起恢复/重做，对应关系始终正确

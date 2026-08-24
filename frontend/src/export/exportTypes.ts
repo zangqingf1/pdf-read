@@ -84,6 +84,8 @@ export interface ExportPreferences {
   includeBaseForm: boolean;
   includeSynonyms: boolean;
   includeCognates: boolean;
+  /** 单词卡考纲标签（配合阅读页「标签」显隐设置过滤） */
+  includeExamTags: boolean;
   /** 单栏版式（打印兼容兜底：每段原文+译文后紧跟该段解析） */
   singleColumn: boolean;
   /** 双栏「同页对齐」：左栏可见的已解析单词/句子与其右栏解析卡尽量同页（以留白换同页，页数可能略增） */
@@ -112,6 +114,7 @@ export const EXPORT_PREF_DEFAULTS: ExportPreferences = {
   includeBaseForm: true,
   includeSynonyms: true,
   includeCognates: true,
+  includeExamTags: true,
   singleColumn: false,
   alignSamePage: true,
   source: '',

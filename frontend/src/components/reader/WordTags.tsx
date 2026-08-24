@@ -1,6 +1,29 @@
+import { examTagMeta } from '../../constants/examTags';
+
 interface TagItem {
   word: string;
   part_of_speech?: string;
+}
+
+/** 考纲标签徽章组（标签已由调用方按显隐设置过滤） */
+export function ExamTagBadges({ tags, className = '' }: { tags: string[]; className?: string }) {
+  if (!tags || tags.length === 0) return null;
+  return (
+    <div className={`flex flex-wrap gap-1 ${className}`}>
+      {tags.map((t) => {
+        const meta = examTagMeta(t);
+        if (!meta) return null;
+        return (
+          <span
+            key={t}
+            className={`inline-flex items-center rounded border px-1.5 py-0.5 text-[10px] font-medium leading-none ${meta.className}`}
+          >
+            {t}
+          </span>
+        );
+      })}
+    </div>
+  );
 }
 
 export function SynonymTags({ items }: { items: TagItem[] }) {

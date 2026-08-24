@@ -33,6 +33,7 @@ class VocabularyEntryOut(BaseModel):
     synonyms_antonyms: str = '{"synonyms": []}'
     cognates: str = "[]"
     collocations: str = "[]"
+    exam_tags: str = "[]"
     created_at: datetime | None = None
     updated_at: datetime | None = None
 

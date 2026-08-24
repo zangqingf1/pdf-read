@@ -5,7 +5,8 @@ import { safeMarkdownComponents } from '../../utils/markdownComponents';
 import { useDocumentStore } from '../../stores/documentStore';
 import { useReaderStore } from '../../stores/readerStore';
 import { deleteWordAnalysis, type WordAnalysisResult } from '../../services/wordAnalysisApi';
-import { WordRichTags } from './WordTags';
+import { WordRichTags, ExamTagBadges } from './WordTags';
+import { filterVisibleExamTags } from '../../constants/examTags';
 import { ChineseSpoiler } from '../common/ChineseSpoiler';
 import { deleteSentenceAnalysis, type SentenceAnalysisResult } from '../../services/sentenceAnalysisApi';
 import { sentenceBodyMarkdown, sentenceBreakdownChunks } from '../../utils/sentenceSections';
@@ -30,6 +31,8 @@ function FocusedWordCard({
   const { removeWordAnalysis } = useDocumentStore();
   const [confirming, setConfirming] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const visibleExamTags = useReaderStore((s) => s.visibleExamTags);
+  const examTags = filterVisibleExamTags(analysis.exam_tags, visibleExamTags);
 
   const handleDelete = useCallback(async () => {
     setDeleting(true);
@@ -72,6 +75,9 @@ function FocusedWordCard({
           </button>
         )}
       </div>
+
+      {/* Exam tags */}
+      {examTags.length > 0 && <ExamTagBadges tags={examTags} className="mb-3" />}
 
       {/* Definition */}
       {analysis.definition && (

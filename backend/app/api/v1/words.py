@@ -24,9 +24,24 @@ from app.schemas.words import (
     WordAnalysisResult,
 )
 from app.services.ai_service import create_ai_service, resolve_prompt_overrides
+from app.services.dictionary_service import lookup_exam_tags
 
 router = APIRouter()
 _logger = logging.getLogger(__name__)
+
+
+async def _attach_exam_tags(results: list[dict]) -> None:
+    """Attach deterministic ECDICT-derived exam tags to raw AI results (in place)."""
+    if not results:
+        return
+    words = [r.get("word", "") for r in results]
+    try:
+        tags_map = await lookup_exam_tags(words)
+    except Exception:
+        _logger.exception("exam-tag lookup failed")
+        return
+    for r in results:
+        r["exam_tags"] = tags_map.get(r.get("word", "").strip().lower(), [])
 
 
 def _word_upsert_multi_stmt(document_id: str, rows: list[dict]):
@@ -53,6 +68,7 @@ def _word_upsert_multi_stmt(document_id: str, rows: list[dict]):
             "synonyms_antonyms": excluded.synonyms_antonyms,
             "base_form": excluded.base_form,
             "plural_form": excluded.plural_form,
+            "exam_tags": excluded.exam_tags,
         },
     )
 
@@ -118,6 +134,7 @@ async def _persist_analyses(
             ),
             "base_form": entry.get("base_form", ""),
             "plural_form": entry.get("plural_form", ""),
+            "exam_tags": json.dumps(entry.get("exam_tags") or [], ensure_ascii=False),
         })
 
     if rows:
@@ -184,6 +201,7 @@ async def analyze_words(
             system_prompt_override=system_override,
             user_prompt_override=user_override,
         )
+        await _attach_exam_tags(raw_results)
 
         # Build result list
         analyses: list[WordAnalysisResult] = []
@@ -201,6 +219,7 @@ async def analyze_words(
                 synonyms_antonyms=r.get("synonyms_antonyms", {"synonyms": []}),
                 base_form=r.get("base_form", ""),
                 plural_form=r.get("plural_form", ""),
+                exam_tags=r.get("exam_tags", []),
             ))
 
         # Persist to DB
@@ -329,6 +348,7 @@ async def analyze_words_stream(
 
                     elif event["type"] == "batch":
                         batch_results = event["results"]
+                        await _attach_exam_tags(batch_results)
                         all_raw.extend(batch_results)
 
                         # Build result list for this batch
@@ -347,6 +367,7 @@ async def analyze_words_stream(
                                 "synonyms_antonyms": r.get("synonyms_antonyms", {"synonyms": []}),
                                 "base_form": r.get("base_form", ""),
                                 "plural_form": r.get("plural_form", ""),
+                                "exam_tags": r.get("exam_tags", []),
                             })
                         yield (
                             "data: "
@@ -442,6 +463,10 @@ async def get_word_analyses(
             syn_ant = json.loads(wa.synonyms_antonyms) if wa.synonyms_antonyms else {"synonyms": []}
         except (json.JSONDecodeError, TypeError):
             syn_ant = {"synonyms": []}
+        try:
+            exam_tags = json.loads(wa.exam_tags) if wa.exam_tags else []
+        except (json.JSONDecodeError, TypeError):
+            exam_tags = []
 
         analyses.append(WordAnalysisResult(
             id=str(wa.id),
@@ -457,6 +482,7 @@ async def get_word_analyses(
             synonyms_antonyms=syn_ant,
             base_form=wa.base_form or "",
             plural_form=wa.plural_form or "",
+            exam_tags=exam_tags,
         ))
 
     return WordAnalysisResponse(analyses=analyses)

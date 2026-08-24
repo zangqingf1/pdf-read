@@ -38,6 +38,9 @@ class WordAnalysis(Base):
     synonyms_antonyms: Mapped[str] = mapped_column(Text, default='{"synonyms": []}')
     base_form: Mapped[str] = mapped_column(Text, default="")
     plural_form: Mapped[str] = mapped_column(Text, default="")
+    # JSON array of exam-syllabus tags, e.g. ["初中","四级"] —
+    # deterministically derived from the local ECDICT `tag` column.
+    exam_tags: Mapped[str] = mapped_column(Text, default="[]")
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now()

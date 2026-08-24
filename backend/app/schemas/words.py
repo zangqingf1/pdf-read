@@ -43,6 +43,7 @@ class WordAnalysisResult(BaseModel):
     synonyms_antonyms: dict = Field(default_factory=lambda: {"synonyms": []})
     base_form: str = ""
     plural_form: str = ""
+    exam_tags: list[str] = Field(default_factory=list)
 
 
 class WordAnalysisResponse(BaseModel):

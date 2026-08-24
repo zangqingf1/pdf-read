@@ -8,7 +8,9 @@ import { useShallow } from 'zustand/react/shallow';
 import { useReaderStore, WORD_PANEL_FONT_SIZE_MIN, WORD_PANEL_FONT_SIZE_MAX, BG_COLORS } from '../../stores/readerStore';
 import { deleteWordAnalysis, deleteAllWordAnalyses, WordAnalysisResult } from '../../services/wordAnalysisApi';
 import { batchAddVocabulary } from '../../services/vocabularyApi';
-import { WordRichTags } from './WordTags';
+import { WordRichTags, ExamTagBadges } from './WordTags';
+import { filterVisibleExamTags } from '../../constants/examTags';
+import ExamTagFilterPopover from '../common/ExamTagFilterPopover';
 import { deleteSentenceAnalysis, deleteAllSentenceAnalyses } from '../../services/sentenceAnalysisApi';
 import type { SentenceAnalysisResult } from '../../services/sentenceAnalysisApi';
 import { sentenceBodyMarkdown, sentenceBreakdownChunks } from '../../utils/sentenceSections';
@@ -102,6 +104,8 @@ function WordCard({
 }) {
   const [deleting, setDeleting] = useState(false);
   const [confirming, setConfirming] = useState(false);
+  const visibleExamTags = useReaderStore((s) => s.visibleExamTags);
+  const examTags = filterVisibleExamTags(analysis.exam_tags, visibleExamTags);
 
   const handleDelete = useCallback(async () => {
     setDeleting(true);
@@ -161,6 +165,9 @@ function WordCard({
           </button>
         )}
       </div>
+
+      {/* Exam tags */}
+      {examTags.length > 0 && <ExamTagBadges tags={examTags} className="mb-2" />}
 
       {/* Definition */}
       {analysis.definition && (
@@ -738,6 +745,9 @@ export default function StudyPanel({
               <path d="M12 5v14M5 12h14" />
             </svg>
           </button>
+
+          {/* Exam tag visibility */}
+          {activeTab === 'words' && <ExamTagFilterPopover align="right" />}
 
           {hasAnyContent && (
             clearConfirming ? (

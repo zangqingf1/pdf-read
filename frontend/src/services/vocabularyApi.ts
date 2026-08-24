@@ -29,6 +29,7 @@ export interface VocabularyEntry {
   synonyms_antonyms?: string;
   cognates?: string;
   collocations?: string;
+  exam_tags?: string;
   created_at: string | null;
   updated_at: string | null;
 }
@@ -53,6 +54,7 @@ export function normalizeVocabRich(entry: VocabularyEntry) {
     synonyms: parseVocabJson(entry.synonyms_antonyms, { synonyms: [] }).synonyms || [],
     cognates: parseVocabJson(entry.cognates, [] as { word: string; part_of_speech: string }[]),
     collocations: parseVocabJson(entry.collocations, [] as string[]),
+    exam_tags: parseVocabJson(entry.exam_tags, [] as string[]),
   };
 }
 

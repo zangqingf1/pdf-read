@@ -587,6 +587,7 @@ export default function ReaderPage() {
         synonyms_antonyms: { synonyms: [] },
         base_form: '',
         plural_form: '',
+        exam_tags: [],
         _pending: true,
       });
     }

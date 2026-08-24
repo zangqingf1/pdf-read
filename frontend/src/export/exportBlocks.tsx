@@ -15,6 +15,36 @@ import { sentenceBodyMarkdown, sentenceBreakdownChunks } from '../utils/sentence
 import type { ExportPreferences } from './exportTypes';
 import type { ExportData } from './data';
 import { splitMarkdownBlocks } from './markdown';
+import { filterVisibleExamTags, examTagMeta } from '../constants/examTags';
+import { useReaderStore } from '../stores/readerStore';
+
+/** 导出单词卡的考纲标签行（受导出开关 + 全局标签显隐双重过滤） */
+function visibleExamTagsOf(analysis: WordAnalysisResult): string[] {
+  const { visibleExamTags } = useReaderStore.getState();
+  return filterVisibleExamTags(analysis.exam_tags, visibleExamTags);
+}
+
+function ExamTagRow({ tags }: { tags: string[] }) {
+  if (tags.length === 0) return null;
+  return (
+    <div className="w-tags">
+      <span className="w-tag-lbl">考纲</span>
+      {tags.map((t) => {
+        const meta = examTagMeta(t);
+        if (!meta) return null;
+        return (
+          <span
+            key={t}
+            className="ep-tag"
+            style={{ background: meta.colors.bg, borderColor: meta.colors.border, color: meta.colors.text }}
+          >
+            {t}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
 
 // ── 块 id 契约 ──
 export const blockIds = {
@@ -305,6 +335,7 @@ function WordCardView({ analysis, prefs }: { analysis: WordAnalysisResult; prefs
           ))}
         </div>
       )}
+      {prefs.includeExamTags && <ExamTagRow tags={visibleExamTagsOf(analysis)} />}
     </div>
   );
 }
@@ -453,6 +484,12 @@ export function wordCardFragRows(
         </div>
       ),
     });
+  }
+  if (prefs.includeExamTags) {
+    const tags = visibleExamTagsOf(analysis);
+    if (tags.length > 0) {
+      rows.push({ id: `${base}:f${rows.length}`, node: <ExamTagRow tags={tags} /> });
+    }
   }
   return rows;
 }

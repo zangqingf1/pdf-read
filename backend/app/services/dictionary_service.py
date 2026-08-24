@@ -165,8 +165,8 @@ def _lemmatize(word: str) -> list[str]:
     return res
 
 
-async def _lookup_local(word: str) -> dict[str, Any] | None:
-    """Try ECDICT local SQLite via aiosqlite (fallback to sqlite3 in thread)."""
+def _dict_db_path() -> pathlib.Path | None:
+    """Resolve the local ECDICT SQLite path; None when the file is missing."""
     db_path = pathlib.Path(settings.DICT_DB_PATH)
     # Resolve relative to backend dir
     if not db_path.is_absolute():
@@ -180,6 +180,14 @@ async def _lookup_local(word: str) -> dict[str, Any] | None:
         else:
             db_path = pathlib.Path.cwd() / settings.DICT_DB_PATH
     if not db_path.exists():
+        return None
+    return db_path
+
+
+async def _lookup_local(word: str) -> dict[str, Any] | None:
+    """Try ECDICT local SQLite via aiosqlite (fallback to sqlite3 in thread)."""
+    db_path = _dict_db_path()
+    if db_path is None:
         return None
 
     def _query() -> dict[str, Any] | None:
@@ -418,3 +426,141 @@ async def lookup_many(words: list[str], concurrency: int = 15) -> dict[str, dict
 
     results = await asyncio.gather(*[_one(low, orig) for low, orig in uniq.items()])
     return dict(results)
+
+
+# ── Exam-syllabus tags (考纲标签) — deterministic, offline from ECDICT ──
+
+# Canonical display order for the tags. Only ECDICT's native `tag` column is
+# used — no derived tags.
+EXAM_TAG_ORDER: list[str] = [
+    "初中", "高中", "四级", "六级", "考研", "雅思", "托福", "GRE",
+]
+
+# ECDICT `tag` column token → display tag. Tokens NOT in this map (专四/专八/
+# GMAT/SAT wordlists) are not part of the free ECDICT dataset and are skipped.
+_ECDICT_TAG_MAP: dict[str, str] = {
+    "zk": "初中",
+    "gk": "高中",
+    "cet4": "四级",
+    "cet6": "六级",
+    "ky": "考研",
+    "ielts": "雅思",
+    "toefl": "托福",
+    "gre": "GRE",
+}
+
+_exam_tags_cache: dict[str, list[str]] = {}
+
+
+def _tags_from_ecdict_row(tag: str | None) -> list[str]:
+    """Map one ECDICT row's `tag` to a canonical ordered tag list."""
+    tags: set[str] = set()
+    if tag:
+        for token in str(tag).split():
+            mapped = _ECDICT_TAG_MAP.get(token.strip().lower())
+            if mapped:
+                tags.add(mapped)
+    return [t for t in EXAM_TAG_ORDER if t in tags]
+
+
+def _query_exam_tags_sync(
+    db_path: pathlib.Path,
+    lookups: dict[str, list[str]],
+) -> dict[str, list[str]]:
+    """Batch-query ECDICT: exact words first, then lemma fallbacks.
+
+    ``lookups`` maps lowercase word → ordered lemma candidates. Returns
+    lowercase word → tag list (empty list when nothing matched).
+    """
+    out: dict[str, list[str]] = {}
+    conn: sqlite3.Connection | None = None
+    try:
+        conn = sqlite3.connect(str(db_path))
+        cur = conn.cursor()
+
+        def _batch(words: list[str]) -> dict[str, str]:
+            found: dict[str, str] = {}
+            for start in range(0, len(words), 400):
+                chunk = words[start : start + 400]
+                placeholders = ",".join("?" * len(chunk))
+                cur.execute(
+                    f"SELECT lower(word), tag FROM stardict "
+                    f"WHERE lower(word) IN ({placeholders})",
+                    chunk,
+                )
+                for w, tag in cur.fetchall():
+                    found[w] = tag or ""
+            return found
+
+        all_exact = list(lookups.keys())
+        exact_rows = _batch(all_exact)
+        # Lemma fallbacks only for words with no exact-row tags
+        missing = [w for w in all_exact if not exact_rows.get(w, "")]
+        lemma_words = sorted({lm for w in missing for lm in lookups[w]})
+        lemma_rows = _batch(lemma_words) if lemma_words else {}
+
+        for w in all_exact:
+            row = exact_rows.get(w)
+            if row:
+                out[w] = _tags_from_ecdict_row(row)
+                continue
+            # Fall back to base-form tags (went → go).
+            merged: set[str] = set()
+            merged.update(_tags_from_ecdict_row(row))
+            for lemma in lookups[w]:
+                lrow = lemma_rows.get(lemma)
+                if lrow:
+                    merged.update(_tags_from_ecdict_row(lrow))
+            out[w] = [t for t in EXAM_TAG_ORDER if t in merged]
+        return out
+    except Exception as exc:
+        logger.warning("ECDICT exam-tag batch query failed: %s", exc)
+        return {}
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+async def lookup_exam_tags(words: list[str]) -> dict[str, list[str]]:
+    """Batch-lookup exam-syllabus tags for words from the local ECDICT.
+
+    Returns lowercase word → ordered tag list (canonical order, may be empty).
+    Deterministic: the same word always yields the same tags. Results are
+    cached in-process; failures degrade to empty lists without raising.
+    """
+    uniq: list[str] = []
+    seen: set[str] = set()
+    for w in words:
+        lw = (w or "").strip().lower()
+        if lw and lw not in seen:
+            seen.add(lw)
+            uniq.append(lw)
+    if not uniq:
+        return {}
+
+    result: dict[str, list[str]] = {}
+    pending: list[str] = []
+    for lw in uniq:
+        cached = _exam_tags_cache.get(lw)
+        if cached is not None:
+            result[lw] = cached
+        else:
+            pending.append(lw)
+    if not pending:
+        return result
+
+    db_path = _dict_db_path()
+    if db_path is None:
+        for lw in pending:
+            result[lw] = []
+        return result
+
+    # word → lemma candidates (exact word first is implicit in the SQL pass)
+    lookups: dict[str, list[str]] = {lw: _lemmatize(lw) for lw in pending}
+    queried = await asyncio.to_thread(_query_exam_tags_sync, db_path, lookups)
+
+    for lw in pending:
+        tags = queried.get(lw, [])
+        _exam_tags_cache[lw] = tags
+        result[lw] = tags
+    return result

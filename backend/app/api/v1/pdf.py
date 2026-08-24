@@ -374,6 +374,10 @@ async def get_parse_result(
             syn_ant = json.loads(wa.synonyms_antonyms) if wa.synonyms_antonyms else {"synonyms": []}
         except (json.JSONDecodeError, TypeError):
             syn_ant = {"synonyms": []}
+        try:
+            exam_tags = json.loads(wa.exam_tags) if wa.exam_tags else []
+        except (json.JSONDecodeError, TypeError):
+            exam_tags = []
         word_analyses.append(
             WordAnalysisItem(
                 id=str(wa.id),
@@ -389,6 +393,7 @@ async def get_parse_result(
                 synonyms_antonyms=syn_ant,
                 base_form=wa.base_form or "",
                 plural_form=wa.plural_form or "",
+                exam_tags=exam_tags,
             )
         )
 
