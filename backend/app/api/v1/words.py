@@ -19,6 +19,8 @@ from app.models.document import Document
 from app.models.user import User
 from app.models.word_analysis import WordAnalysis
 from app.schemas.words import (
+    SyllabusMatchRequest,
+    SyllabusMatchResponse,
     WordAnalysisRequest,
     WordAnalysisResponse,
     WordAnalysisResult,
@@ -428,6 +430,31 @@ async def analyze_words_stream(
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@router.post("/syllabus-match", response_model=SyllabusMatchResponse)
+async def match_syllabus_words(
+    request: SyllabusMatchRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """Return words belonging to any of the requested exam syllabi (考纲标注).
+
+    Deterministic ECDICT lookup (with lemma fallback), no AI involved.
+    Input words are deduplicated lowercase surface forms from a document;
+    output is the subset whose tags intersect ``tags`` (Chinese labels).
+    """
+    requested = {t.strip() for t in request.tags if t and t.strip()}
+    if not requested:
+        return SyllabusMatchResponse(matched=[])
+
+    try:
+        tags_map = await lookup_exam_tags(request.words)
+    except Exception:
+        _logger.exception("syllabus-match lookup failed")
+        raise HTTPException(status_code=502, detail="考纲词匹配失败，请稍后重试")
+
+    matched = sorted(w for w, tags in tags_map.items() if requested.intersection(tags))
+    return SyllabusMatchResponse(matched=matched)
 
 
 @router.get("/list/{document_id}", response_model=WordAnalysisResponse)

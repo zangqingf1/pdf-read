@@ -118,6 +118,7 @@ app/
 | POST | `/api/v1/translate/stream` | 段落翻译（SSE 渐进） |
 | POST | `/api/v1/words/analyze` | 单词解析 (upsert) |
 | POST | `/api/v1/words/stream` | 单词解析（SSE，含 `incomplete` 事件） |
+| POST | `/api/v1/words/syllabus-match` | 考纲标注批量匹配（ECDICT 离线，无 AI；阅读页高亮用） |
 | GET | `/api/v1/words/list/{document_id}` | 单词解析列表 |
 | DELETE | `/api/v1/words/{analysis_id}` | 删除单词解析 |
 | POST | `/api/v1/sentences/analyze` | 句子解析 (upsert) |
@@ -201,6 +202,7 @@ constants/      # examTags(考纲标签常量/配色/显隐过滤)
 **关键设计：**
 - 无 Ant Design — 全部自定义 `ui/` 组件 + Tailwind CSS
 - 暖色调设计系统: `--canvas: #faf9f5`, `--primary: #cc785c`, `--ink: #141413`
+- **阅读页考纲标注**: 排版抽屉「考纲标注」多选（readerStore `syllabusTags` 持久化，与解析卡片的 `visibleExamTags` 显隐过滤完全独立）。`useSyllabusHighlight` 收集全文去重词元 → `POST /words/syllabus-match` 后端 ECDICT 离线判定（含屈折还原）→ 命中集合存 documentStore `syllabusWords`（+`syllabusVersion` 供 SentenceToken 签名感知），token 命中加 `.word-token-syllabus`（琥珀虚线下划线）。按「文档+考纲组合+正文指纹」模块级缓存，编辑正文后自动补查新词；失败静默降级不影响阅读。仅阅读页生效（校对页/导出不标）
 - 阅读页桌面端: 左右分栏，拖拽分隔条调宽度；解析面板可 ✕ 关闭 (右侧竖条按钮恢复)；点击已解析单词/句子自动打开面板并定位
 - 阅读页移动端: 单栏 + 底部 FAB → StudySheet (45vh 弹出)；已解析内容点击 → FocusedAnalysisSheet (max 45vh)
 - 段落渲染: `react-markdown` + `remark-gfm`，单词/句子 token 化注入，支持选中/解析/已解析三种状态

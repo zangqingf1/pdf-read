@@ -381,23 +381,7 @@ export default function VocabularyPage() {
                                         </button>
                                       </div>
 
-                                      {/* Row 2: 考纲标签（独立一行） */}
-                                      {(() => {
-                                        const tags = filterVisibleExamTags(
-                                          (() => {
-                                            try {
-                                              return entry.exam_tags ? JSON.parse(entry.exam_tags) as string[] : [];
-                                            } catch {
-                                              return [];
-                                            }
-                                          })(),
-                                          visibleExamTags,
-                                        );
-                                        if (tags.length === 0) return null;
-                                        return <ExamTagBadges tags={tags} />;
-                                      })()}
-
-                                      {/* Part 2: 词典源释义（不同词性换行显示；中文默认模糊遮盖，点击揭示） */}
+                                      {/* Row 2: 词典源释义（不同词性换行显示；中文默认模糊遮盖，点击揭示） */}
                                       <div className="flex flex-col gap-1">
                                         {(() => {
                                           const segs = parseTranslationByPos(entry.translation);
@@ -425,6 +409,22 @@ export default function VocabularyPage() {
                                           return <p className="text-sm text-muted-soft m-0">暂无词典释义</p>;
                                         })()}
                                       </div>
+
+                                      {/* Row 3: 考纲标签（释义下方独立一行） */}
+                                      {(() => {
+                                        const tags = filterVisibleExamTags(
+                                          (() => {
+                                            try {
+                                              return entry.exam_tags ? JSON.parse(entry.exam_tags) as string[] : [];
+                                            } catch {
+                                              return [];
+                                            }
+                                          })(),
+                                          visibleExamTags,
+                                        );
+                                        if (tags.length === 0) return null;
+                                        return <ExamTagBadges tags={tags} />;
+                                      })()}
 
                                       {/* Part 3: 来源文档（每个文档各占一行）+ 加入日期（仅到日） */}
                                       <div className="flex flex-col gap-1.5 border-t border-hairline/60 pt-2.5">

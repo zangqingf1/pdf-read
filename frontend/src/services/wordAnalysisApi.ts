@@ -309,6 +309,20 @@ export async function deleteWordAnalysis(
   await api.delete(`/words/${analysisId}`);
 }
 
+/** 考纲标注：批量判定单词属于哪些考纲（ECDICT 离线，无 AI）。
+ * 返回命中所给标签任一者的单词（小写）。 */
+export async function syllabusMatch(
+  tags: string[],
+  words: string[]
+): Promise<string[]> {
+  const { data } = await api.post<{ matched: string[] }>(
+    '/words/syllabus-match',
+    { tags, words },
+    { timeout: 30000 }
+  );
+  return data.matched || [];
+}
+
 export async function deleteAllWordAnalyses(
   documentId: string
 ): Promise<void> {

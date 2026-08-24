@@ -56,6 +56,11 @@ interface DocumentState {
   highlightedAnalysisKey: string | null;
   highlightedAnalysisTab: 'words' | 'sentences' | null;
 
+  // 考纲标注（阅读页）：命中所选考纲的表面词形集合（小写）。
+  // version 随每次变更递增，供 SentenceToken 签名感知集合整体替换。
+  syllabusWords: Set<string> | null;
+  syllabusVersion: number;
+
   // Actions
   setDocument: (data: PDFResultResponse) => void;
   setLoading: (loading: boolean) => void;
@@ -102,6 +107,9 @@ interface DocumentState {
 
   // Reverse navigation
   setHighlightedAnalysis: (key: string | null, tab: 'words' | 'sentences' | null) => void;
+
+  // 考纲标注
+  setSyllabusWords: (words: Set<string> | null) => void;
 }
 
 export const useDocumentStore = create<DocumentState>((set) => ({
@@ -141,6 +149,9 @@ export const useDocumentStore = create<DocumentState>((set) => ({
 
   highlightedAnalysisKey: null,
   highlightedAnalysisTab: null,
+
+  syllabusWords: null,
+  syllabusVersion: 0,
 
   setDocument: (data) => {
     set((state) => {
@@ -259,6 +270,8 @@ export const useDocumentStore = create<DocumentState>((set) => ({
       summaryStreamingText: '',
       highlightedAnalysisKey: null,
       highlightedAnalysisTab: null,
+      syllabusWords: null,
+      syllabusVersion: 0,
     }),
 
   updateTranslations: (items) =>
@@ -407,4 +420,12 @@ export const useDocumentStore = create<DocumentState>((set) => ({
   // ── Reverse navigation ──────────────────────────────────────
 
   setHighlightedAnalysis: (key, tab) => set({ highlightedAnalysisKey: key, highlightedAnalysisTab: tab }),
+
+  // ── 考纲标注 ─────────────────────────────────────────────────
+
+  setSyllabusWords: (words) =>
+    set((state) => ({
+      syllabusWords: words,
+      syllabusVersion: state.syllabusVersion + 1,
+    })),
 }));

@@ -76,15 +76,9 @@ function FocusedWordCard({
         )}
       </div>
 
-      {/* Exam tags */}
-      {examTags.length > 0 && <ExamTagBadges tags={examTags} className="mb-3" />}
-
       {/* Definition */}
       {analysis.definition && (
         <div className="mb-3">
-          <div className="text-muted mb-0.5 text-[0.75em]">
-            <span>释义</span>
-          </div>
           <p className="text-body-strong m-0 text-base font-reading">
             {analysis.part_of_speech && (
               <span className="italic text-muted mr-1 text-sm">{analysis.part_of_speech}</span>
@@ -123,6 +117,9 @@ function FocusedWordCard({
           </p>
         </div>
       )}
+
+      {/* Exam tags (card bottom) */}
+      {examTags.length > 0 && <ExamTagBadges tags={examTags} className="mt-3" />}
     </div>
   );
 }

@@ -9,6 +9,7 @@ import { useReaderStore, FONT_SIZE_MIN, FONT_SIZE_MAX } from '../../stores/reade
 import TypographyDrawer from './TypographyDrawer';
 import { useAudioPlayerStore } from '../../stores/audioPlayerStore';
 import { playFromParagraph, togglePlay } from '../../hooks/useParagraphAudioPlayer';
+import { useSyllabusHighlight } from '../../hooks/useSyllabusHighlight';
 
 interface ReadingAreaProps {
   isTouchDevice?: boolean;
@@ -51,6 +52,9 @@ export default memo(function ReadingArea({
   const decreaseFontSize = useReaderStore((s) => s.decreaseFontSize);
   const playerStatus = useAudioPlayerStore((s) => s.status);
   const [drawerOpen, setDrawerOpen] = useState(false);
+
+  // 考纲标注：按所选考纲批量匹配全文单词，结果写入 documentStore 供 token 渲染
+  useSyllabusHighlight();
 
   const translatedCount = Object.keys(translations).length;
   const total = paragraphCount || paragraphs.length;

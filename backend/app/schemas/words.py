@@ -50,3 +50,26 @@ class WordAnalysisResponse(BaseModel):
     """Response containing all word analyses."""
 
     analyses: list[WordAnalysisResult]
+
+
+class SyllabusMatchRequest(BaseModel):
+    """Request to match words against selected exam syllabi (考纲标注)."""
+
+    tags: list[str] = Field(
+        ...,
+        min_length=1,
+        max_length=8,
+        description="Exam tag labels, e.g. ['四级', '考研']",
+    )
+    words: list[str] = Field(
+        ...,
+        min_length=1,
+        max_length=20000,
+        description="Deduplicated lowercase surface-form tokens from a document",
+    )
+
+
+class SyllabusMatchResponse(BaseModel):
+    """Words (lowercase) whose ECDICT tags intersect the requested syllabi."""
+
+    matched: list[str] = Field(default_factory=list)

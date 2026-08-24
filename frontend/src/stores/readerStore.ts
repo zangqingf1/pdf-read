@@ -66,6 +66,9 @@ interface ReaderState {
   visibleExamTags: string[];
   toggleExamTag: (label: string) => void;
   setAllExamTagsVisible: (labels: string[]) => void;
+  /** 阅读页考纲标注：选中的考纲（多选，与 visibleExamTags 显隐过滤相互独立） */
+  syllabusTags: string[];
+  toggleSyllabusTag: (label: string) => void;
 }
 
 export const useReaderStore = create<ReaderState>()(
@@ -120,6 +123,16 @@ export const useReaderStore = create<ReaderState>()(
           return { visibleExamTags: next };
         }),
       setAllExamTagsVisible: (labels) => set({ visibleExamTags: [...labels] }),
+      syllabusTags: [],
+      toggleSyllabusTag: (label) =>
+        set((state) => {
+          const has = state.syllabusTags.includes(label);
+          return {
+            syllabusTags: has
+              ? state.syllabusTags.filter((t) => t !== label)
+              : [...state.syllabusTags, label],
+          };
+        }),
     }),
     {
       name: 'reader-preferences',
@@ -131,6 +144,7 @@ export const useReaderStore = create<ReaderState>()(
         lineHeight: state.lineHeight,
         accent: state.accent,
         visibleExamTags: state.visibleExamTags,
+        syllabusTags: state.syllabusTags,
       }),
     }
   )

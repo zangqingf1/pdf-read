@@ -28,7 +28,6 @@ function ExamTagRow({ tags }: { tags: string[] }) {
   if (tags.length === 0) return null;
   return (
     <div className="w-tags">
-      <span className="w-tag-lbl">考纲</span>
       {tags.map((t) => {
         const meta = examTagMeta(t);
         if (!meta) return null;

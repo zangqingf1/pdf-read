@@ -72,6 +72,7 @@ function renderWordTokens(
   activeWordIdx: number | null,
   selectedWords: Record<string, boolean>,
   wordAnalyses: Record<string, WordAnalysisResult>,
+  syllabusWords?: Set<string> | null,
 ): React.ReactNode[] {
   let wordIdx = 0;
   return tokenizeWords(text).map((token, i) => {
@@ -83,10 +84,12 @@ function renderWordTokens(
     const key = wordAnalysisKey(paragraphIndex, token.stem);
     const isSelected = !!selectedWords[key];
     const hasAnalysis = !!wordAnalyses[key];
+    const inSyllabus = !!syllabusWords && syllabusWords.has(token.stem.toLowerCase());
     const className = [
       'word-token',
       isSelected ? 'word-token-selected' : '',
       hasAnalysis && !isSelected ? 'word-token-has-analysis' : '',
+      inSyllabus ? 'word-token-syllabus' : '',
       activeWordIdx !== null && activeWordIdx === currentIdx ? 'tts-current-word' : '',
     ].filter(Boolean).join(' ');
     return (
@@ -110,17 +113,18 @@ function processChildren(
   activeWordIdx: number | null,
   selectedWords: Record<string, boolean>,
   wordAnalyses: Record<string, WordAnalysisResult>,
+  syllabusWords?: Set<string> | null,
 ): React.ReactNode {
   return React.Children.map(children, (child) => {
     if (typeof child === 'string') {
-      return renderWordTokens(child, paragraphIndex, sentenceIndex, activeWordIdx, selectedWords, wordAnalyses);
+      return renderWordTokens(child, paragraphIndex, sentenceIndex, activeWordIdx, selectedWords, wordAnalyses, syllabusWords);
     }
     if (React.isValidElement(child)) {
       const childProps = (child.props as any) || {};
       if (childProps.children) {
         return React.cloneElement(child, {
           ...childProps,
-          children: processChildren(childProps.children, paragraphIndex, sentenceIndex, activeWordIdx, selectedWords, wordAnalyses),
+          children: processChildren(childProps.children, paragraphIndex, sentenceIndex, activeWordIdx, selectedWords, wordAnalyses, syllabusWords),
         } as any);
       }
     }
@@ -150,20 +154,22 @@ const SentenceToken = memo(function SentenceToken({
     [paragraphIndex, sentence.index]
   );
 
-  // 签名：本句内每个词的选中/已解析状态 + 本句选中/已解析状态。
+  // 签名：本句内每个词的选中/已解析/考纲命中状态 + 本句选中/已解析状态。
   const stateSignature = useDocumentStore((s) => {
     const tokens = cachedTokenizeWords(sentence.text);
     let selectedBits = '';
     let analyzedBits = '';
+    let syllabusBits = '';
     for (const token of tokens) {
       if (!token.stem) continue;
       const key = wordAnalysisKey(paragraphIndex, token.stem);
       selectedBits += s.selectedWords[key] ? '1' : '0';
       analyzedBits += s.wordAnalyses[key] ? '1' : '0';
+      syllabusBits += s.syllabusWords?.has(token.stem.toLowerCase()) ? '1' : '0';
     }
     const sentenceSelected = s.selectedSentences[sentenceKey] ? '1' : '0';
     const sentenceAnalyzed = s.sentenceAnalyses[sentenceKey] ? '1' : '0';
-    return `${selectedBits}|${analyzedBits}|${sentenceSelected}${sentenceAnalyzed}`;
+    return `${selectedBits}|${analyzedBits}|${syllabusBits}|${sentenceSelected}${sentenceAnalyzed}|v${s.syllabusVersion}`;
   });
 
   // 本句签名变化时才重渲染；渲染时读取当前 store 快照（非响应式读取）。
@@ -174,6 +180,7 @@ const SentenceToken = memo(function SentenceToken({
     sentenceAnalyses,
     toggleWordSelection,
     toggleSentenceSelection,
+    syllabusWords,
   } = useDocumentStore.getState();
 
   // 仅当本句是当前朗读句时才订阅（返回词序号），避免全文逐词/逐句随 timeupdate 重渲染
@@ -271,7 +278,8 @@ const SentenceToken = memo(function SentenceToken({
       sentence.index,
       activeWordIdx,
       selectedWords,
-      wordAnalyses
+      wordAnalyses,
+      syllabusWords
     );
   }, [needsMarkdown, sentence.text, paragraphIndex, sentence.index, activeWordIdx, stateSignature]);
 
@@ -280,7 +288,7 @@ const SentenceToken = memo(function SentenceToken({
       ...safeMarkdownComponents,
       p: ({ children, ...props }: any) => (
         <span {...props}>
-          {processChildren(children, paragraphIndex, sentence.index, activeWordIdx, selectedWords, wordAnalyses)}
+          {processChildren(children, paragraphIndex, sentence.index, activeWordIdx, selectedWords, wordAnalyses, syllabusWords)}
         </span>
       ),
     }),

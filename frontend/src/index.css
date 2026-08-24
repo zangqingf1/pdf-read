@@ -623,6 +623,13 @@
   border-radius: 3px;
   padding: 1px 2px;
 }
+/* 考纲标注（阅读页）：琥珀色虚线下划线，可与解析底色叠加、互不冲突 */
+.word-token-syllabus {
+  text-decoration: underline dashed #b45309;
+  text-decoration-skip-ink: none;
+  text-underline-offset: 4px;
+  text-decoration-thickness: 1.5px;
+}
 
 /* ── Long press ripple (mobile: hold word → select sentence) ── */
 .word-token.long-press-active,

@@ -166,15 +166,9 @@ function WordCard({
         )}
       </div>
 
-      {/* Exam tags */}
-      {examTags.length > 0 && <ExamTagBadges tags={examTags} className="mb-2" />}
-
       {/* Definition */}
       {analysis.definition && (
         <div className="mb-2">
-          <div className="text-muted mb-0.5" style={{ fontSize: '0.75em' }}>
-            <span>释义</span>
-          </div>
           <p className="text-body-strong m-0 font-reading">
             {analysis.part_of_speech && (
               <span className="italic text-muted mr-1" style={{ fontSize: '0.85em' }}>{analysis.part_of_speech}</span>
@@ -217,6 +211,9 @@ function WordCard({
           </p>
         </div>
       )}
+
+      {/* Exam tags (card bottom) */}
+      {examTags.length > 0 && <ExamTagBadges tags={examTags} />}
     </div>
   );
 }

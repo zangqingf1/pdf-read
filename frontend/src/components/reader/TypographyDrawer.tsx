@@ -1,6 +1,7 @@
 import { useEffect, useCallback, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useReaderStore, BG_COLORS, FONT_FAMILIES, LINE_HEIGHTS, ACCENTS, FONT_SIZE_MIN, FONT_SIZE_MAX, WORD_PANEL_FONT_SIZE_MIN, WORD_PANEL_FONT_SIZE_MAX } from '../../stores/readerStore';
+import { EXAM_TAGS } from '../../constants/examTags';
 
 interface TypographyDrawerProps {
   open: boolean;
@@ -16,6 +17,7 @@ export default function TypographyDrawer({ open, onClose }: TypographyDrawerProp
     wordPanelFontSize, increaseWordPanelFontSize, decreaseWordPanelFontSize,
     setBgColor, setFontFamily, setLineHeight,
     accent, setAccent,
+    syllabusTags, toggleSyllabusTag,
   } = useReaderStore();
   const overlayRef = useRef<HTMLDivElement>(null);
 
@@ -230,6 +232,33 @@ export default function TypographyDrawer({ open, onClose }: TypographyDrawerProp
                 </button>
               ))}
             </div>
+          </section>
+
+          {/* ── 考纲标注（阅读页高亮，与解析卡片的标签显隐过滤相互独立）── */}
+          <section>
+            <h4 className="text-xs font-medium text-muted-soft uppercase tracking-wide mb-3">考纲标注</h4>
+            <div className="flex flex-wrap gap-2">
+              {EXAM_TAGS.map((t) => {
+                const active = syllabusTags.includes(t.label);
+                return (
+                  <button
+                    key={t.label}
+                    onClick={() => toggleSyllabusTag(t.label)}
+                    aria-pressed={active}
+                    className={`px-2.5 py-1.5 rounded-md text-xs border transition-all duration-150 ${
+                      active
+                        ? `${t.className} font-medium ring-1 ring-primary`
+                        : 'border-hairline text-body hover:border-muted-soft hover:bg-canvas-soft'
+                    }`}
+                  >
+                    {t.label}
+                  </button>
+                );
+              })}
+            </div>
+            <p className="mt-2 text-xs text-muted-soft">
+              在正文中用虚线下划线标出所选考纲的单词，可多选；全不选则不标注
+            </p>
           </section>
         </div>
       </div>
