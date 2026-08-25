@@ -646,10 +646,22 @@ export default function StudyPanel({
       setVocabMsgError(true);
       return;
     }
+    // Pass the current parsed words (already excludes any the user deleted this
+    // session). Relying on the server's WordAnalysis query alone would re-add
+    // words whose delete hasn't been persisted (e.g. backend not reloaded).
+    const words = wordList
+      .filter((a) => !a._pending)
+      .map((a) => a.word)
+      .filter((w): w is string => !!w && w.trim().length > 0);
+    if (words.length === 0) {
+      setVocabMsg('暂无可加入的单词');
+      setVocabMsgError(true);
+      return;
+    }
     setVocabAdding(true);
     setVocabMsg(null);
     try {
-      const res = await batchAddVocabulary(documentId);
+      const res = await batchAddVocabulary(documentId, words);
       const msg = res.added > 0
         ? `已加入 ${res.added} 个，跳过 ${res.skipped} 个（已在单词本）`
         : `全部 ${res.total} 个已在单词本中`;

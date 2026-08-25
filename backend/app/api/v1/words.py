@@ -6,7 +6,7 @@ import uuid
 
 from fastapi import APIRouter, HTTPException, Depends
 from fastapi.responses import StreamingResponse
-from sqlalchemy import select, delete
+from sqlalchemy import and_, or_, select, delete
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -145,7 +145,35 @@ async def _persist_analyses(
             await db.execute(
                 _word_upsert_multi_stmt(document_id, rows[start : start + 100])
             )
+        await db.flush()
+
+    # Fetch the persisted record ids so responses can carry them. The frontend
+    # needs `id` to delete a single analysis later; without it the delete only
+    # removes the local card and the word is re-added by batch-add.
+    id_map: dict[tuple[int, str], str] = {}
+    if rows:
+        conditions = [
+            and_(
+                WordAnalysis.paragraph_index == r["paragraph_index"],
+                WordAnalysis.word == r["word"],
+            )
+            for r in rows
+        ]
+        for p in range(0, len(conditions), 500):
+            fetched = await db.execute(
+                select(
+                    WordAnalysis.paragraph_index,
+                    WordAnalysis.word,
+                    WordAnalysis.id,
+                )
+                .where(WordAnalysis.document_id == document_id)
+                .where(or_(*conditions[p : p + 500]))
+            )
+            for pi, w, aid in fetched:
+                id_map[(pi, w)] = aid
+
     await db.commit()
+    return id_map
 
 
 @router.post("/analyze", response_model=WordAnalysisResponse)
@@ -205,7 +233,7 @@ async def analyze_words(
         )
         await _attach_exam_tags(raw_results)
 
-        # Build result list
+        # Build result list (ids attached after persisting, below)
         analyses: list[WordAnalysisResult] = []
         for r in raw_results:
             analyses.append(WordAnalysisResult(
@@ -225,11 +253,17 @@ async def analyze_words(
             ))
 
         # Persist to DB
+        id_map: dict[tuple[int, str], str] = {}
         if request.document_id and raw_results:
             try:
-                await _persist_analyses(request.document_id, raw_results, db)
+                id_map = await _persist_analyses(request.document_id, raw_results, db)
             except Exception:
                 _logger.exception("Failed to persist word analyses for document %s", request.document_id)
+
+        # Attach persisted record ids so the frontend can later delete each one.
+        if id_map:
+            for a in analyses:
+                a.id = id_map.get((a.paragraph_index, a.word.lower()))
 
         return WordAnalysisResponse(analyses=analyses)
 
@@ -321,7 +355,6 @@ async def analyze_words_stream(
             unique_entries.append(e)
 
     async def event_generator():
-        all_raw: list[dict] = []
         try:
             try:
                 async for event in ai.analyze_words_stream(
@@ -351,12 +384,31 @@ async def analyze_words_stream(
                     elif event["type"] == "batch":
                         batch_results = event["results"]
                         await _attach_exam_tags(batch_results)
-                        all_raw.extend(batch_results)
+
+                        # Persist this batch straight away so each analysis can
+                        # carry its DB id — the frontend needs `id` to delete a
+                        # word later; without it the recorded analysis survives
+                        # deletion and is re-added by a subsequent batch-add.
+                        # (Upsert is idempotent, so writing per-batch is safe.)
+                        batch_id_map: dict[tuple[int, str], str] = {}
+                        if request.document_id:
+                            try:
+                                batch_id_map = await _persist_analyses(
+                                    request.document_id, batch_results, db
+                                )
+                            except Exception:
+                                _logger.exception(
+                                    "Failed to persist stream batch word analyses for document %s",
+                                    request.document_id,
+                                )
 
                         # Build result list for this batch
                         batch_analyses = []
                         for r in batch_results:
                             batch_analyses.append({
+                                "id": batch_id_map.get(
+                                    (r.get("paragraph_index", 0), (r.get("word", "") or "").strip().lower())
+                                ),
                                 "paragraph_index": r.get("paragraph_index", 0),
                                 "word": r.get("word", ""),
                                 "phonetic": r.get("phonetic", ""),
@@ -393,13 +445,8 @@ async def analyze_words_stream(
                             + "\n\n"
                         )
 
-                # Persist if document_id provided（已先 commit 释放读事务，流末短写）
-                if request.document_id and all_raw:
-                    try:
-                        await _persist_analyses(request.document_id, all_raw, db)
-                    except Exception:
-                        _logger.exception("Failed to persist stream word analyses for document %s", request.document_id)
-
+                # Words are already persisted per-batch above (so each batch's
+                # analyses carry their DB id); nothing left to commit here.
                 yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
             except ValueError as e:
