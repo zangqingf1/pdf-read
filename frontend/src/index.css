@@ -718,6 +718,44 @@
   background-color: rgba(150, 148, 142, 0.18);
 }
 
+/* ── 段尾「从本段开始朗读」图标按钮（与翻译按钮同款式）── */
+.paragraph-play-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1em;
+  height: 1em;
+  margin-left: 6px;
+  vertical-align: middle;
+  flex-shrink: 0;
+  border-radius: 9999px;
+  border: 1px solid rgba(150, 148, 142, 0.25);
+  background-color: rgba(150, 148, 142, 0.1);
+  color: #97948d;
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease, background-color 0.15s ease;
+}
+.paragraph-play-btn svg {
+  width: 0.55em;
+  height: 0.55em;
+}
+.paragraph-play-btn:hover {
+  color: #6c6a64;
+  border-color: rgba(150, 148, 142, 0.45);
+  background-color: rgba(150, 148, 142, 0.18);
+}
+/* 本段正在朗读时高亮为主题色 */
+.paragraph-play-btn-active {
+  color: var(--primary, #cc785c);
+  border-color: rgba(204, 120, 92, 0.45);
+  background-color: rgba(204, 120, 92, 0.12);
+}
+.paragraph-play-btn-active:hover {
+  color: var(--primary, #cc785c);
+  border-color: rgba(204, 120, 92, 0.6);
+  background-color: rgba(204, 120, 92, 0.2);
+}
+
 /* ── 段落首行缩进 + 首段首字下沉 ── */
 .paragraph-indent {
   text-indent: 2em;

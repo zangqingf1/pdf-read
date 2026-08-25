@@ -8,6 +8,7 @@ import { useDocumentStore } from '../../stores/documentStore';
 import { triggerScrollToAnalysis } from './StudyPanel';
 import { splitSentences, tokenizeWords, wordAnalysisKey, sentenceAnalysisKey } from '../../utils/textTokens';
 import { useAudioPlayerStore } from '../../stores/audioPlayerStore';
+import { playFromParagraph, togglePlay } from '../../hooks/useParagraphAudioPlayer';
 import { safeMarkdownComponents } from '../../utils/markdownComponents';
 
 // ── Module-level callback: open focused analysis on mobile ──
@@ -340,6 +341,19 @@ const ParagraphBlock = memo(function ParagraphBlock({
   const lineHeight = useReaderStore((s) => s.lineHeight);
   const [showTranslation, setShowTranslation] = useState(false);
 
+  // 仅本段处于播放/暂停时返回其状态，其余段落签名恒为 'idle' → 不随播放进度重渲染
+  const playState = useAudioPlayerStore((s) =>
+    s.activeParagraph === paragraph.index ? s.status : 'idle'
+  );
+
+  const handlePlayClick = useCallback(() => {
+    if (playState === 'playing' || playState === 'paused') {
+      togglePlay();
+    } else {
+      void playFromParagraph(paragraph.index);
+    }
+  }, [playState, paragraph.index]);
+
   const fontFamilyValue = FONT_FAMILIES.find(f => f.key === fontFamily)?.value ?? FONT_FAMILIES[0].value;
   const lineHeightValue = LINE_HEIGHTS.find(l => l.key === lineHeight)?.value ?? LINE_HEIGHTS[0].value;
 
@@ -372,6 +386,24 @@ const ParagraphBlock = memo(function ParagraphBlock({
             <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
               <path d="M12.87 15.07l-2.54-2.51.03-.03A17.52 17.52 0 0 0 14.07 6H17V4h-7V2H8v2H1v2h11.17C11.5 7.92 10.44 9.75 9 11.35 8.07 10.32 7.3 9.19 6.69 8h-2c.73 1.63 1.73 3.17 2.98 4.56l-5.09 5.02L4 19l5-5 3.11 3.11.76-2.04zM18.5 10h-2L12 22h2l1.12-3h4.75L21 22h2l-4.5-12zm-2.62 7l1.62-4.33L19.12 17h-3.24z" />
             </svg>
+          </button>
+        )}{(
+          <button
+            type="button"
+            onClick={handlePlayClick}
+            className={`paragraph-play-btn${playState === 'playing' ? ' paragraph-play-btn-active' : ''}`}
+            title={playState === 'playing' ? '暂停朗读' : playState === 'paused' ? '继续朗读' : '从本段开始朗读'}
+            aria-label={playState === 'playing' ? '暂停朗读' : playState === 'paused' ? '继续朗读' : '从本段开始朗读'}
+          >
+            {playState === 'playing' ? (
+              <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" />
+              </svg>
+            ) : (
+              <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path d="M8 5v14l11-7z" />
+              </svg>
+            )}
           </button>
         )}
       </p>
