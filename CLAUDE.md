@@ -1,4 +1,4 @@
-﻿# AGENTS.md
+# AGENTS.md
 
 ## 项目概述
 
@@ -244,3 +244,4 @@ constants/      # examTags(考纲标签常量/配色/显隐过滤)
 - `frontend/` 根目录有大量 gitignore 的调试残件（`run_debug*.cjs`, `export_probe*`, `repro*`, `paginate_align_test*` 等），不是功能代码，勿被误导/勿提交
 - **下载外部大文件（GitHub 等）的约定**: 本机直连 GitHub 内容下载（`raw.githubusercontent.com`、release 的 `objects.githubusercontent.com`）会被重置/超时；唯一可用的镜像 `ghproxy.net` 限速严重（~0.05 MB/s）。因此**遇到需要下载的 GitHub 文件，不要自己硬下**，直接把仓库/直链告诉用户，由用户自行下载（迅雷/代理更快）后放到指定路径，再继续后续处理
 - **Git 提交/同步约定**: 本工作区（`D:\C++\English PDF read`）的 remote 是 `git@github.com:zangqingf1/pdf-read.git`。用户要求"更新到 git / 提交"时：在本工作区 commit 后 **push 到 origin**，再到部署克隆目录 `D:\33294\github\pdf-read` 执行 `git pull origin master` 同步（该目录 remote 是 https 同一仓库，是用户实际使用的发布目录）
+- **nginx 部署注意（宿主 nginx / rpm 系）**: `.mjs` 必须映射为 JavaScript MIME（`types { application/javascript mjs; }`，见 `pdfreader.conf` 模板），否则 pdf.js worker 以 `application/octet-stream` 返回时 Chrome 拒绝加载 → 上传选页/校对预览报「预览加载失败」；worker 资源建议 `Cache-Control: no-cache, no-store`（防浏览器沿用旧 MIME 响应）。ECDICT 大库建议建 `lower(word)` 函数索引（考纲匹配用 `WHERE lower(word) IN (...)`，无索引即全表扫描 340 万行，2 核小机秒级 → 索引后几十 ms，语句: `CREATE UNIQUE INDEX idx_stardict_lower_word ON stardict(lower(word))`）
