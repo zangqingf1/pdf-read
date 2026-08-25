@@ -187,17 +187,24 @@ function SentenceTitleContent({ analysis }: { analysis: SentenceAnalysisResult }
   );
 }
 
-// ── 原文 token 高亮（整块：句子级 + 单词级；碎片：仅单词级）──
+// ── 原文 token 高亮 ──
+
+/** 单个文本片段的词级高亮 token（词干命中 ep-token-w；空白/标点原样保留） */
+function renderWordTokens(text: string, pIndex: number, wordAnalyses: Record<string, WordAnalysisResult>): React.ReactNode[] {
+  return tokenizeWords(text).map((t, j) => {
+    if (!t.stem) return t.raw;
+    const hasW = !!wordAnalyses[wordAnalysisKey(pIndex, t.stem)];
+    return hasW ? <span key={j} className="ep-token-w">{t.raw}</span> : t.raw;
+  });
+}
+
+/** 整块（整段）：句子级（ep-token-s）+ 单词级（ep-token-w） */
 function highlightTokens(text: string, pIndex: number, wordAnalyses: Record<string, WordAnalysisResult>, sentenceLevel: boolean, sentenceAnalyses: Record<string, SentenceAnalysisResult>) {
   if (sentenceLevel) {
     const sentences = splitSentences(text);
     return sentences.map((s, i) => {
       const hasS = !!sentenceAnalyses[sentenceAnalysisKey(pIndex, s.index)];
-      const inner = tokenizeWords(s.text).map((t, j) => {
-        if (!t.stem) return t.raw;
-        const hasW = !!wordAnalyses[wordAnalysisKey(pIndex, t.stem)];
-        return hasW ? <span key={j} className="ep-token-w">{t.raw}</span> : t.raw;
-      });
+      const inner = renderWordTokens(s.text, pIndex, wordAnalyses);
       return (
         <Fragment key={s.index}>
           {hasS ? <span className="ep-token-s">{inner}</span> : inner}
@@ -206,11 +213,49 @@ function highlightTokens(text: string, pIndex: number, wordAnalyses: Record<stri
       );
     });
   }
-  return tokenizeWords(text).map((t, i) => {
-    if (!t.stem) return t.raw;
-    const hasW = !!wordAnalyses[wordAnalysisKey(pIndex, t.stem)];
-    return hasW ? <span key={i} className="ep-token-w">{t.raw}</span> : t.raw;
-  });
+  return renderWordTokens(text, pIndex, wordAnalyses);
+}
+
+/**
+ * 段落切片（跨页续排）原文渲染：对规范化文本 norm 的 [from, to) 字符区间做高亮。
+ * 与整块一致按「句子+词」两级：整句完全落在切片内 → 句子级描边（ep-token-s）；
+ * 被页界截断的半句仅词级描边（ep-token-w），避免虚线边框在页缘被齐头截断。
+ * 以整段拆分句子（保持全局句序），再按字符偏移裁剪，保证与测量树（整块渲染）行界一致。
+ */
+function renderEnRange(
+  norm: string,
+  from: number,
+  to: number,
+  pIndex: number,
+  wordAnalyses: Record<string, WordAnalysisResult>,
+  sentenceAnalyses: Record<string, SentenceAnalysisResult>
+): React.ReactNode[] {
+  const sentences = splitSentences(norm);
+  const out: React.ReactNode[] = [];
+  let off = 0; // 当前句文本在 norm 中的起始偏移（句间以单空格分隔）
+  for (const s of sentences) {
+    const start = off;
+    const end = start + s.text.length;
+    off = end + 1;
+    const vs = Math.max(start, from);
+    const ve = Math.min(end, to);
+    const sepIn = end >= from && end < to; // 句间分隔空格落在切片内
+    if (vs < ve) {
+      const fully = vs === start && ve === end;
+      const hasS = !!sentenceAnalyses[sentenceAnalysisKey(pIndex, s.index)];
+      const inner = renderWordTokens(s.text.slice(vs - start, ve - start), pIndex, wordAnalyses);
+      out.push(
+        <Fragment key={s.index}>
+          {fully && hasS ? <span className="ep-token-s">{inner}</span> : inner}
+          {sepIn ? ' ' : ''}
+        </Fragment>
+      );
+    } else if (sepIn) {
+      // 句子整体在切片前、但其分隔空格落在切片内 → 作为下个句子的前导空格
+      out.push(<Fragment key={s.index}>{' '}</Fragment>);
+    }
+  }
+  return out;
 }
 
 // ── 整块渲染（测量树与分页 DOM 共用）──
@@ -361,8 +406,8 @@ export function renderParagraphFrag(
   const norm = paragraphNormText(p);
   // 索引在 buildExportData 已建好，这里直接 O(1) 查表
   const wordAnalyses = data.wordsByKey;
+  const sentenceAnalyses = data.sentencesByKey;
 
-  const enSlice = norm.slice(frag.enFrom, frag.enTo);
   const zh = data.translations[pIndex] ?? '';
   const zhSlice = zh.slice(frag.zhFrom, frag.zhTo);
 
@@ -374,7 +419,7 @@ export function renderParagraphFrag(
 
   return (
     <div className="ep-paragraph">
-      <div className={enCls}>{highlightTokens(enSlice, p.index, wordAnalyses, false, {})}</div>
+      <div className={enCls}>{renderEnRange(norm, frag.enFrom, frag.enTo, p.index, wordAnalyses, sentenceAnalyses)}</div>
       {prefs.includeTranslation && zhSlice && <div className="ep-zh ep-zh-cont">{zhSlice}</div>}
     </div>
   );
