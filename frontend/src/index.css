@@ -611,15 +611,14 @@
   padding: 0 1px;
 }
 .word-token:hover {
-  background-color: #e3ecf7;
+  background-color: rgba(93, 184, 114, 0.15);
 }
 .word-token-selected {
   background-color: #fdf0eb;
   box-shadow: 0 0 0 1.5px var(--primary);
 }
 .word-token-has-analysis {
-  border-bottom: 2px solid var(--success);
-  background-color: rgba(93, 184, 114, 0.18);
+  background-color: #c9ecd4;
   border-radius: 3px;
   padding: 1px 2px;
 }
@@ -659,15 +658,14 @@
   display: inline;
 }
 .sentence-token:hover {
-  background-color: rgba(200, 116, 85, 0.10);
+  background-color: rgba(90, 140, 200, 0.12);
 }
 .sentence-token-selected {
   background-color: #fdf0eb;
   box-shadow: 0 0 0 1.5px var(--primary);
 }
 .sentence-token-has-analysis {
-  border-bottom: 2px dashed var(--primary);
-  background-color: #fdf3ef;
+  background-color: #d6e6f5;
 }
 
 /* ── 朗读卡拉OK高亮 ── */
@@ -988,8 +986,6 @@
   --sec4: #fdf6e3; --sec4c: #8a6d3b; --sec4b: #e6d5a0;
   --tag-syn: #f0f7f1; --tag-synb: #c8e6c9; --tag-sync: #2e5e3c;
   --tag-cog: #fdf3ef; --tag-cogb: #e8c4b0; --tag-cogc: #7a4228;
-  --hl-word: #5db872; --hl-word-bg: rgba(93, 184, 114, 0.18);
-  --hl-sent: #c87455; --hl-sent-bg: #fdf3ef;
 }
 .export-doc.theme-bw {
   --paper: #ffffff;
@@ -1005,8 +1001,6 @@
   --sec4: #f2f2f2; --sec4c: #555555; --sec4b: #d5d5d5;
   --tag-syn: #f5f5f5; --tag-synb: #d9d9d9; --tag-sync: #4a4a4a;
   --tag-cog: #f5f5f5; --tag-cogb: #d9d9d9; --tag-cogc: #4a4a4a;
-  --hl-word: #444444; --hl-word-bg: #f2f2f2;
-  --hl-sent: #444444; --hl-sent-bg: #f2f2f2;
 }
 .export-doc.theme-academic {
   --paper: #ffffff;
@@ -1022,8 +1016,6 @@
   --sec4: #fdf6e3; --sec4c: #8a6d3b; --sec4b: #e6d5a0;
   --tag-syn: #f0f7f1; --tag-synb: #c8e6c9; --tag-sync: #2e5e3c;
   --tag-cog: #fdf3ef; --tag-cogb: #e8c4b0; --tag-cogc: #7a4228;
-  --hl-word: #4a7c59; --hl-word-bg: rgba(74, 124, 89, 0.15);
-  --hl-sent: #5a6d8a; --hl-sent-bg: rgba(90, 109, 138, 0.15);
 }
 
 /* ── 基础 ── */
@@ -1157,17 +1149,15 @@
   widows: 2;
 }
 
-/* ── 原文高亮（已解析单词/句子）── */
+/* ── 原文高亮（已解析单词/句子，三套主题统一蓝绿）── */
 .export-doc .ep-token-w {
-  border-bottom: 2px solid var(--hl-word);
   font-weight: 600;
-  background: var(--hl-word-bg);
+  background: #c9ecd4;
   border-radius: 2px;
 }
 .export-doc .ep-token-s {
-  border-bottom: 2px dashed var(--hl-sent);
   font-weight: 600;
-  background: var(--hl-sent-bg);
+  background: #d6e6f5;
   border-radius: 2px;
 }
 
