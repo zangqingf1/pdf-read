@@ -22,33 +22,68 @@ const statusLabelMap: Record<string, string> = {
 interface RecentDocumentsProps {
   refreshKey?: number;
   sidebar?: boolean;
+  /** 每页加载数量（默认 10） */
+  pageSize?: number;
+  /** 非 sidebar 模式下显示「加载更多」 */
+  showLoadMore?: boolean;
+  /** 受控批量选择模式（侧边栏「批量管理」导航触发） */
+  selectMode?: boolean;
+  onSelectModeChange?: (selecting: boolean) => void;
 }
 
 let toastFn: ((msg: string) => void) | null = null;
 export function setRecentToast(fn: (msg: string) => void) { toastFn = fn; }
 
-export default function RecentDocuments({ refreshKey = 0, sidebar = false }: RecentDocumentsProps) {
+export default function RecentDocuments({
+  refreshKey = 0,
+  sidebar = false,
+  pageSize = 10,
+  showLoadMore = false,
+  selectMode: selectModeProp,
+  onSelectModeChange,
+}: RecentDocumentsProps) {
   const [documents, setDocuments] = useState<DocumentListItem[]>([]);
+  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
 
-  // Batch selection
-  const [selectMode, setSelectMode] = useState(false);
+  // Batch selection — 支持受控（导航触发）与内部状态两种模式
+  const [internalSelectMode, setInternalSelectMode] = useState(false);
+  const isControlled = selectModeProp !== undefined;
+  const selectMode = isControlled ? selectModeProp : internalSelectMode;
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [batchDeleting, setBatchDeleting] = useState(false);
 
   const navigate = useNavigate();
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  const setSelectMode = useCallback((v: boolean) => {
+    if (!isControlled) setInternalSelectMode(v);
+    onSelectModeChange?.(v);
+  }, [isControlled, onSelectModeChange]);
+
   const fetchDocuments = useCallback(async () => {
     setLoading(true);
     try {
-      const result = await listDocuments(10, 0);
+      const result = await listDocuments(pageSize, 0);
       setDocuments(result.documents);
+      setTotal(result.total ?? result.documents.length);
     } catch { /* silent */ }
     finally { setLoading(false); }
-  }, []);
+  }, [pageSize]);
+
+  const loadMore = useCallback(async () => {
+    if (loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const result = await listDocuments(pageSize, documents.length);
+      setDocuments((prev) => [...prev, ...result.documents]);
+      setTotal(result.total ?? 0);
+    } catch { /* silent */ }
+    finally { setLoadingMore(false); }
+  }, [documents.length, loadingMore, pageSize]);
 
   useEffect(() => { fetchDocuments(); }, [fetchDocuments, refreshKey]);
 
@@ -73,6 +108,7 @@ export default function RecentDocuments({ refreshKey = 0, sidebar = false }: Rec
       await deleteDocument(id);
       toastFn?.('已删除');
       setDocuments((prev) => prev.filter((d) => d.id !== id));
+      setTotal((t) => Math.max(0, t - 1));
     } catch { toastFn?.('删除失败'); }
     finally { setActionLoading(null); }
   };
@@ -150,11 +186,38 @@ export default function RecentDocuments({ refreshKey = 0, sidebar = false }: Rec
     );
   }
 
+  // ── Sidebar item hover actions: 收藏 + 删除 ──
+  const renderRowActions = (doc: DocumentListItem) => (
+    <div className="flex items-center gap-0.5 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
+      {/* 收藏（后端功能待接入，前端占位提示） */}
+      <button
+        className="w-6 h-6 flex items-center justify-center rounded text-muted-soft hover:text-primary hover:bg-primary/10 transition-all touch-area"
+        onClick={() => toastFn?.('收藏功能即将上线')}
+        title="收藏"
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+          <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+        </svg>
+      </button>
+      {/* 删除 */}
+      <button
+        className="w-6 h-6 flex items-center justify-center rounded text-muted-soft hover:text-error hover:bg-error/5 transition-all touch-area"
+        onClick={() => setConfirmDelete(doc.id)}
+        title="删除"
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />
+        </svg>
+      </button>
+    </div>
+  );
+
   return (
     <div>
+      {/* Non-sidebar header (modal full list) */}
       {!sidebar && (
         <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-display font-medium text-ink">最近阅读</h3>
+          <h3 className="text-lg font-display font-medium text-ink">全部文档</h3>
           {documents.length > 0 && (
             <Button
               variant="ghost"
@@ -167,21 +230,9 @@ export default function RecentDocuments({ refreshKey = 0, sidebar = false }: Rec
         </div>
       )}
 
-      {/* Batch management for sidebar: toggle entry */}
-      {sidebar && documents.length > 0 && !selectMode && (
-        <div className="px-3 mb-1">
-          <button
-            className="text-[11px] text-muted-soft hover:text-primary transition-colors"
-            onClick={() => setSelectMode(true)}
-          >
-            批量管理
-          </button>
-        </div>
-      )}
-
       {/* Batch action bar */}
       {selectMode && selectedIds.size > 0 && (
-        <div className={`flex items-center gap-2 mb-3 animate-fade-in ${sidebar ? 'px-3' : ''}`}>
+        <div className={`flex items-center gap-2 mb-3 animate-fade-in ${sidebar ? 'px-1' : ''}`}>
           <span className="text-xs text-muted">
             已选 {selectedIds.size} 项
           </span>
@@ -201,7 +252,7 @@ export default function RecentDocuments({ refreshKey = 0, sidebar = false }: Rec
 
       {/* Empty selection bar (show when selectMode is on but nothing selected) */}
       {selectMode && selectedIds.size === 0 && (
-        <div className={`flex items-center gap-2 mb-3 ${sidebar ? 'px-3' : ''}`}>
+        <div className={`flex items-center gap-2 mb-3 ${sidebar ? 'px-1' : ''}`}>
           <span className="text-xs text-muted">点击文档进行选择</span>
           <Button variant="ghost" size="sm" onClick={exitSelectMode}>
             取消
@@ -209,28 +260,108 @@ export default function RecentDocuments({ refreshKey = 0, sidebar = false }: Rec
         </div>
       )}
 
-      <div className={sidebar ? 'space-y-0.5' : 'space-y-1'}>
+      <div className={sidebar ? 'space-y-2' : 'space-y-1'}>
         {documents.map((doc) => {
           const isCompleted = doc.parse_status === 'completed';
           const isFailed = doc.parse_status === 'failed';
           const isAwaitingSelection = doc.parse_status === 'awaiting_selection';
           const showDeleteConfirm = confirmDelete === doc.id;
+          const clickable = !selectMode && (isCompleted || (sidebar && (isAwaitingSelection || isFailed)));
 
+          if (sidebar) {
+            return (
+              <div
+                key={doc.id}
+                onClick={() => {
+                  if (selectMode) { toggleSelect(doc.id); return; }
+                  if (isCompleted) navigate(`/document/${doc.id}`);
+                  else if (isAwaitingSelection) navigate(`/?resume=${doc.id}`);
+                  else if (isFailed) handleRetry(doc.id);
+                }}
+                className={[
+                  'group relative flex items-center gap-2.5 rounded-lg border px-2.5 py-2 transition-all',
+                  selectedIds.has(doc.id)
+                    ? 'bg-primary/10 border-primary/40'
+                    : 'bg-surface-overlay border-hairline-soft hover:shadow-soft hover:border-hairline',
+                  selectMode || clickable ? 'cursor-pointer' : '',
+                ].join(' ')}
+              >
+                {/* Checkbox in select mode */}
+                {selectMode && (
+                  <input
+                    type="checkbox"
+                    className="w-4 h-4 rounded border-hairline accent-primary cursor-pointer flex-shrink-0"
+                    checked={selectedIds.has(doc.id)}
+                    onChange={() => toggleSelect(doc.id)}
+                    onClick={(e) => e.stopPropagation()}
+                  />
+                )}
+
+                {/* PDF icon */}
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#c64545" strokeWidth="1.5" className="flex-shrink-0">
+                  <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
+                  <path d="M14 2v6h6M16 13H8M16 17H8" />
+                </svg>
+
+                {/* Title + meta */}
+                <div className="flex-1 min-w-0">
+                  <div className="text-xs font-medium text-body-strong truncate leading-tight">
+                    {doc.title || 'Untitled'}
+                  </div>
+                  <div className="flex items-center gap-1.5 mt-0.5">
+                    {doc.word_count != null && doc.word_count > 0 && (
+                      <span className="text-[10px] text-muted-soft">{doc.word_count.toLocaleString()} 词</span>
+                    )}
+                    <span className="text-[10px] text-muted-soft">{dayjs(doc.created_at).format('MM-DD HH:mm')}</span>
+                    {!['completed', 'failed'].includes(doc.parse_status) && (
+                      <Badge variant={isAwaitingSelection ? 'warning' : 'default'}>
+                        {statusLabelMap[doc.parse_status] || doc.parse_status}
+                      </Badge>
+                    )}
+                  </div>
+                </div>
+
+                {/* Inline delete confirm / hover actions */}
+                {showDeleteConfirm ? (
+                  <div className="flex items-center gap-1 flex-shrink-0 animate-fade-in" onClick={(e) => e.stopPropagation()}>
+                    <button
+                      className="px-1.5 py-0.5 text-[11px] font-medium text-error hover:bg-error/10 rounded"
+                      onClick={() => handleDelete(doc.id)}
+                    >
+                      删除
+                    </button>
+                    <button
+                      className="px-1.5 py-0.5 text-[11px] text-muted-soft hover:bg-surface-card rounded"
+                      onClick={() => setConfirmDelete(null)}
+                    >
+                      取消
+                    </button>
+                  </div>
+                ) : (
+                  !selectMode && (
+                    <div className="md:opacity-0 md:group-hover:opacity-100 transition-all">
+                      {renderRowActions(doc)}
+                    </div>
+                  )
+                )}
+              </div>
+            );
+          }
+
+          // ── Non-sidebar (full list, e.g. modal) ──
           return (
             <div
               key={doc.id}
               onClick={() => {
                 if (selectMode) { toggleSelect(doc.id); return; }
                 if (isCompleted) navigate(`/document/${doc.id}`);
-                else if (sidebar && isAwaitingSelection) navigate(`/?resume=${doc.id}`);
-                else if (sidebar && isFailed) handleRetry(doc.id);
               }}
               className={[
                 'group flex items-center gap-3 rounded-lg transition-colors',
-                sidebar ? 'px-3 py-2' : 'px-4 py-3',
+                'px-4 py-3',
                 selectMode ? 'cursor-pointer' : '',
                 selectedIds.has(doc.id) ? 'bg-primary/10' : '',
-                (!selectMode && (isCompleted || (sidebar && (isAwaitingSelection || isFailed)))) ? 'cursor-pointer hover:bg-surface-card' : '',
+                (!selectMode && (isCompleted || isAwaitingSelection || isFailed)) ? 'cursor-pointer hover:bg-surface-card' : '',
               ].join(' ')}
             >
               {/* Checkbox in select mode */}
@@ -245,140 +376,98 @@ export default function RecentDocuments({ refreshKey = 0, sidebar = false }: Rec
               )}
 
               {/* PDF icon */}
-              <svg width={sidebar ? 18 : 22} height={sidebar ? 18 : 22} viewBox="0 0 24 24" fill="none" stroke="#c64545" strokeWidth="1.5" className="flex-shrink-0">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#c64545" strokeWidth="1.5" className="flex-shrink-0">
                 <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
                 <path d="M14 2v6h6" />
               </svg>
 
               {/* Title + meta */}
               <div className="flex-1 min-w-0">
-                <div className={sidebar ? 'flex flex-col gap-0.5' : 'flex items-center gap-2'}>
-                  <span className={`${sidebar ? 'text-[13px] leading-tight' : 'text-sm'} font-medium truncate ${isCompleted ? 'text-body-strong' : 'text-muted'}`}>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-medium truncate text-body-strong">
                     {doc.title || 'Untitled'}
                   </span>
-                  <div className={sidebar ? 'flex items-center gap-1.5' : ''}>
-                    {sidebar && !['completed', 'failed'].includes(doc.parse_status) && (
-                      <Badge
-                        variant={
-                          doc.parse_status === 'awaiting_selection' ? 'warning' : 'default'
-                        }
-                      >
-                        {statusLabelMap[doc.parse_status] || doc.parse_status}
-                      </Badge>
-                    )}
-                    {!sidebar && (
-                      <Badge
-                        variant={
-                          doc.parse_status === 'completed' ? 'success' :
-                          doc.parse_status === 'failed' ? 'coral' :
-                          doc.parse_status === 'awaiting_selection' ? 'warning' :
-                          'default'
-                        }
-                      >
-                        {statusLabelMap[doc.parse_status] || doc.parse_status}
-                      </Badge>
-                    )}
-                  </div>
+                  <Badge
+                    variant={
+                      isCompleted ? 'success' :
+                      isFailed ? 'coral' :
+                      isAwaitingSelection ? 'warning' :
+                      'default'
+                    }
+                  >
+                    {statusLabelMap[doc.parse_status] || doc.parse_status}
+                  </Badge>
                 </div>
-                <div className={sidebar ? 'flex items-center gap-2 mt-0.5' : 'flex items-center gap-4 mt-0.5'}>
+                <div className="flex items-center gap-4 mt-0.5">
                   {doc.word_count != null && doc.word_count > 0 && (
                     <span className="text-[11px] text-muted-soft">{doc.word_count.toLocaleString()} 词</span>
                   )}
-                  <span className="text-[11px] text-muted-soft">{dayjs(doc.created_at).format(sidebar ? 'MM-DD HH:mm' : 'YYYY-MM-DD HH:mm')}</span>
+                  <span className="text-[11px] text-muted-soft">{dayjs(doc.created_at).format('YYYY-MM-DD HH:mm')}</span>
                 </div>
               </div>
 
               {/* Actions (hidden in select mode) */}
               {!selectMode && (
-              <div className="flex items-center gap-1 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
-                {/* Sidebar: compact actions */}
-                {sidebar && (
-                  <>
-                    {/* Delete with confirmation */}
-                    {showDeleteConfirm ? (
-                      <div className="flex items-center gap-1 animate-fade-in">
-                        <button
-                          className="px-1.5 py-0.5 text-[11px] font-medium text-error hover:bg-error/10 rounded"
-                          onClick={() => handleDelete(doc.id)}
-                        >
-                          删除
-                        </button>
-                        <button
-                          className="px-1.5 py-0.5 text-[11px] text-muted-soft hover:bg-surface-card rounded"
-                          onClick={() => setConfirmDelete(null)}
-                        >
-                          取消
-                        </button>
-                      </div>
-                    ) : (
-                      <button
-                        className="w-5 h-5 flex items-center justify-center rounded text-muted-soft hover:text-error hover:bg-error/5 md:opacity-0 md:group-hover:opacity-100 transition-all"
-                        onClick={() => setConfirmDelete(doc.id)}
-                        title="删除"
-                      >
-                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                          <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />
-                        </svg>
-                      </button>
-                    )}
-                  </>
-                )}
+                <div className="flex items-center gap-1 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
+                  {isAwaitingSelection && (
+                    <Button variant="primary" size="sm" loading={actionLoading === doc.id}
+                      onClick={() => {
+                        setActionLoading(doc.id);
+                        navigate(`/?resume=${doc.id}`);
+                      }}>
+                      继续选页
+                    </Button>
+                  )}
+                  {isFailed && (
+                    <Button variant="primary" size="sm" loading={actionLoading === doc.id}
+                      onClick={() => handleRetry(doc.id)}>
+                      重试
+                    </Button>
+                  )}
 
-                {/* Non-sidebar: full actions */}
-                {!sidebar && (
-                  <>
-                    {isAwaitingSelection && (
-                      <Button variant="primary" size="sm" loading={actionLoading === doc.id}
-                        onClick={() => {
-                          setActionLoading(doc.id);
-                          navigate(`/?resume=${doc.id}`);
-                        }}>
-                        继续选页
-                      </Button>
-                    )}
-                    {isFailed && (
-                      <Button variant="primary" size="sm" loading={actionLoading === doc.id}
-                        onClick={() => handleRetry(doc.id)}>
-                        重试
-                      </Button>
-                    )}
-
-                    {/* Delete with confirmation */}
-                    {showDeleteConfirm ? (
-                      <div className="flex items-center gap-1 animate-fade-in">
-                        <span className="text-xs text-error">确定删除？</span>
-                        <button
-                          className="px-2 py-1 text-xs font-medium text-error hover:bg-error/10 rounded"
-                          onClick={() => handleDelete(doc.id)}
-                        >
-                          删除
-                        </button>
-                        <button
-                          className="px-2 py-1 text-xs text-muted hover:bg-surface-card rounded"
-                          onClick={() => setConfirmDelete(null)}
-                        >
-                          取消
-                        </button>
-                      </div>
-                    ) : (
+                  {/* Delete with confirmation */}
+                  {showDeleteConfirm ? (
+                    <div className="flex items-center gap-1 animate-fade-in">
+                      <span className="text-xs text-error">确定删除？</span>
                       <button
-                        className="w-7 h-7 flex items-center justify-center rounded-md text-muted-soft hover:text-error hover:bg-error/5 md:opacity-0 md:group-hover:opacity-100 transition-all"
-                        onClick={() => setConfirmDelete(doc.id)}
-                        title="删除"
+                        className="px-2 py-1 text-xs font-medium text-error hover:bg-error/10 rounded"
+                        onClick={() => handleDelete(doc.id)}
                       >
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                          <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />
-                        </svg>
+                        删除
                       </button>
-                    )}
-                  </>
-                )}
-              </div>
+                      <button
+                        className="px-2 py-1 text-xs text-muted hover:bg-surface-card rounded"
+                        onClick={() => setConfirmDelete(null)}
+                      >
+                        取消
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      className="w-7 h-7 flex items-center justify-center rounded-md text-muted-soft hover:text-error hover:bg-error/5 md:opacity-0 md:group-hover:opacity-100 transition-all"
+                      onClick={() => setConfirmDelete(doc.id)}
+                      title="删除"
+                    >
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                        <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />
+                      </svg>
+                    </button>
+                  )}
+                </div>
               )}
             </div>
           );
         })}
       </div>
+
+      {/* Load more (full list) */}
+      {showLoadMore && documents.length < total && (
+        <div className="flex justify-center pt-4">
+          <Button variant="ghost" size="sm" loading={loadingMore} onClick={loadMore}>
+            加载更多（共 {total} 篇）
+          </Button>
+        </div>
+      )}
     </div>
   );
 }

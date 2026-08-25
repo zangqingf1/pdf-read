@@ -9,12 +9,12 @@ function formatDate(iso: string): string {
 
 function Skeleton() {
   return (
-    <div className="h-full bg-surface-card border border-hairline shadow-soft rounded-lg p-6 md:p-8 relative overflow-hidden">
-      <div className="w-24 h-3 bg-canvas-soft rounded animate-pulse mb-6" />
-      <div className="w-3/4 h-5 bg-canvas-soft rounded animate-pulse mb-2" />
-      <div className="w-2/3 h-5 bg-canvas-soft rounded animate-pulse mb-5" />
-      <div className="w-1/2 h-4 bg-canvas-soft rounded animate-pulse" />
-      <div className="w-16 h-3 bg-canvas-soft rounded animate-pulse mt-5" />
+    <div className="h-full rounded-xl border border-hairline-soft shadow-soft bg-gradient-to-br from-[#fdf4ec] via-[#faf1e6] to-[#f6e8d7] p-6 md:p-8 relative overflow-hidden">
+      <div className="w-28 h-3 bg-primary/10 rounded animate-pulse mb-6" />
+      <div className="w-3/4 h-6 bg-primary/10 rounded animate-pulse mb-2.5" />
+      <div className="w-2/3 h-6 bg-primary/10 rounded animate-pulse mb-5" />
+      <div className="w-1/2 h-3.5 bg-primary/10 rounded animate-pulse" />
+      <div className="w-24 h-3 bg-primary/10 rounded animate-pulse mt-5 ml-auto" />
     </div>
   );
 }
@@ -41,42 +41,46 @@ export default function DailyQuote() {
 
   // 固定高度占位：骨架屏与卡片同高，加载完成不引起下方内容跳动
   return (
-    <div className="mb-12 h-[300px] md:h-[250px]">
+    <div className="mb-6 h-[200px] md:h-[240px]">
       {!loaded ? (
         <Skeleton />
       ) : quote ? (
-        <div className="h-full overflow-hidden bg-surface-card border border-hairline shadow-soft rounded-lg px-6 py-5 md:p-8 relative animate-slide-up flex flex-col justify-center">
-          {/* 装饰引号 */}
+        <div className="h-full overflow-hidden rounded-xl border border-hairline-soft shadow-soft bg-gradient-to-br from-[#fdf4ec] via-[#faf1e6] to-[#f5e6d3] px-6 py-5 md:px-10 md:py-7 relative animate-slide-up flex flex-col">
+          {/* 装饰大引号 */}
           <svg
-            className="absolute -top-2 -right-3 md:-top-4 md:-right-4 text-primary/10 pointer-events-none"
-            width="96"
-            height="96"
-            viewBox="0 0 24 24"
-            fill="currentColor"
+            className="absolute top-6 right-8 md:top-8 md:right-12 pointer-events-none"
+            width="84"
+            height="63"
+            viewBox="0 0 110 82"
+            fill="#eeddc8"
             aria-hidden="true"
           >
-            <path d="M9.6 5C6.4 6.4 4.6 8.9 4.6 12.3c0 2.3 1.4 3.9 3.3 3.9 1.7 0 3-1.3 3-3 0-1.6-1.1-2.8-2.7-2.8-.3 0-.7.1-.8.1.3-1.5 1.5-3.1 3.1-4.1L9.6 5zm9.7 0c-3.2 1.4-5 3.9-5 7.3 0 2.3 1.4 3.9 3.3 3.9 1.7 0 3-1.3 3-3 0-1.6-1.1-2.8-2.7-2.8-.3 0-.7.1-.8.1.3-1.5 1.5-3.1 3.1-4.1L19.3 5z" />
+            <path d="M30.2 2C15.9 8.6 7 20.4 7 35.4c0 11.2 6.9 19 16.2 19 8.4 0 14.8-6.3 14.8-14.6 0-7.8-5.5-13.6-13.2-13.6-1.5 0-3.4.3-4 .5C22.5 18 29 9.8 37.2 4.9L30.2 2zm56 0C71.9 8.6 63 20.4 63 35.4c0 11.2 6.9 19 16.2 19 8.4 0 14.8-6.3 14.8-14.6 0-7.8-5.5-13.6-13.2-13.6-1.5 0-3.4.3-4 .5C78.5 18 85 9.8 93.2 4.9L86.2 2z" transform="translate(0 22)" />
           </svg>
 
-          <div className="flex items-center gap-2 mb-5">
-            <span className="text-[11px] font-medium text-primary tracking-widest uppercase">
+          {/* 标签行：每日一句 — 日期 */}
+          <div className="flex items-center gap-3 mb-auto">
+            <span className="text-[13px] font-semibold text-primary tracking-wide">
               每日一句
             </span>
-            <span className="h-px flex-1 max-w-[80px] bg-primary/20" />
-            <span className="text-[11px] text-muted-soft">{formatDate(quote.date)}</span>
+            <span className="h-px w-12 bg-primary/25" />
+            <span className="text-xs text-muted">{formatDate(quote.date)}</span>
           </div>
 
-          <p className="text-[clamp(1.25rem,2vw,1.5rem)] font-display italic text-ink leading-snug mb-3 md:pr-24">
+          {/* 英文引句 */}
+          <p className="font-display italic text-ink leading-[1.35] text-[clamp(1.15rem,1.8vw,1.5rem)] my-3 md:pr-40">
             {quote.en}
           </p>
 
-          <p className="flex items-start gap-2 text-chinese text-sm text-muted mb-4 md:pr-24">
-            <span className="flex-shrink-0 self-stretch w-0.5 rounded-full bg-primary/40" />
+          {/* 中文译文 */}
+          <p className="flex items-start gap-2.5 text-chinese text-[13px] text-muted mb-auto md:pr-40">
+            <span className="flex-shrink-0 self-stretch w-[3px] rounded-full bg-primary/60" />
             <span>{quote.zh}</span>
           </p>
 
-          <p className="text-[13px] text-muted-soft text-right">
-            —— {quote.author}
+          {/* 作者 */}
+          <p className="text-[13px] text-muted text-right mt-4">
+            — {quote.author}
           </p>
         </div>
       ) : null}

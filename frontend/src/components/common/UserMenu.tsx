@@ -34,7 +34,7 @@ export default function UserMenu() {
         className="w-full flex items-center gap-2 px-2 py-2 rounded-lg text-sm
                    hover:bg-surface-card transition-colors duration-150"
       >
-        <span className="w-7 h-7 rounded-full bg-primary/15 text-primary flex items-center justify-center text-xs font-medium flex-shrink-0 overflow-hidden">
+        <span className="w-7 h-7 rounded-full bg-primary text-on-primary flex items-center justify-center text-xs font-semibold flex-shrink-0 overflow-hidden">
           {user.avatar_url ? (
             <img
               src={avatarUrl(user.id)}
@@ -49,8 +49,8 @@ export default function UserMenu() {
           )}
         </span>
         <span className="truncate text-left leading-tight min-w-0">
-          <span className="block text-[13px] font-medium text-ink truncate">{displayName}</span>
-          <span className="block text-[11px] text-muted-soft truncate">{user.email}</span>
+          <span className="block text-xs font-medium text-ink truncate">{displayName}</span>
+          <span className="block text-[10px] text-muted-soft truncate">{user.email}</span>
         </span>
         <svg
           width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"

@@ -233,7 +233,7 @@ export default function PDFUploader({
   // ── Completed State ──
   if (phase === 'completed' && taskId) {
     return (
-      <div className="text-center py-8">
+      <div className="bg-surface-overlay border border-hairline-soft rounded-xl shadow-soft px-6 py-12 text-center">
         <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-success/15 flex items-center justify-center">
           <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="var(--success)" strokeWidth="2">
             <path d="M20 6L9 17l-5-5" />
@@ -261,7 +261,7 @@ export default function PDFUploader({
   // ── Failed State ──
   if (phase === 'failed') {
     return (
-      <div className="text-center py-8">
+      <div className="bg-surface-overlay border border-hairline-soft rounded-xl shadow-soft px-6 py-12 text-center">
         <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-error/15 flex items-center justify-center">
           <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="var(--error)" strokeWidth="2">
             <circle cx="12" cy="12" r="10" />
@@ -280,125 +280,124 @@ export default function PDFUploader({
   // ── Idle / Uploading / Parsing State ──
   const isBusy = phase === 'uploading' || phase === 'parsing';
 
+  const renderTab = (mode: 'file' | 'url', label: string) => (
+    <button
+      type="button"
+      onClick={() => setInputMode(mode)}
+      className={[
+        'relative px-1 py-3 text-[13px] transition-colors',
+        inputMode === mode
+          ? 'font-semibold text-ink'
+          : 'font-medium text-muted hover:text-body',
+      ].join(' ')}
+    >
+      {label}
+      {inputMode === mode && (
+        <span className="absolute left-0 right-0 bottom-0 h-[2px] bg-primary rounded-full" />
+      )}
+    </button>
+  );
+
   return (
-    <div>
-      {/* 输入方式切换：上传文件 / 粘贴链接 */}
-      <div className="flex gap-1 mb-4 bg-canvas p-1 rounded-lg w-fit">
-        <button
-          type="button"
-          onClick={() => setInputMode('file')}
-          className={[
-            'px-4 py-1.5 text-sm font-medium rounded-md transition-colors',
-            inputMode === 'file'
-              ? 'bg-surface-card text-ink shadow-sm'
-              : 'text-muted hover:text-body',
-          ].join(' ')}
-        >
-          上传文件
-        </button>
-        <button
-          type="button"
-          onClick={() => setInputMode('url')}
-          className={[
-            'px-4 py-1.5 text-sm font-medium rounded-md transition-colors',
-            inputMode === 'url'
-              ? 'bg-surface-card text-ink shadow-sm'
-              : 'text-muted hover:text-body',
-          ].join(' ')}
-        >
-          粘贴链接
-        </button>
+    <div className="bg-surface-overlay border border-hairline-soft rounded-xl shadow-soft overflow-hidden">
+      {/* Tab 头：上传文件 / 粘贴链接 */}
+      <div className="flex items-center gap-7 px-6 md:px-8 border-b border-hairline-soft">
+        {renderTab('file', '上传文件')}
+        {renderTab('url', '粘贴链接')}
       </div>
 
-      {inputMode === 'file' ? (
-        /* Upload Zone */
-        <div
-          onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-          onDragLeave={() => setDragOver(false)}
-          onDrop={handleDrop}
-          onClick={() => !isBusy && fileInputRef.current?.click()}
-          className={[
-            'upload-zone flex flex-col items-center justify-center p-6 md:p-10 rounded-lg border-2 border-dashed cursor-pointer transition-colors animate-fade-in',
-            dragOver ? 'upload-zone-dragover' : 'border-hairline bg-surface-card shadow-soft',
-            isBusy ? 'opacity-50 pointer-events-none' : '',
-          ].join(' ')}
-        >
-          {/* Upload icon */}
-          <div className="w-14 h-14 mb-4 rounded-full bg-canvas flex items-center justify-center">
-            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" strokeWidth="1.5" strokeLinecap="round">
-              <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
-              <path d="M14 2v6h6M12 18v-6M9 15l3-3 3 3" />
-            </svg>
-          </div>
-          <p className="text-base text-body-strong mb-1">
-            点击或拖拽文件到此区域上传
-          </p>
-          <p className="text-sm text-muted">
-            支持 PDF、Word、PPT、Excel、图片与 HTML，最大 50MB
-          </p>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept={SUPPORTED_ACCEPT}
-            className="hidden"
-            onChange={handleInputChange}
-          />
-        </div>
-      ) : (
-        /* URL Zone */
-        <div className="p-6 rounded-lg border border-hairline bg-surface-card">
-          <div className="flex flex-col sm:flex-row gap-3">
+      <div className="p-4 md:p-6">
+        {inputMode === 'file' ? (
+          /* Upload Zone */
+          <div
+            onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+            onDragLeave={() => setDragOver(false)}
+            onDrop={handleDrop}
+            onClick={() => !isBusy && fileInputRef.current?.click()}
+            className={[
+              'upload-zone flex flex-col items-center justify-center py-8 md:py-10 px-6 rounded-lg border border-dashed cursor-pointer transition-colors animate-fade-in',
+              dragOver ? 'upload-zone-dragover' : 'border-hairline-strong bg-canvas/60',
+              isBusy ? 'opacity-50 pointer-events-none' : 'hover:border-primary/50 hover:bg-canvas',
+            ].join(' ')}
+          >
+            {/* Upload icon */}
+            <div className="w-12 h-12 mb-3.5 rounded-full bg-primary/10 flex items-center justify-center">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
+                <path d="M14 2v6h6M12 18v-6M9 15l3-3 3 3" />
+              </svg>
+            </div>
+            <p className="text-sm font-semibold text-ink mb-1">
+              点击或拖拽文件到此区域上传
+            </p>
+            <p className="text-[13px] text-muted">
+              支持 PDF、Word、PPT、Excel、图片与 HTML，最大 50MB
+            </p>
             <input
-              type="text"
-              value={urlInput}
-              onChange={(e) => setUrlInput(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter' && !isBusy) handleUrlSubmit(); }}
-              placeholder="https:// 粘贴文件或网页链接"
-              disabled={isBusy}
-              className="flex-1 px-3 py-2 text-sm rounded-md border border-hairline bg-canvas focus:outline-none focus:border-primary"
-            />
-            <Button
-              variant="primary"
-              onClick={handleUrlSubmit}
-              disabled={isBusy || !urlInput.trim()}
-            >
-              解析链接
-            </Button>
-          </div>
-          <p className="text-sm text-muted mt-3">
-            支持文件链接（.pdf/.docx/.pptx/图片等）与网页文章链接，最大 50MB
-          </p>
-        </div>
-      )}
-
-      {/* Progress */}
-      {isBusy && (
-        <div className="mt-6 p-5 bg-surface-card rounded-lg border border-hairline">
-          <div className="flex items-center gap-3 mb-3">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--error)" strokeWidth="1.5">
-              <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
-              <path d="M14 2v6h6" />
-            </svg>
-            <span className="text-sm font-medium text-body-strong">
-              {phase === 'uploading' ? '正在上传文件...' : '正在解析文档正文...'}
-            </span>
-          </div>
-
-          {/* Progress bar */}
-          <div className="w-full h-1.5 bg-canvas rounded-full overflow-hidden">
-            <div
-              className="h-full bg-primary rounded-full transition-all duration-500"
-              style={{ width: `${parseProgress}%` }}
+              ref={fileInputRef}
+              type="file"
+              accept={SUPPORTED_ACCEPT}
+              className="hidden"
+              onChange={handleInputChange}
             />
           </div>
+        ) : (
+          /* URL Zone */
+          <div className="py-1">
+            <div className="flex flex-col sm:flex-row gap-3">
+              <input
+                type="text"
+                value={urlInput}
+                onChange={(e) => setUrlInput(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter' && !isBusy) handleUrlSubmit(); }}
+                placeholder="https:// 粘贴文件或网页链接"
+                disabled={isBusy}
+                className="flex-1 px-3.5 py-2 text-[13px] rounded-md border border-hairline bg-canvas/60 focus:outline-none focus:border-primary"
+              />
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={handleUrlSubmit}
+                disabled={isBusy || !urlInput.trim()}
+              >
+                解析链接
+              </Button>
+            </div>
+            <p className="text-[13px] text-muted mt-2.5">
+              支持文件链接（.pdf/.docx/.pptx/图片等）与网页文章链接，最大 50MB
+            </p>
+          </div>
+        )}
 
-          <p className="text-xs text-muted mt-2">
-            {phase === 'uploading'
-              ? '上传中...'
-              : '正在进行版面分析，提取正文内容，过滤页眉页脚和广告...'}
-          </p>
-        </div>
-      )}
+        {/* Progress */}
+        {isBusy && (
+          <div className="mt-5 p-5 bg-canvas/60 rounded-lg border border-hairline">
+            <div className="flex items-center gap-3 mb-3">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--error)" strokeWidth="1.5">
+                <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
+                <path d="M14 2v6h6" />
+              </svg>
+              <span className="text-sm font-medium text-body-strong">
+                {phase === 'uploading' ? '正在上传文件...' : '正在解析文档正文...'}
+              </span>
+            </div>
+
+            {/* Progress bar */}
+            <div className="w-full h-1.5 bg-surface-card rounded-full overflow-hidden">
+              <div
+                className="h-full bg-primary rounded-full transition-all duration-500"
+                style={{ width: `${parseProgress}%` }}
+              />
+            </div>
+
+            <p className="text-xs text-muted mt-2">
+              {phase === 'uploading'
+                ? '上传中...'
+                : '正在进行版面分析，提取正文内容，过滤页眉页脚和广告...'}
+            </p>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
