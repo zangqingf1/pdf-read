@@ -65,7 +65,7 @@ function StreamingWordCard({
 
   return (
     <div
-      className="bg-surface-overlay border border-primary/25 rounded-lg p-3.5 mb-3 shadow-pop"
+      className="bg-reader-surface border border-primary/25 rounded-lg p-3.5 mb-3 shadow-pop"
       data-word-key={`${paragraphIndex}:${word.toLowerCase()}`}
       data-paragraph-index={paragraphIndex}
     >
@@ -81,7 +81,7 @@ function StreamingWordCard({
       {/* Raw AI output — monospace, scrollable, typewriter feel */}
       <div
         ref={rawTextRef}
-        className="bg-canvas border border-hairline rounded-md p-2.5 max-h-[200px] overflow-y-auto"
+        className="bg-reader-surface border border-reader-line rounded-md p-2.5 max-h-[200px] overflow-y-auto"
       >
         <pre className="text-xs font-mono text-body-strong whitespace-pre-wrap break-words m-0 leading-relaxed">
           {rawText || (
@@ -122,7 +122,7 @@ function WordCard({
 
   return (
     <div
-      className="bg-surface-overlay border border-hairline-soft rounded-lg p-3.5 mb-3 shadow-soft"
+      className="bg-reader-surface border border-reader-line-soft rounded-lg p-3.5 mb-3 shadow-soft"
       data-word-key={`${analysis.paragraph_index}:${analysis.word.toLowerCase()}`}
       data-paragraph-index={analysis.paragraph_index}
     >
@@ -206,7 +206,7 @@ function WordCard({
 
       {/* Example Sentence */}
       {analysis.example_sentence && (
-        <div className="mb-2 pt-2 border-t border-hairline">
+        <div className="mb-2 pt-2 border-t border-reader-line">
           <span className="text-muted text-[0.75em] block mb-1">例句</span>
           <p className="text-body leading-relaxed italic text-xs m-0 font-reading">
             {analysis.example_sentence}
@@ -244,7 +244,7 @@ function StreamingSentenceCard({
 
   return (
     <div
-      className="bg-surface-overlay border border-primary/25 rounded-lg p-3.5 mb-3 shadow-pop"
+      className="bg-reader-surface border border-primary/25 rounded-lg p-3.5 mb-3 shadow-pop"
       data-sentence-key={`${paragraphIndex}:${sentenceIndex}`}
       data-paragraph-index={paragraphIndex}
     >
@@ -262,7 +262,7 @@ function StreamingSentenceCard({
       {/* Raw AI output — monospace, scrollable, typewriter feel */}
       <div
         ref={rawTextRef}
-        className="bg-canvas border border-hairline rounded-md p-2.5 max-h-[200px] overflow-y-auto"
+        className="bg-reader-surface border border-reader-line rounded-md p-2.5 max-h-[200px] overflow-y-auto"
       >
         <pre className="text-xs font-mono text-body-strong whitespace-pre-wrap break-words m-0 leading-relaxed">
           {rawText || (
@@ -389,7 +389,7 @@ function SentenceCard({
 
   return (
     <div
-      className="bg-surface-overlay border border-hairline-soft rounded-lg p-3.5 mb-3 shadow-soft"
+      className="bg-reader-surface border border-reader-line-soft rounded-lg p-3.5 mb-3 shadow-soft"
       data-sentence-key={`${analysis.paragraph_index}:${analysis.sentence_index}`}
       data-paragraph-index={analysis.paragraph_index}
     >
@@ -702,9 +702,9 @@ export default function StudyPanel({
   }, [activeTab, documentId, clearWordAnalyses, clearSentenceAnalyses]);
 
   return (
-    <div id="study-panel" className="flex-1 min-h-0 flex flex-col border-l border-hairline transition-colors duration-300" style={{ backgroundColor: bgColorValue }}>
+    <div id="study-panel" className="flex-1 min-h-0 flex flex-col border-l border-reader-line transition-colors duration-300" style={{ backgroundColor: bgColorValue }}>
       {/* Header — hidden on mobile (StudySheet provides its own header) */}
-      <div className="hidden md:flex items-center justify-between px-4 py-3 border-b border-hairline flex-shrink-0">
+      <div className="hidden md:flex items-center justify-between px-4 py-3 border-b border-reader-line flex-shrink-0">
         <div className="flex items-center gap-2">
           {/* Close panel button — 左侧双箭头 */}
           {onClose && (
@@ -776,7 +776,7 @@ export default function StudyPanel({
 
       {/* Progress indicator with live count */}
       {isAnalyzing && analysisProgress && (
-        <div className="px-4 py-2 bg-surface-card border-b border-hairline flex-shrink-0">
+        <div className="px-4 py-2 bg-reader-surface border-b border-reader-line flex-shrink-0">
           <div className="flex items-center gap-2 mb-1.5">
             <svg className="animate-spin" width="14" height="14" viewBox="0 0 24 24" fill="none">
               <circle cx="12" cy="12" r="10" stroke="var(--primary)" strokeWidth="4" opacity="0.25" />
@@ -797,7 +797,7 @@ export default function StudyPanel({
       )}
       {/* Fallback: old-style indicator when progress tracking not available */}
       {isAnalyzing && !analysisProgress && pendingWordCount > 0 && (
-        <div className="px-4 py-2 bg-surface-card border-b border-hairline flex items-center gap-2 flex-shrink-0">
+        <div className="px-4 py-2 bg-reader-surface border-b border-reader-line flex items-center gap-2 flex-shrink-0">
           <svg className="animate-spin" width="14" height="14" viewBox="0 0 24 24" fill="none">
             <circle cx="12" cy="12" r="10" stroke="var(--primary)" strokeWidth="4" opacity="0.25" />
             <path d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" fill="var(--primary)" opacity="0.75" />
@@ -806,7 +806,7 @@ export default function StudyPanel({
         </div>
       )}
       {isAnalyzingSentences && pendingSentenceCount > 0 && (
-        <div className="px-4 py-2 bg-surface-card border-b border-hairline flex items-center gap-2 flex-shrink-0">
+        <div className="px-4 py-2 bg-reader-surface border-b border-reader-line flex items-center gap-2 flex-shrink-0">
           <svg className="animate-spin" width="14" height="14" viewBox="0 0 24 24" fill="none">
             <circle cx="12" cy="12" r="10" stroke="var(--primary)" strokeWidth="4" opacity="0.25" />
             <path d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" fill="var(--primary)" opacity="0.75" />
@@ -816,7 +816,7 @@ export default function StudyPanel({
       )}
 
       {/* Tabs */}
-      <div className="flex border-b border-hairline flex-shrink-0 px-4">
+      <div className="flex border-b border-reader-line flex-shrink-0 px-4">
         <button
           onClick={() => setActiveTab('words')}
           className={[

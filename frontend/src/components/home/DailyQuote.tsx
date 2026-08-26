@@ -9,7 +9,7 @@ function formatDate(iso: string): string {
 
 function Skeleton() {
   return (
-    <div className="h-full rounded-xl border border-hairline-soft shadow-soft bg-gradient-to-br from-[#fdf4ec] via-[#faf1e6] to-[#f6e8d7] p-6 md:p-8 relative overflow-hidden">
+    <div className="min-h-[200px] md:min-h-[240px] rounded-xl border border-hairline-soft shadow-soft bg-gradient-to-br from-[#fdf4ec] via-[#faf1e6] to-[#f6e8d7] p-6 md:p-8 relative overflow-hidden">
       <div className="w-28 h-3 bg-primary/10 rounded animate-pulse mb-6" />
       <div className="w-3/4 h-6 bg-primary/10 rounded animate-pulse mb-2.5" />
       <div className="w-2/3 h-6 bg-primary/10 rounded animate-pulse mb-5" />
@@ -39,16 +39,16 @@ export default function DailyQuote() {
     };
   }, []);
 
-  // 固定高度占位：骨架屏与卡片同高，加载完成不引起下方内容跳动
+  // 最小高度占位：骨架屏与卡片同高，加载完成不引起下方内容跳动；内容超出时卡片自然撑开，不裁切
   return (
-    <div className="mb-6 h-[200px] md:h-[240px]">
+    <div className="mb-6">
       {!loaded ? (
         <Skeleton />
       ) : quote ? (
-        <div className="h-full overflow-hidden rounded-xl border border-hairline-soft shadow-soft bg-gradient-to-br from-[#fdf4ec] via-[#faf1e6] to-[#f5e6d3] px-6 py-5 md:px-10 md:py-7 relative animate-slide-up flex flex-col">
+        <div className="min-h-[200px] md:min-h-[240px] overflow-hidden rounded-xl border border-hairline-soft shadow-soft bg-gradient-to-br from-[#fdf4ec] via-[#faf1e6] to-[#f5e6d3] px-6 py-5 md:px-10 md:py-7 relative animate-slide-up flex flex-col">
           {/* 装饰大引号 */}
           <svg
-            className="absolute top-4 right-4 w-14 h-auto pointer-events-none md:top-8 md:right-12 md:w-[84px]"
+            className="absolute top-4 right-4 w-12 h-auto pointer-events-none sm:w-14 md:top-8 md:right-12 md:w-[84px]"
             viewBox="0 0 110 82"
             fill="#eeddc8"
             aria-hidden="true"
@@ -66,7 +66,7 @@ export default function DailyQuote() {
           </div>
 
           {/* 英文引句 */}
-          <p className="font-display italic text-ink leading-[1.35] text-[clamp(1.15rem,1.8vw,1.5rem)] my-3 pr-20 md:pr-40">
+          <p className="font-display italic text-ink leading-[1.35] text-[clamp(1.15rem,1.8vw,1.5rem)] my-3 pr-16 sm:pr-20 md:pr-40">
             {quote.en}
           </p>
 

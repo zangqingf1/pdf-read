@@ -27,12 +27,12 @@ export default function UserMenu() {
   const displayName = user.nickname || user.email.split('@')[0];
 
   return (
-    <div className="relative" ref={ref}>
+    <div className="relative h-full w-full" ref={ref}>
       {/* ── Trigger ── */}
       <button
         onClick={() => setOpen(!open)}
-        className="w-full flex items-center gap-2 px-2 py-2 rounded-lg text-sm
-                   hover:bg-surface-card transition-colors duration-150"
+        className="w-full h-full min-h-0 flex items-center gap-2 px-2 rounded-lg text-sm
+                   hover:bg-surface-card transition-colors duration-150 group"
       >
         <span className="w-7 h-7 rounded-full bg-primary text-on-primary flex items-center justify-center text-xs font-semibold flex-shrink-0 overflow-hidden">
           {user.avatar_url ? (
@@ -48,14 +48,18 @@ export default function UserMenu() {
             displayName.charAt(0).toUpperCase()
           )}
         </span>
-        <span className="truncate text-left leading-tight min-w-0">
+        <span className="flex-1 truncate text-left leading-tight min-w-0">
           <span className="block text-xs font-medium text-ink truncate">{displayName}</span>
           <span className="block text-[10px] text-muted-soft truncate">{user.email}</span>
         </span>
         <svg
           width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
           strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
-          className={`ml-auto flex-shrink-0 text-muted-soft transition-transform duration-200 ${open ? 'rotate-180' : ''}`}
+          className={`flex-shrink-0 text-muted-soft transition-all duration-200 ${
+            open
+              ? 'rotate-180 opacity-100'
+              : 'opacity-100 group-hover:opacity-100 [@media(hover:hover)]:opacity-0'
+          }`}
         >
           <path d="M6 9l6 6 6-6" />
         </svg>

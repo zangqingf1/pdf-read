@@ -22,6 +22,7 @@ import { paginate, type LineInfo, type MeasuredBlock, type PagePlan } from './pa
 import { PAPER_SIZES, mmToPx, PAGE_PADDING, COL_GAP, CONT_GAP, ZH_GAP } from './exportTypes';
 import type { ExportData } from './data';
 import type { ExportPreferences } from './exportTypes';
+import { useReaderStore } from '../stores/readerStore';
 
 /**
  * 元素内全部文本节点（文档序）。token 高亮 span、首字下沉等内联样式全部保留，
@@ -154,6 +155,7 @@ function collectTrack(
 // ── 测量树 ──
 function MeasureTree({ data, prefs, ctx }: { data: ExportData; prefs: ExportPreferences; ctx: BlockCtx }) {
   const single = prefs.singleColumn;
+  const textAlign = useReaderStore((s) => s.textAlign);
   const leftDefs = single ? collectSingleBlocks(data, prefs) : collectLeftBlocks(data, prefs);
   const rightDefs = single ? [] : collectRightBlocks(data, prefs);
   const paper = PAPER_SIZES[prefs.paperSize];
@@ -162,7 +164,8 @@ function MeasureTree({ data, prefs, ctx }: { data: ExportData; prefs: ExportPref
   const rightW = single ? 0 : contentW - COL_GAP - leftW;
 
   // 与 ExportPages 完全一致的渲染上下文：.export-doc 类（box-sizing/font-family/主题变量）
-  // + --fs-* 字号变量。缺一都会让测量树回退 16px 默认字号，导致预算与实际渲染系统性偏差
+  // + --fs-* 字号变量 + --ta-en 对齐变量（justify 不影响行高，但保持镜像一致）。
+  // 缺一都会让测量树回退默认样式，导致预算与实际渲染系统性偏差
   // （字号偏小 → 预算偏大 → 空白；字号偏大 → 预算偏小 → 溢出裁剪）。
   const fsStyle = {
     '--fs-text': `${prefs.fontSizeText}px`,
@@ -170,6 +173,7 @@ function MeasureTree({ data, prefs, ctx }: { data: ExportData; prefs: ExportPref
     '--fs-summary': `${prefs.fontSizeSummary}px`,
     '--fs-word': `${prefs.fontSizeWord}px`,
     '--fs-sentence': `${prefs.fontSizeSentence}px`,
+    '--ta-en': textAlign === 'justify' ? 'justify' : 'left',
   } as CSSProperties;
 
   // 卡片碎片副本（超高卡片拆分测量用；absolute + host visibility:hidden，不占流可测量）。

@@ -193,7 +193,7 @@ export default function DocumentSummary({ apiKey, onRequireApiKey, provider }: D
   const hasDraft = summaryDraft.trim().length > 0;
 
   return (
-    <section className="mt-10 pt-6 border-t border-hairline-soft">
+    <section className="mt-10 pt-6 border-t border-reader-line-soft">
       <div className="flex items-center gap-3 mb-2">
         <span className="text-[13px] font-semibold text-primary tracking-wide">读后回顾</span>
         <span className="h-px w-12 bg-primary/25" />
@@ -218,7 +218,7 @@ export default function DocumentSummary({ apiKey, onRequireApiKey, provider }: D
       {isSummarizing && (
         <div
           ref={streamRef}
-          className="mt-3 border border-primary/25 bg-surface-overlay rounded-lg p-3.5 max-h-64 overflow-y-auto shadow-pop"
+          className="mt-3 border border-primary/25 bg-reader-surface rounded-lg p-3.5 max-h-64 overflow-y-auto shadow-pop"
         >
           <span className="text-xs text-muted">正在生成…</span>
           <p className="whitespace-pre-wrap text-sm text-ink mt-1">

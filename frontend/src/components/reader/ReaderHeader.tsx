@@ -15,7 +15,7 @@ export default function ReaderHeader() {
 
   return (
     <header
-      className="sticky top-0 z-50 border-b border-hairline-soft h-[52px] px-4 md:px-6 flex items-center justify-between flex-shrink-0 transition-colors duration-300 backdrop-blur-md"
+      className="sticky top-0 z-50 border-b border-reader-line-soft h-[52px] px-4 md:px-6 flex items-center justify-between flex-shrink-0 transition-colors duration-300 backdrop-blur-md"
       style={{ backgroundColor: `color-mix(in srgb, ${bgColorValue} 88%, transparent)` }}
     >
       <div className="flex items-center gap-2 md:gap-6 min-w-0 flex-1">

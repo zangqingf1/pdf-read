@@ -1,6 +1,6 @@
 import { useEffect, useCallback, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { useReaderStore, BG_COLORS, FONT_FAMILIES, LINE_HEIGHTS, ACCENTS, FONT_SIZE_MIN, FONT_SIZE_MAX, WORD_PANEL_FONT_SIZE_MIN, WORD_PANEL_FONT_SIZE_MAX } from '../../stores/readerStore';
+import { useReaderStore, BG_COLORS, FONT_FAMILIES, LINE_HEIGHTS, ACCENTS, TEXT_ALIGNS, FONT_SIZE_MIN, FONT_SIZE_MAX, WORD_PANEL_FONT_SIZE_MIN, WORD_PANEL_FONT_SIZE_MAX } from '../../stores/readerStore';
 import { EXAM_TAGS } from '../../constants/examTags';
 
 interface TypographyDrawerProps {
@@ -16,6 +16,7 @@ export default function TypographyDrawer({ open, onClose }: TypographyDrawerProp
     fontSize, increaseFontSize, decreaseFontSize,
     wordPanelFontSize, increaseWordPanelFontSize, decreaseWordPanelFontSize,
     setBgColor, setFontFamily, setLineHeight,
+    textAlign, setTextAlign,
     accent, setAccent,
     syllabusTags, toggleSyllabusTag,
   } = useReaderStore();
@@ -232,6 +233,27 @@ export default function TypographyDrawer({ open, onClose }: TypographyDrawerProp
                 </button>
               ))}
             </div>
+          </section>
+
+          {/* ── Text Align ── */}
+          <section>
+            <h4 className="text-xs font-medium text-muted-soft uppercase tracking-wide mb-3">对齐方式</h4>
+            <div className="flex gap-2">
+              {TEXT_ALIGNS.map((a) => (
+                <button
+                  key={a.key}
+                  onClick={() => setTextAlign(a.key)}
+                  className={`flex-1 px-2 py-2 rounded-md text-sm border transition-all duration-150 ${
+                    textAlign === a.key
+                      ? 'border-primary bg-surface-card text-primary font-medium'
+                      : 'border-hairline text-body hover:border-muted-soft hover:bg-canvas-soft'
+                  }`}
+                >
+                  {a.label}
+                </button>
+              ))}
+            </div>
+            <p className="mt-2 text-xs text-muted-soft">两端对齐只拉伸占满的行，段落末行保持左对齐</p>
           </section>
 
           {/* ── 考纲标注（阅读页高亮，与解析卡片的标签显隐过滤相互独立）── */}

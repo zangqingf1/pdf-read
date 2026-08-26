@@ -10,6 +10,8 @@ interface HomeSidebarProps {
   onNavigate: (key: HomeNavKey) => void;
   /** 移动端抽屉关闭（仅移动端传入） */
   onCloseMobile?: () => void;
+  /** 文档变更回调（与「全部文档」弹窗实例双向同步） */
+  onChanged?: () => void;
 }
 
 const NAV_ITEMS: { key: Exclude<HomeNavKey, 'recent'>; label: string; icon: React.ReactNode }[] = [
@@ -34,7 +36,7 @@ const NAV_ITEMS: { key: Exclude<HomeNavKey, 'recent'>; label: string; icon: Reac
   },
 ];
 
-export default function HomeSidebar({ refreshKey, activeNav, onNavigate, onCloseMobile }: HomeSidebarProps) {
+export default function HomeSidebar({ refreshKey, activeNav, onNavigate, onCloseMobile, onChanged }: HomeSidebarProps) {
   const favoritesView = activeNav === 'favorites';
 
   return (
@@ -111,14 +113,14 @@ export default function HomeSidebar({ refreshKey, activeNav, onNavigate, onClose
             )}
           </div>
 
-          <div className="flex-1 overflow-y-auto pr-0.5 min-h-0">
-            <RecentDocuments refreshKey={refreshKey} sidebar favoritesOnly={favoritesView} />
+          <div className="flex-1 overflow-y-auto min-h-0 scrollbar-none">
+            <RecentDocuments refreshKey={refreshKey} sidebar favoritesOnly={favoritesView} onChanged={onChanged} />
           </div>
         </div>
       </div>
 
       {/* ── User footer ── */}
-      <div className="px-3.5 py-3 border-t border-hairline flex-shrink-0">
+      <div className="h-[64px] px-3.5 border-t border-hairline flex-shrink-0 flex items-center">
         <UserMenu />
       </div>
     </div>

@@ -85,7 +85,7 @@ export default function AudioPlayerBar() {
 
   return (
     <div
-      className="fixed z-[60] shadow-float rounded-xl border border-hairline bg-surface-card px-3 py-2.5 md:px-4 flex items-center gap-3 md:gap-4 ring-1 ring-hairline-soft"
+      className="fixed z-[60] shadow-float rounded-xl border border-reader-line bg-reader-surface px-3 py-2.5 md:px-4 flex items-center gap-3 md:gap-4 ring-1 ring-reader-line-soft"
       style={{
         left: '50%',
         transform: 'translateX(-50%)',
@@ -123,7 +123,7 @@ export default function AudioPlayerBar() {
       <button
         type="button"
         onClick={() => stop()}
-        className="w-8 h-8 flex-shrink-0 rounded-full hover:bg-canvas-soft transition-colors flex items-center justify-center text-muted hover:text-ink"
+        className="w-8 h-8 flex-shrink-0 rounded-full hover:bg-reader-line-soft transition-colors flex items-center justify-center text-muted hover:text-ink"
         title="停止"
         aria-label="停止朗读"
       >
@@ -147,7 +147,7 @@ export default function AudioPlayerBar() {
               </span>
             </div>
             <div
-              className="h-1.5 rounded-full bg-canvas-soft cursor-pointer relative overflow-hidden"
+              className="h-1.5 rounded-full bg-reader-line-soft cursor-pointer relative overflow-hidden"
               onClick={handleSeek}
               title="拖动定位"
             >
@@ -165,7 +165,7 @@ export default function AudioPlayerBar() {
         <button
           type="button"
           onClick={() => setRateMenuOpen((v) => !v)}
-          className="flex items-center gap-1 px-2 py-1 text-[11px] rounded bg-canvas-soft text-muted hover:text-ink transition-colors"
+          className="flex items-center gap-1 px-2 py-1 text-[11px] rounded bg-reader-line-soft text-muted hover:text-ink transition-colors"
           title="朗读倍速"
           aria-haspopup="menu"
           aria-expanded={rateMenuOpen}
@@ -190,7 +190,7 @@ export default function AudioPlayerBar() {
         {rateMenuOpen && (
           <div
             role="menu"
-            className="absolute bottom-full right-0 mb-1.5 z-[70] bg-surface-card border border-hairline rounded-lg shadow-float p-1.5 w-[168px]"
+            className="absolute bottom-full right-0 mb-1.5 z-[70] bg-reader-surface border border-reader-line rounded-lg shadow-float p-1.5 w-[168px]"
           >
             {SPEED_GROUPS.map((g) => (
               <div key={g.label} className="mb-1 last:mb-0">
@@ -211,7 +211,7 @@ export default function AudioPlayerBar() {
                           'px-0.5 py-1 text-[11px] tabular-nums rounded transition-colors',
                           active
                             ? 'bg-primary text-on-primary font-medium'
-                            : 'text-muted hover:bg-canvas-soft hover:text-ink',
+                            : 'text-muted hover:bg-reader-line-soft hover:text-ink',
                         ].join(' ')}
                         title={`倍速 ${sp.toFixed(1)}x`}
                       >
@@ -230,7 +230,7 @@ export default function AudioPlayerBar() {
       <button
         type="button"
         onClick={() => setAccent(accent === 'us' ? 'uk' : 'us')}
-        className="flex-shrink-0 px-2 py-1 text-[11px] rounded bg-canvas-soft text-muted hover:text-ink transition-colors uppercase"
+        className="flex-shrink-0 px-2 py-1 text-[11px] rounded bg-reader-line-soft text-muted hover:text-ink transition-colors uppercase"
         title="切换美音/英音"
       >
         {accent}
@@ -262,7 +262,7 @@ export default function AudioPlayerBar() {
       <button
         type="button"
         onClick={() => stop()}
-        className="flex-shrink-0 w-8 h-8 rounded hover:bg-canvas-soft transition-colors flex items-center justify-center text-muted hover:text-ink"
+        className="flex-shrink-0 w-8 h-8 rounded hover:bg-reader-line-soft transition-colors flex items-center justify-center text-muted hover:text-ink"
         title="关闭"
         aria-label="关闭朗读"
       >

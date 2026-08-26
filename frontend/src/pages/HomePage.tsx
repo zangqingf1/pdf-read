@@ -63,11 +63,12 @@ export default function HomePage() {
           activeNav={activeNav}
           onNavigate={handleSidebarNavigate}
           onCloseMobile={() => setSidebarOpen(false)}
+          onChanged={handleDocumentChanged}
         />
       </aside>
 
       {/* ── Main content ── */}
-      <main className="flex-1 min-w-0 overflow-y-auto">
+      <main className="flex-1 min-w-0 overflow-y-auto scrollbar-none">
         {/* Mobile top bar */}
         <div className="md:hidden sticky top-0 z-30 flex items-center gap-2 h-[52px] px-3 bg-canvas/90 backdrop-blur border-b border-hairline-soft">
           <button
@@ -81,39 +82,45 @@ export default function HomePage() {
           </button>
           <span className="text-base font-display font-semibold text-ink">外刊阅读</span>
           <div className="ml-auto flex items-center gap-2">
+            {!isSelecting && (
+              <>
+                <button
+                  className="h-7 px-2.5 rounded-md bg-surface-card hover:bg-surface-cream-strong text-xs font-medium text-body-strong transition-colors"
+                  onClick={() => setShowApiKeyModal(true)}
+                >
+                  API 配置
+                </button>
+                <button
+                  className="h-7 px-2.5 rounded-md bg-surface-overlay border border-hairline hover:border-primary/50 hover:text-primary text-xs font-medium text-body-strong transition-colors"
+                  onClick={() => navigate('/vocabulary')}
+                >
+                  单词本
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+
+        {/* Top-right actions — desktop only */}
+        {!isSelecting && (
+          <div className="hidden md:flex items-center justify-end gap-2.5 px-4 md:px-10 pt-6">
             <button
-              className="h-8 px-3 rounded-md bg-surface-card hover:bg-surface-cream-strong text-xs font-medium text-body-strong transition-colors"
+              className="h-8 px-3.5 rounded-md bg-surface-card hover:bg-surface-cream-strong text-xs font-medium text-body-strong transition-colors"
               onClick={() => setShowApiKeyModal(true)}
             >
               API 配置
             </button>
             <button
-              className="h-8 px-3 rounded-md bg-surface-overlay border border-hairline hover:border-primary/50 hover:text-primary text-xs font-medium text-body-strong transition-colors"
+              className="h-8 px-3.5 rounded-md bg-surface-overlay border border-hairline hover:border-primary/50 hover:text-primary text-xs font-medium text-body-strong transition-colors"
               onClick={() => navigate('/vocabulary')}
             >
               单词本
             </button>
           </div>
-        </div>
-
-        {/* Top-right actions — desktop only */}
-        <div className="hidden md:flex items-center justify-end gap-2.5 px-4 md:px-10 pt-4 md:pt-6">
-          <button
-            className="h-8 px-3.5 rounded-md bg-surface-card hover:bg-surface-cream-strong text-xs font-medium text-body-strong transition-colors"
-            onClick={() => setShowApiKeyModal(true)}
-          >
-            API 配置
-          </button>
-          <button
-            className="h-8 px-3.5 rounded-md bg-surface-overlay border border-hairline hover:border-primary/50 hover:text-primary text-xs font-medium text-body-strong transition-colors"
-            onClick={() => navigate('/vocabulary')}
-          >
-            单词本
-          </button>
-        </div>
+        )}
 
         {/* Center column */}
-        <div className={isSelecting ? 'min-h-0 h-[calc(100%-61px)] md:h-[calc(100%-68px)] flex flex-col' : 'max-w-[700px] mx-auto px-4 md:px-10 pt-4 md:pt-6 pb-12 md:pb-20 w-full'}>
+        <div className={isSelecting ? 'min-h-0 h-[calc(100%-53px)] md:h-full flex flex-col' : 'max-w-[700px] mx-auto px-4 md:px-10 pt-4 md:pt-6 pb-12 md:pb-20 w-full'}>
           {/* Daily Quote — 每日一句 */}
           {!isSelecting && !resumeTaskId && <DailyQuote />}
 
@@ -135,7 +142,7 @@ export default function HomePage() {
         width="620px"
         bodyClassName="px-4 py-4 overflow-y-auto"
       >
-        <RecentDocuments refreshKey={refreshKey} pageSize={20} showLoadMore />
+        <RecentDocuments refreshKey={refreshKey} pageSize={20} showLoadMore onChanged={handleDocumentChanged} />
       </Modal>
 
       {/* ── API 配置 ── */}

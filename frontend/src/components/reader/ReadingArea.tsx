@@ -62,7 +62,7 @@ export default memo(function ReadingArea({
   return (
     <div>
       {/* ── Document header（mobile）── */}
-      <div className="md:hidden mb-6 pb-4 border-b border-hairline-soft">
+      <div className="md:hidden mb-6 pb-4 border-b border-reader-line-soft">
         <div className="flex items-center justify-center gap-3 mb-2">
           <span className="h-px w-8 bg-primary/25" />
           <span className="text-[13px] font-semibold text-primary tracking-wide">正在阅读</span>
@@ -112,7 +112,7 @@ export default memo(function ReadingArea({
       </div>
 
       {/* ── Document header ── */}
-      <div className="hidden md:block mb-10 pb-6 border-b border-hairline-soft">
+      <div className="hidden md:block mb-10 pb-6 border-b border-reader-line-soft">
         <div className="flex items-center gap-3 mb-3">
           <span className="text-[13px] font-semibold text-primary tracking-wide">正在阅读</span>
           <span className="h-px w-12 bg-primary/25" />
@@ -192,7 +192,7 @@ export default memo(function ReadingArea({
               )}
               <span className="text-xs">{playerStatus === 'idle' ? '朗读' : playerStatus === 'playing' ? '暂停' : '继续'}</span>
             </button>
-            <div className="w-px h-5 bg-hairline mx-0.5" />
+            <div className="w-px h-5 bg-reader-line mx-0.5" />
             <button
               onClick={decreaseFontSize}
               disabled={fontSize <= FONT_SIZE_MIN}
@@ -214,7 +214,7 @@ export default memo(function ReadingArea({
                 <path d="M12 5v14M5 12h14" />
               </svg>
             </button>
-            <div className="w-px h-5 bg-hairline mx-0.5" />
+            <div className="w-px h-5 bg-reader-line mx-0.5" />
             <button
               onClick={() => setDrawerOpen(true)}
               className="w-8 h-8 flex items-center justify-center rounded-md hover:bg-surface-card active:scale-95 transition-all touch-area"

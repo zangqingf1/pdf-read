@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
+import { useEffect, useState, useRef, useCallback, useMemo, type CSSProperties } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { getPDFResult, getPDFStatus } from '../services/pdfApi';
 import { translateParagraphsStream } from '../services/translateApi';
@@ -26,7 +26,7 @@ import { setOnOpenFocusedAnalysis } from '../components/reader/ParagraphBlock';
 import { setOnOpenPanel, triggerScrollToAnalysis } from '../components/reader/StudyPanel';
 import { scrollToParagraph } from '../utils/scrollToParagraph';
 import Button from '../components/ui/Button';
-import Spinner, { PageSpinner } from '../components/ui/Spinner';
+import Spinner from '../components/ui/Spinner';
 
 // Bounded automatic retries for paragraphs that come back untranslated
 // (e.g. a per-paragraph AI failure returns an empty result). Prevented from
@@ -140,7 +140,17 @@ export default function ReaderPage() {
 
   // ── Typography preferences ──
   const { bgColor } = useReaderStore();
-  const bgColorValue = BG_COLORS.find(c => c.key === bgColor)?.value ?? BG_COLORS[0].value;
+  const bgColorConfig = BG_COLORS.find(c => c.key === bgColor) ?? BG_COLORS[0];
+  const bgColorValue = bgColorConfig.value;
+  // 随背景联动的配套色（滚动条 + 线条/分隔线 + 弹层底色），
+  // 注入根容器后由后代元素（含 webkit 滚动条伪元素）继承
+  const bgAdaptiveStyle = {
+    '--scrollbar-thumb': bgColorConfig.adaptive?.thumb,
+    '--scrollbar-thumb-hover': bgColorConfig.adaptive?.thumbHover,
+    '--reader-line': bgColorConfig.adaptive?.line,
+    '--reader-line-soft': bgColorConfig.adaptive?.lineSoft,
+    '--reader-surface': bgColorConfig.adaptive?.surface,
+  } as CSSProperties;
 
   // ── Split layout state (persisted) ──
   const SPLIT_WIDTH_KEY = 'reader_split_width';
@@ -193,7 +203,7 @@ export default function ReaderPage() {
       <>
         {/* API key prompt */}
         {!apiKey && hasUntranslated && (
-          <div className="mb-6 p-4 bg-surface-overlay border border-hairline-soft rounded-xl shadow-soft flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+          <div className="mb-6 p-4 bg-reader-surface border border-reader-line-soft rounded-xl shadow-soft flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
             <div className="flex items-center gap-3">
               <span className="w-9 h-9 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" strokeWidth="1.5">
@@ -737,7 +747,11 @@ export default function ReaderPage() {
 
   // ── Loading / empty states ──
   if (loading && !parseStatus) {
-    return <PageSpinner label="加载文档..." />;
+    return (
+      <div className="flex items-center justify-center min-h-screen transition-colors duration-300" style={{ ...bgAdaptiveStyle, backgroundColor: bgColorValue }}>
+        <Spinner label="加载文档..." />
+      </div>
+    );
   }
 
   if (parseStatus === 'pending' || parseStatus === 'processing') {
@@ -817,7 +831,7 @@ export default function ReaderPage() {
   }
 
   return (
-    <div className="h-screen flex flex-col overflow-hidden transition-colors duration-300" style={{ backgroundColor: bgColorValue }}>
+    <div className="h-screen flex flex-col overflow-hidden transition-colors duration-300" style={{ ...bgAdaptiveStyle, backgroundColor: bgColorValue }}>
       <ReaderHeader />
 
       {/* ── Desktop: horizontal split layout ── */}
@@ -855,7 +869,7 @@ export default function ReaderPage() {
           {hasAnalyses && !panelOpen && (
             <button
               onClick={handleOpenPanel}
-              className="fixed right-3 top-1/2 -translate-y-1/2 z-40 w-9 h-24 bg-surface-overlay border border-hairline-soft rounded-l-xl shadow-soft flex flex-col items-center justify-center gap-1.5 hover:bg-canvas-soft transition-colors touch-area group"
+              className="fixed right-3 top-1/2 -translate-y-1/2 z-40 w-9 h-24 bg-reader-surface border border-reader-line-soft rounded-l-xl shadow-soft flex flex-col items-center justify-center gap-1.5 hover:brightness-[0.96] transition-all touch-area group"
               title="打开解析面板"
               style={{ borderRight: 'none' }}
             >
@@ -909,7 +923,7 @@ export default function ReaderPage() {
       {/* Floating action bar */}
       {(selectedWordCount > 0 || selectedSentenceCount > 0) && (
         <div className={[
-          'z-50 rounded-xl px-4 md:px-5 py-3 border border-hairline-soft shadow-pop flex items-center gap-3 md:gap-4 flex-wrap',
+          'z-50 rounded-xl px-4 md:px-5 py-3 border border-reader-line-soft shadow-pop flex items-center gap-3 md:gap-4 flex-wrap',
           isMobile
             ? 'fixed bottom-0 left-0 right-0 rounded-t-xl'
             : 'fixed bottom-6 left-1/2 -translate-x-1/2',
@@ -928,7 +942,7 @@ export default function ReaderPage() {
             </>
           )}
           {selectedWordCount > 0 && selectedSentenceCount > 0 && (
-            <div className="w-px h-6 bg-hairline hidden md:block" />
+            <div className="w-px h-6 bg-reader-line hidden md:block" />
           )}
           {selectedSentenceCount > 0 && (
             <>

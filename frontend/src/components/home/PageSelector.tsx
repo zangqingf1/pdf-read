@@ -258,7 +258,7 @@ export default function PageSelector({
       </div>
 
       {/* Footer actions */}
-      <div className="flex items-center justify-center gap-3 px-6 py-3 border-t border-hairline-soft">
+      <div className="h-[64px] flex items-center justify-center gap-3 px-6 border-t border-hairline-soft flex-shrink-0">
         <Button
           variant="primary"
           size="sm"

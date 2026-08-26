@@ -3,6 +3,7 @@
  * 全量内联 CSS（与预览逐字节一致的样式表上下文）+ @page 规则。
  */
 import ExportPages from './ExportPages';
+import { useReaderStore } from '../stores/readerStore';
 import { PAPER_SIZES } from './exportTypes';
 import type { ExportData } from './data';
 import type { ExportPreferences } from './exportTypes';
@@ -105,7 +106,10 @@ export async function serializeExportHtml(
   plan: PagePlan
 ): Promise<string> {
   const { renderToStaticMarkup } = await import('react-dom/server');
-  const markup = renderToStaticMarkup(<ExportPages data={data} prefs={prefs} plan={plan} />);
+  // renderToStaticMarkup 下 Zustand hook 会返回未水合默认值，必须 getState() 取当前值显式传入
+  const markup = renderToStaticMarkup(
+    <ExportPages data={data} prefs={prefs} plan={plan} textAlign={useReaderStore.getState().textAlign} />
+  );
   const css = await inlineLocalFonts(collectStylesheetsCss());
   return [
     '<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">',

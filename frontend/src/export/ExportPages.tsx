@@ -17,6 +17,7 @@ import { BLANK } from './paginate';
 import { PAPER_SIZES, mmToPx, PAGE_PADDING, COL_GAP } from './exportTypes';
 import type { ExportData } from './data';
 import type { ExportPreferences } from './exportTypes';
+import { useReaderStore } from '../stores/readerStore';
 
 interface ExportPagesProps {
   data: ExportData;
@@ -24,6 +25,10 @@ interface ExportPagesProps {
   plan: PagePlan;
   /** 预览模式：多页纵向排列 + 纸张外观（导出时无） */
   preview?: boolean;
+  /** 阅读页「对齐方式」设置：预览路径由调用方响应式传入；
+   *  序列化路径（renderToStaticMarkup）下 Zustand hook 会读到未水合默认值，
+   *  必须由 serializeExportHtml 用 getState() 取当前值后显式传入 */
+  textAlign?: string;
 }
 
 /** 条目补距样式：padTop/margin-top（锚点/续页让位），padBottom/margin-bottom（行带短侧补齐） */
@@ -108,11 +113,13 @@ function renderPageItem(item: PageItem, ctx: BlockCtx, plan: PagePlan, idx: numb
   );
 }
 
-export default function ExportPages({ data, prefs, plan, preview = false }: ExportPagesProps) {
+export default function ExportPages({ data, prefs, plan, preview = false, textAlign: textAlignProp }: ExportPagesProps) {
   const paper = PAPER_SIZES[prefs.paperSize];
   const ctx: BlockCtx = { data, prefs };
   const exportedDate = new Date().toISOString().slice(0, 10);
   const single = prefs.singleColumn;
+  // 预览路径响应式传入；序列化/兜底用 getState() 直接读当前水合值
+  const textAlign = textAlignProp ?? useReaderStore.getState().textAlign;
 
   // 左右栏宽度（与测量树一致：mm→px 页宽 - padding*2，按比例分配）
   const contentW = mmToPx(paper.wMm) - PAGE_PADDING * 2;
@@ -125,6 +132,8 @@ export default function ExportPages({ data, prefs, plan, preview = false }: Expo
     '--fs-summary': `${prefs.fontSizeSummary}px`,
     '--fs-word': `${prefs.fontSizeWord}px`,
     '--fs-sentence': `${prefs.fontSizeSentence}px`,
+    // 跟随阅读页「对齐方式」设置（两端对齐只拉伸占满的行，末行保持左对齐）
+    '--ta-en': textAlign === 'justify' ? 'justify' : 'left',
   } as CSSProperties;
 
   return (

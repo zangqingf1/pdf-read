@@ -42,10 +42,10 @@ export default function StudySheet({ children, onClose, open }: StudySheetProps)
       />
 
       {/* Sheet */}
-      <div className={`h-[45vh] bg-surface-overlay rounded-t-xl flex flex-col overflow-hidden shadow-elevated ${closing ? 'animate-sheet-slide-down' : 'animate-sheet-slide-up'}`}>
+      <div className={`h-[45vh] bg-reader-surface rounded-t-xl flex flex-col overflow-hidden shadow-elevated ${closing ? 'animate-sheet-slide-down' : 'animate-sheet-slide-up'}`}>
         {/* Drag handle indicator */}
         <div className="flex justify-center pt-2 pb-1 flex-shrink-0">
-          <div className="w-10 h-1 rounded-full bg-hairline" />
+          <div className="w-10 h-1 rounded-full bg-[color-mix(in_srgb,var(--ink)_18%,transparent)]" />
         </div>
 
 

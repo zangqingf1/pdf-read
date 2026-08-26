@@ -44,6 +44,12 @@ export default {
           strong: '#d8cfc4',
         },
 
+        // ── 阅读页背景联动色（ReaderPage 根容器注入 --reader-* 变量，
+        //    未注入时回落到 hairline 系，其他页面零影响）──
+        'reader-line': 'var(--reader-line, #e6dfd8)',
+        'reader-line-soft': 'var(--reader-line-soft, #ebe6df)',
+        'reader-surface': 'var(--reader-surface, #fffdf8)',
+
         'on-primary': '#ffffff',
         'on-dark': '#faf9f5',
         'on-dark-soft': '#a09d96',

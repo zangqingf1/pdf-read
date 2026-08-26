@@ -335,10 +335,11 @@ const ParagraphBlock = memo(function ParagraphBlock({
   isTranslating,
   isTouchDevice = false,
 }: ParagraphBlockProps) {
-  // 分别订阅三个排版字段，避免 readerStore 任一字段变化导致全文重渲染
+  // 分别订阅四个排版字段，避免 readerStore 任一字段变化导致全文重渲染
   const fontSize = useReaderStore((s) => s.fontSize);
   const fontFamily = useReaderStore((s) => s.fontFamily);
   const lineHeight = useReaderStore((s) => s.lineHeight);
+  const textAlign = useReaderStore((s) => s.textAlign);
   const [showTranslation, setShowTranslation] = useState(false);
 
   // 仅本段处于播放/暂停时返回其状态，其余段落签名恒为 'idle' → 不随播放进度重渲染
@@ -356,13 +357,15 @@ const ParagraphBlock = memo(function ParagraphBlock({
 
   const fontFamilyValue = FONT_FAMILIES.find(f => f.key === fontFamily)?.value ?? FONT_FAMILIES[0].value;
   const lineHeightValue = LINE_HEIGHTS.find(l => l.key === lineHeight)?.value ?? LINE_HEIGHTS[0].value;
+  // 两端对齐仅拉伸占满的行，末行自动保持左对齐（CSS 原生语义）
+  const textAlignValue = textAlign === 'justify' ? 'justify' : 'left';
 
   const sentences = useMemo(() => splitSentences(paragraph.text), [paragraph.text]);
 
   return (
     <div
       className="paragraph-block prose max-w-none"
-      style={{ fontSize: `${fontSize}px`, fontFamily: fontFamilyValue, lineHeight: lineHeightValue }}
+      style={{ fontSize: `${fontSize}px`, fontFamily: fontFamilyValue, lineHeight: lineHeightValue, textAlign: textAlignValue }}
       data-paragraph-index={paragraph.index}
     >
       {/* Sentence-level rendering + 段尾展开翻译图标按钮 */}

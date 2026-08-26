@@ -514,7 +514,7 @@
   }
 }
 
-/* ── Scrollbar styling ── */
+/* ── Scrollbar styling（颜色可由阅读页按背景色注入 --scrollbar-thumb* 覆盖）── */
 @layer base {
   ::-webkit-scrollbar {
     width: 6px;
@@ -524,11 +524,22 @@
     background: transparent;
   }
   ::-webkit-scrollbar-thumb {
-    background: var(--hairline);
+    background: var(--scrollbar-thumb, var(--hairline));
     border-radius: var(--radius-pill);
   }
   ::-webkit-scrollbar-thumb:hover {
-    background: var(--muted-soft);
+    background: var(--scrollbar-thumb-hover, var(--muted-soft));
+  }
+}
+
+/* ── 隐藏滚动条（保留滚动能力）── */
+@layer utilities {
+  .scrollbar-none {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
   }
 }
 
@@ -862,12 +873,12 @@
   -webkit-user-select: none;
 }
 
-/* ── Drag handle for resizable panels ── */
+/* ── Drag handle for resizable panels（阅读页分栏；颜色随背景联动）── */
 .resize-handle {
   cursor: col-resize;
   width: 5px;
   flex-shrink: 0;
-  background: var(--hairline-soft);
+  background: var(--reader-line-soft, var(--hairline-soft));
   transition: background-color 0.2s ease;
   user-select: none;
   touch-action: none;
@@ -941,8 +952,7 @@
 
   .word-token,
   .sentence-token {
-    padding: 3px 4px;
-    /* Prevent native text selection/callout when long-pressing to select a sentence */
+    /* 与桌面端一致（触屏不再额外扩大 padding） */
     -webkit-touch-callout: none;
     -webkit-user-select: none;
     user-select: none;
@@ -1153,7 +1163,8 @@
   font-size: var(--fs-text);
   line-height: 1.65;
   color: var(--ink);
-  /* 左对齐（两端对齐会让行内词间距被拉长，出现大小不一） */
+  /* 对齐方式跟随阅读页设置（--ta-en 由 ExportPages/测量树注入；两端对齐只拉伸占满的行） */
+  text-align: var(--ta-en, left);
   text-indent: 2em; /* 英文段落首行缩进 2 字符 */
   orphans: 2;
   widows: 2;

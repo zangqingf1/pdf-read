@@ -233,24 +233,24 @@ export default function PDFUploader({
   // ── Completed State ──
   if (phase === 'completed' && taskId) {
     return (
-      <div className="bg-surface-overlay border border-hairline-soft rounded-xl shadow-soft px-6 py-12 text-center">
-        <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-success/15 flex items-center justify-center">
-          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="var(--success)" strokeWidth="2">
+      <div className="h-[280px] bg-surface-overlay border border-hairline-soft rounded-xl shadow-soft px-6 py-6 text-center flex flex-col items-center justify-center">
+        <div className="w-10 h-10 mx-auto mb-3 rounded-full bg-success/15 flex items-center justify-center">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--success)" strokeWidth="2">
             <path d="M20 6L9 17l-5-5" />
           </svg>
         </div>
-        <h3 className="text-display-sm font-display text-ink mb-2">文档解析完成！</h3>
-        <p className="text-muted mb-8 max-w-sm mx-auto">
+        <h3 className="text-display-sm font-display text-ink mb-1">文档解析完成！</h3>
+        <p className="text-muted text-[13px] mb-4">
           文档 <strong className="text-body-strong">{docTitle}</strong> 已准备就绪
         </p>
-        <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
-          <Button variant="primary" size="lg" onClick={() => navigate(`/review/${taskId}`)}>
+        <div className="flex flex-col sm:flex-row items-center justify-center gap-2.5">
+          <Button variant="primary" size="sm" onClick={() => navigate(`/review/${taskId}`)}>
             审阅与编辑
           </Button>
-          <Button variant="secondary" size="lg" onClick={() => navigate(`/document/${taskId}`)}>
+          <Button variant="secondary" size="sm" onClick={() => navigate(`/document/${taskId}`)}>
             直接开始阅读
           </Button>
-          <Button variant="ghost" onClick={handleReset}>
+          <Button variant="ghost" size="sm" onClick={handleReset}>
             上传其他文档
           </Button>
         </div>
@@ -297,6 +297,37 @@ export default function PDFUploader({
       )}
     </button>
   );
+
+  // ── Busy: 只显示进度，不展示上传区域 ──
+  if (isBusy) {
+    return (
+      <div className="bg-surface-overlay border border-hairline-soft rounded-xl shadow-soft p-5 animate-fade-in">
+        <div className="flex items-center gap-3 mb-3">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--error)" strokeWidth="1.5">
+            <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
+            <path d="M14 2v6h6" />
+          </svg>
+          <span className="text-sm font-medium text-body-strong">
+            {phase === 'uploading' ? '正在上传文件...' : '正在解析文档正文...'}
+          </span>
+        </div>
+
+        {/* Progress bar */}
+        <div className="w-full h-1.5 bg-surface-card rounded-full overflow-hidden">
+          <div
+            className="h-full bg-primary rounded-full transition-all duration-500"
+            style={{ width: `${parseProgress}%` }}
+          />
+        </div>
+
+        <p className="text-xs text-muted mt-2">
+          {phase === 'uploading'
+            ? '上传中...'
+            : '正在进行版面分析，提取正文内容，过滤页眉页脚和广告...'}
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className="bg-surface-overlay border border-hairline-soft rounded-xl shadow-soft overflow-hidden">
@@ -365,35 +396,6 @@ export default function PDFUploader({
             </div>
             <p className="text-[13px] text-muted mt-2.5">
               支持文件链接（.pdf/.docx/.pptx/图片等）与网页文章链接，最大 50MB
-            </p>
-          </div>
-        )}
-
-        {/* Progress */}
-        {isBusy && (
-          <div className="mt-5 p-5 bg-canvas/60 rounded-lg border border-hairline">
-            <div className="flex items-center gap-3 mb-3">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--error)" strokeWidth="1.5">
-                <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
-                <path d="M14 2v6h6" />
-              </svg>
-              <span className="text-sm font-medium text-body-strong">
-                {phase === 'uploading' ? '正在上传文件...' : '正在解析文档正文...'}
-              </span>
-            </div>
-
-            {/* Progress bar */}
-            <div className="w-full h-1.5 bg-surface-card rounded-full overflow-hidden">
-              <div
-                className="h-full bg-primary rounded-full transition-all duration-500"
-                style={{ width: `${parseProgress}%` }}
-              />
-            </div>
-
-            <p className="text-xs text-muted mt-2">
-              {phase === 'uploading'
-                ? '上传中...'
-                : '正在进行版面分析，提取正文内容，过滤页眉页脚和广告...'}
             </p>
           </div>
         )}

@@ -45,7 +45,7 @@ function FocusedWordCard({
   }, [analysis, removeWordAnalysis]);
 
   return (
-    <div className="bg-surface-overlay border border-hairline-soft rounded-lg shadow-soft p-4">
+    <div className="bg-reader-surface border border-reader-line-soft rounded-lg shadow-soft p-4">
       {/* Header: word + phonetic + delete */}
       <div className="flex items-start justify-between mb-3">
         <div className="flex items-baseline gap-2 flex-wrap">
@@ -111,7 +111,7 @@ function FocusedWordCard({
 
       {/* Example Sentence */}
       {analysis.example_sentence && (
-        <div className="pt-2 border-t border-hairline">
+        <div className="pt-2 border-t border-reader-line">
           <span className="text-muted text-[0.75em] block mb-1">例句</span>
           <p className="text-body leading-relaxed italic text-sm m-0 font-reading">
             {analysis.example_sentence}
@@ -163,7 +163,7 @@ function FocusedSentenceCard({
   }, [analysis, removeSentenceAnalysis]);
 
   return (
-    <div className="bg-surface-overlay border border-hairline-soft rounded-lg shadow-soft p-4">
+    <div className="bg-reader-surface border border-reader-line-soft rounded-lg shadow-soft p-4">
       {/* Header: 原句拆解直接作为标题 + delete */}
       <div className="flex items-start justify-between mb-3">
         <span className="font-semibold text-ink leading-snug text-base font-reading">
@@ -285,7 +285,7 @@ export default function FocusedAnalysisSheet({
       <div className="flex-1 bg-black/30" onClick={onClose} />
 
       {/* Sheet */}
-      <div className="max-h-[45vh] bg-surface-overlay rounded-t-xl flex flex-col overflow-hidden shadow-elevated animate-sheet-slide-up">
+      <div className="max-h-[45vh] bg-reader-surface rounded-t-xl flex flex-col overflow-hidden shadow-elevated animate-sheet-slide-up">
         {/* Content */}
         <div className="flex-1 overflow-y-auto p-4 study-panel-content" style={{ fontSize: wordPanelFontSize }}>
           {!hasData && (

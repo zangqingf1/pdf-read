@@ -13,6 +13,8 @@ import type { ExportPreferences } from '../../export/exportTypes';
 import type { PagePlan } from '../../export/paginate';
 import type { ExportData } from '../../export/data';
 
+import { useReaderStore } from '../../stores/readerStore';
+
 export default function ExportPreview({
   data,
   plan,
@@ -24,6 +26,8 @@ export default function ExportPreview({
   const [scale, setScale] = useState(1);
   const store = useExportPreferences();
   const prefs: ExportPreferences = useMemo(() => pickExportPrefs(store), [store]);
+  // 响应式读取对齐设置，变更时预览实时刷新
+  const textAlign = useReaderStore((s) => s.textAlign);
   const paperW = PAPER_SIZES[prefs.paperSize].wPx;
 
   // 开发自检：分页预算 vs 真实渲染漂移监控。内容底缘越过页脚顶缘即告警，
@@ -69,7 +73,7 @@ export default function ExportPreview({
     <div ref={viewportRef} className="flex-1 min-w-0 overflow-auto p-4 bg-canvas-soft">
       <div className="mx-auto" style={{ zoom: scale, width: 'fit-content' }}>
         {plan ? (
-          <ExportPages data={data} prefs={prefs} plan={plan} preview />
+          <ExportPages data={data} prefs={prefs} plan={plan} preview textAlign={textAlign} />
         ) : (
           <div className="py-16 px-10 text-sm text-muted-soft">预览渲染中…</div>
         )}

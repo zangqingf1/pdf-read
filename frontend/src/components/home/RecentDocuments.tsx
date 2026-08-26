@@ -31,6 +31,8 @@ interface RecentDocumentsProps {
   onSelectModeChange?: (selecting: boolean) => void;
   /** 仅显示收藏的文档（「我的收藏」视图） */
   favoritesOnly?: boolean;
+  /** 文档发生变化（删除/收藏切换/批量删除）后通知父级刷新其他实例 */
+  onChanged?: () => void;
 }
 
 let toastFn: ((msg: string) => void) | null = null;
@@ -44,6 +46,7 @@ export default function RecentDocuments({
   selectMode: selectModeProp,
   onSelectModeChange,
   favoritesOnly = false,
+  onChanged,
 }: RecentDocumentsProps) {
   const [documents, setDocuments] = useState<DocumentListItem[]>([]);
   const [total, setTotal] = useState(0);
@@ -112,6 +115,7 @@ export default function RecentDocuments({
       toastFn?.('已删除');
       setDocuments((prev) => prev.filter((d) => d.id !== id));
       setTotal((t) => Math.max(0, t - 1));
+      onChanged?.();
     } catch { toastFn?.('删除失败'); }
     finally { setActionLoading(null); }
   };
@@ -127,6 +131,7 @@ export default function RecentDocuments({
         setDocuments((prev) => prev.filter((d) => d.id !== doc.id));
         setTotal((t) => Math.max(0, t - 1));
       }
+      onChanged?.();
     } catch {
       setDocuments((prev) => prev.map((d) => (d.id === doc.id ? { ...d, is_favorite: doc.is_favorite } : d)));
       toastFn?.('收藏操作失败');
@@ -171,6 +176,7 @@ export default function RecentDocuments({
       toastFn?.(result.message);
       exitSelectMode();
       await fetchDocuments();
+      onChanged?.();
     } catch (err: any) {
       toastFn?.(err?.response?.data?.detail || '批量删除失败');
     } finally {
@@ -418,6 +424,11 @@ export default function RecentDocuments({
                   <span className="text-sm font-medium truncate text-body-strong">
                     {doc.title || 'Untitled'}
                   </span>
+                  {doc.is_favorite && (
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="var(--primary)" stroke="none" className="flex-shrink-0">
+                      <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+                    </svg>
+                  )}
                   <Badge
                     variant={
                       isCompleted ? 'success' :
@@ -454,6 +465,23 @@ export default function RecentDocuments({
                       onClick={() => handleRetry(doc.id)}>
                       重试
                     </Button>
+                  )}
+
+                  {/* 收藏 */}
+                  {!showDeleteConfirm && (
+                    <button
+                      className={`w-7 h-7 flex items-center justify-center rounded-md transition-all hover-reveal ${
+                        doc.is_favorite
+                          ? 'text-primary'
+                          : 'text-muted-soft hover:text-primary hover:bg-primary/10'
+                      }`}
+                      onClick={() => handleToggleFavorite(doc)}
+                      title={doc.is_favorite ? '取消收藏' : '收藏'}
+                    >
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill={doc.is_favorite ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                        <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+                      </svg>
+                    </button>
                   )}
 
                   {/* Delete with confirmation */}
