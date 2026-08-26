@@ -74,5 +74,5 @@ app.include_router(auth_router, prefix="/api/v1/auth", tags=["Auth"])
 
 @app.get("/health", tags=["Health"])
 async def health_check():
-    """Health check endpoint."""
-    return {"status": "ok", "version": "1.0.0", "environment": settings.ENVIRONMENT}
+    """Health check endpoint (no environment info — avoid disclosure)."""
+    return {"status": "ok", "version": "1.0.0"}

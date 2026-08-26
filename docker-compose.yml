@@ -29,6 +29,8 @@ services:
       - SECRET_KEY=${SECRET_KEY:?Set SECRET_KEY in .env}
       - ENVIRONMENT=${ENVIRONMENT:-production}
       - DEBUG=${DEBUG:-false}
+      # 部署在 nginx 反代之后，按 X-Forwarded-For 识别真实客户端 IP（限流用）
+      - TRUST_PROXY_HEADERS=${TRUST_PROXY_HEADERS:-true}
       - MAX_UPLOAD_SIZE_MB=${MAX_UPLOAD_SIZE_MB:-50}
       - UPLOAD_DIR=/app/uploads
       - CORS_ORIGINS=${CORS_ORIGINS}

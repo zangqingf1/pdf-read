@@ -45,6 +45,7 @@ from app.auth.schemas import (
 )
 from app.auth.security import create_access_token, hash_password, verify_password
 from app.auth.verification import consume_verification_code, send_verification_code
+from app.config import settings
 from app.database import get_db
 from app.models.user import User
 from app.services import avatar_service
@@ -55,14 +56,17 @@ router = APIRouter()
 def _client_ip(request: Request) -> str:
     """Best-effort client IP.
 
-    Behind nginx the real client is the leftmost entry of X-Forwarded-For;
-    without that header fall back to the socket peer address.
+    Only trusts X-Forwarded-For when TRUST_PROXY_HEADERS is enabled (i.e. the
+    app sits behind a reverse proxy that sanitizes/sets the header). Without
+    that, XFF is attacker-controlled — fall back to the socket peer address so
+    rate limiting cannot be bypassed by forging the header.
     """
-    forwarded = request.headers.get("x-forwarded-for") if hasattr(request, "headers") else None
-    if forwarded:
-        first = forwarded.split(",")[0].strip()
-        if first:
-            return first
+    if settings.TRUST_PROXY_HEADERS and hasattr(request, "headers"):
+        forwarded = request.headers.get("x-forwarded-for")
+        if forwarded:
+            first = forwarded.split(",")[0].strip()
+            if first:
+                return first
     return request.client.host if request.client else "unknown"
 
 

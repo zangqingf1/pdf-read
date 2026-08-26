@@ -14,6 +14,8 @@ from pathlib import Path
 
 import edge_tts
 
+from app.config import settings
+
 # 美音 / 英音 各选一个自然的神经音色
 VOICES: dict[str, str] = {
     "us": "en-US-JennyNeural",
@@ -37,9 +39,59 @@ _RATE_RE = re.compile(r"^[+-]?\d{1,3}%$")
 # 磁盘缓存目录：backend/.tts_cache/。测试可置 None 关闭。
 _cache_dir: Path | None = Path(__file__).resolve().parent.parent.parent / ".tts_cache"
 
+# 磁盘缓存总容量上限（字节），超限按 mtime 淘汰最旧文件
+_CACHE_MAX_BYTES = settings.TTS_CACHE_MAX_MB * 1024 * 1024
+
 
 class TTSUnavailableError(Exception):
     """edge-tts 合成失败（网络不可达 / 微软服务异常）。"""
+
+
+def _evict_disk_cache_if_needed() -> None:
+    """Keep the disk cache directory under TTS_CACHE_MAX_MB.
+
+    Best-effort: walks all files and deletes oldest-mtime entries (mp3 与其
+    sidecar json 成对淘汰) until total size fits. Silent on any OSError.
+    """
+    if _cache_dir is None or not _cache_dir.is_dir():
+        return
+    try:
+        sized = []
+        total = 0
+        for p in _cache_dir.iterdir():
+            if not p.is_file():
+                continue
+            try:
+                st = p.stat()
+            except OSError:
+                continue
+            sized.append((st.st_mtime, st.st_size, p))
+            total += st.st_size
+        if total <= _CACHE_MAX_BYTES:
+            return
+        by_path = {p: size for _, size, p in sized}
+        sized.sort(key=lambda t: t[0])  # oldest first
+        for _, _, p in sized:
+            if total <= _CACHE_MAX_BYTES:
+                break
+            base = str(p)
+            victims = [p]
+            if base.endswith(".mp3"):
+                victims.append(Path(base[: -len(".mp3")] + ".json"))
+            elif base.endswith(".json"):
+                victims.append(Path(base[: -len(".json")] + ".mp3"))
+            for victim in victims:
+                info = by_path.get(victim)
+                try:
+                    if victim.exists():
+                        victim.unlink()
+                except OSError:
+                    continue
+                if info is not None:
+                    total -= info
+                    by_path.pop(victim, None)
+    except OSError:
+        pass
 
 
 def _store_memory(key: tuple[str, str], data: bytes) -> bytes:
@@ -70,6 +122,7 @@ def _save_disk(word: str, accent: str, data: bytes) -> None:
         return
     try:
         _cache_dir.mkdir(parents=True, exist_ok=True)
+        _evict_disk_cache_if_needed()
         _disk_path(word, accent).write_bytes(data)
     except OSError:
         pass  # 磁盘不可写时静默降级，不影响内存缓存
@@ -140,6 +193,7 @@ def _para_disk_save(text: str, accent: str, rate: str, audio: bytes, boundaries:
         return
     try:
         _cache_dir.mkdir(parents=True, exist_ok=True)
+        _evict_disk_cache_if_needed()
         base = _para_disk_path(text, accent, rate)
         Path(f"{base}.mp3").write_bytes(audio)
         Path(f"{base}.json").write_text(

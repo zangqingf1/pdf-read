@@ -16,7 +16,8 @@ class Settings(BaseSettings):
     # App
     SECRET_KEY: str = "dev-secret-change-in-production"
     ENVIRONMENT: str = "development"
-    DEBUG: bool = True
+    # 默认关闭：开启会 echo 全部 SQL（含参数）到日志。本地开发在 .env 显式设 true。
+    DEBUG: bool = False
 
     # JWT / Auth
     JWT_SECRET_KEY: str = ""  # Falls back to SECRET_KEY if empty
@@ -47,6 +48,11 @@ class Settings(BaseSettings):
     # ── Login brute-force throttling (in-memory, per email+IP) ──
     LOGIN_MAX_ATTEMPTS: int = 10
     LOGIN_ATTEMPT_WINDOW_MINUTES: int = 15
+
+    # 反向代理：仅当部署在可信反代（nginx 等）之后且其会清洗/设置
+    # X-Forwarded-For 时开启。开启后取 XFF 最左值作为客户端 IP；
+    # 关闭时用 socket 对端地址，防止伪造请求头绕过限流。
+    TRUST_PROXY_HEADERS: bool = False
 
     # ── Avatar upload ──
     AVATAR_MAX_MB: int = 2
@@ -92,6 +98,11 @@ class Settings(BaseSettings):
     # Dictionary (ECDICT local + online fallback)
     DICT_DB_PATH: str = "./data/ecdict.db"
     DICT_API_URL: str = "https://api.dictionaryapi.dev/api/v2/entries/en"
+
+    # TTS 磁盘缓存容量上限（backend/.tts_cache/），超限按最旧访问时间淘汰
+    TTS_CACHE_MAX_MB: int = 200
+    # TTS 每用户每分钟最大合成次数（进程内令牌桶）
+    TTS_RATE_LIMIT_PER_MIN: int = 60
 
 
     class Config:

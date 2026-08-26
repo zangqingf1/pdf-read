@@ -104,6 +104,10 @@ def render_html_to_pdf(html: str) -> bytes:
             "--disable-dev-shm-usage",
             "--no-first-run",
             "--no-default-browser-check",
+            # SSRF 防护：用户 HTML 不可信，禁止 Chrome 解析任何主机名
+            # （内网 IP / 云 metadata 直连同样被阻断），渲染完全离线。
+            "--host-resolver-rules=MAP * ~NOTFOUND",
+            "--disable-background-networking",
             "--disable-javascript",
             f"--user-data-dir={profile_dir}",
             f"--print-to-pdf={pdf_path}",

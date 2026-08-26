@@ -83,6 +83,9 @@ async def test_render_html_to_pdf(fake_chrome):
     assert "--headless=new" in cmd
     assert "--no-pdf-header-footer" in cmd
     assert "--disable-javascript" in cmd
+    # SSRF 防护：禁网参数必须存在
+    assert "--host-resolver-rules=MAP * ~NOTFOUND" in cmd
+    assert "--disable-background-networking" in cmd
     assert "--user-data-dir=" in " ".join(cmd)
     assert any(arg.startswith("--print-to-pdf=") for arg in cmd)
     assert any(arg.startswith("file://") for arg in cmd)
