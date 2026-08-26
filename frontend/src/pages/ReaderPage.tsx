@@ -16,6 +16,7 @@ import { useResponsiveBreakpoint } from '../hooks/useResponsiveBreakpoint';
 import { destroy as destroyPlayer } from '../hooks/useParagraphAudioPlayer';
 import { useAudioPlayerStore } from '../stores/audioPlayerStore';
 import ReaderHeader from '../components/reader/ReaderHeader';
+import ErrorBanner from '../components/reader/ErrorBanner';
 import ReadingArea from '../components/reader/ReadingArea';
 import AudioPlayerBar from '../components/reader/AudioPlayerBar';
 import StudyPanel from '../components/reader/StudyPanel';
@@ -192,12 +193,14 @@ export default function ReaderPage() {
       <>
         {/* API key prompt */}
         {!apiKey && hasUntranslated && (
-          <div className="mb-6 p-4 bg-canvas-soft border border-hairline rounded-lg flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-            <div className="flex items-center gap-2">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" strokeWidth="1.5">
-                <circle cx="12" cy="12" r="10" />
-                <path d="M12 16v-4M12 8h.01" />
-              </svg>
+          <div className="mb-6 p-4 bg-surface-overlay border border-hairline-soft rounded-xl shadow-soft flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <span className="w-9 h-9 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" strokeWidth="1.5">
+                  <circle cx="12" cy="12" r="10" />
+                  <path d="M12 16v-4M12 8h.01" />
+                </svg>
+              </span>
               <span className="text-sm text-body-strong">配置 {getProviderLabel(selectedProvider)} API Key 以启用段落翻译</span>
             </div>
             <Button variant="primary" size="sm" onClick={() => setShowApiKeyModal(true)}>
@@ -207,19 +210,13 @@ export default function ReaderPage() {
         )}
         {/* Error banners */}
         {translationError && !isTranslating && (
-          <div className="mb-4 p-3 bg-error/10 border border-error/20 rounded-md text-sm text-error">
-            {translationError}
-          </div>
+          <ErrorBanner message={translationError} className="mb-4" />
         )}
         {analysisError && !isAnalyzing && (
-          <div className="mb-4 p-3 bg-error/10 border border-error/20 rounded-md text-sm text-error">
-            {analysisError}
-          </div>
+          <ErrorBanner message={analysisError} className="mb-4" />
         )}
         {sentenceAnalysisError && !isAnalyzingSentences && (
-          <div className="mb-4 p-3 bg-error/10 border border-error/20 rounded-md text-sm text-error">
-            {sentenceAnalysisError}
-          </div>
+          <ErrorBanner message={sentenceAnalysisError} className="mb-4" />
         )}
         <ReadingArea
           isTouchDevice={isTouchDevice}
@@ -745,7 +742,7 @@ export default function ReaderPage() {
 
   if (parseStatus === 'pending' || parseStatus === 'processing') {
     return (
-      <div className="flex flex-col items-center justify-center min-h-screen gap-4" style={{ backgroundColor: bgColorValue }}>
+      <div className="flex flex-col items-center justify-center min-h-screen gap-4 px-4 animate-fade-in" style={{ backgroundColor: bgColorValue }}>
         <Spinner size="lg" />
         <p className="text-base text-muted">正在解析 PDF，请稍候...</p>
         <Button variant="ghost" onClick={() => navigate('/')}>返回首页</Button>
@@ -755,7 +752,7 @@ export default function ReaderPage() {
 
   if (parseStatus === 'awaiting_selection') {
     return (
-      <div className="flex flex-col items-center justify-center min-h-screen gap-4" style={{ backgroundColor: bgColorValue }}>
+      <div className="flex flex-col items-center justify-center min-h-screen gap-4 px-4 animate-fade-in" style={{ backgroundColor: bgColorValue }}>
         <div className="w-16 h-16 rounded-full bg-warning/15 flex items-center justify-center">
           <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="var(--warning)" strokeWidth="2">
             <path d="M12 9v4M12 17h.01" />
@@ -778,7 +775,7 @@ export default function ReaderPage() {
 
   if (error) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-screen gap-4" style={{ backgroundColor: bgColorValue }}>
+      <div className="flex flex-col items-center justify-center min-h-screen gap-4 px-4 animate-fade-in" style={{ backgroundColor: bgColorValue }}>
         <div className="w-16 h-16 rounded-full bg-error/15 flex items-center justify-center">
           <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="var(--error)" strokeWidth="2">
             <circle cx="12" cy="12" r="10" />
@@ -801,7 +798,7 @@ export default function ReaderPage() {
 
   if (!loading && paragraphs.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-screen gap-4" style={{ backgroundColor: bgColorValue }}>
+      <div className="flex flex-col items-center justify-center min-h-screen gap-4 px-4 animate-fade-in" style={{ backgroundColor: bgColorValue }}>
         <div className="w-16 h-16 rounded-full bg-warning/15 flex items-center justify-center">
           <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="var(--warning)" strokeWidth="2">
             <path d="M12 9v4M12 17h.01" />
@@ -858,7 +855,7 @@ export default function ReaderPage() {
           {hasAnalyses && !panelOpen && (
             <button
               onClick={handleOpenPanel}
-              className="fixed right-3 top-1/2 -translate-y-1/2 z-40 w-9 h-24 bg-surface-card border border-hairline rounded-l-lg shadow-md flex flex-col items-center justify-center gap-1.5 hover:bg-canvas-soft transition-colors touch-area group"
+              className="fixed right-3 top-1/2 -translate-y-1/2 z-40 w-9 h-24 bg-surface-overlay border border-hairline-soft rounded-l-xl shadow-soft flex flex-col items-center justify-center gap-1.5 hover:bg-canvas-soft transition-colors touch-area group"
               title="打开解析面板"
               style={{ borderRight: 'none' }}
             >
@@ -912,7 +909,7 @@ export default function ReaderPage() {
       {/* Floating action bar */}
       {(selectedWordCount > 0 || selectedSentenceCount > 0) && (
         <div className={[
-          'z-50 shadow-elevated rounded-lg px-4 md:px-5 py-3 border border-hairline flex items-center gap-3 md:gap-4 flex-wrap',
+          'z-50 rounded-xl px-4 md:px-5 py-3 border border-hairline-soft shadow-pop flex items-center gap-3 md:gap-4 flex-wrap',
           isMobile
             ? 'fixed bottom-0 left-0 right-0 rounded-t-xl'
             : 'fixed bottom-6 left-1/2 -translate-x-1/2',

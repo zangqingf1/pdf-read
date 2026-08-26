@@ -548,6 +548,14 @@ async def run_migrations():
             except Exception:
                 pass
 
+        # ═══════════════════════════════════════════════════════════════
+        # Migration 015: 文档收藏标记（首页「我的收藏」/ 阅读页星标）
+        # ═══════════════════════════════════════════════════════════════
+        await _apply(
+            "015a_documents_is_favorite",
+            "ALTER TABLE documents ADD COLUMN is_favorite BOOLEAN DEFAULT 0",
+        )
+
 
 async def _backfill_vocabulary_phonetics():
     """Fill empty phonetics using the base-form fallback (see dictionary_service)."""

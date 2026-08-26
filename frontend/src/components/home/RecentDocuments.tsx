@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { listDocuments, deleteDocument, retryDocument, batchDeleteDocuments, type DocumentListItem } from '../../services/pdfApi';
+import { listDocuments, deleteDocument, retryDocument, batchDeleteDocuments, setFavorite, type DocumentListItem } from '../../services/pdfApi';
 import { getStoredMineruToken } from '../common/ApiKeyModal';
 import dayjs from 'dayjs';
 import Button from '../ui/Button';
@@ -29,6 +29,8 @@ interface RecentDocumentsProps {
   /** 受控批量选择模式（侧边栏「批量管理」导航触发） */
   selectMode?: boolean;
   onSelectModeChange?: (selecting: boolean) => void;
+  /** 仅显示收藏的文档（「我的收藏」视图） */
+  favoritesOnly?: boolean;
 }
 
 let toastFn: ((msg: string) => void) | null = null;
@@ -41,6 +43,7 @@ export default function RecentDocuments({
   showLoadMore = false,
   selectMode: selectModeProp,
   onSelectModeChange,
+  favoritesOnly = false,
 }: RecentDocumentsProps) {
   const [documents, setDocuments] = useState<DocumentListItem[]>([]);
   const [total, setTotal] = useState(0);
@@ -67,23 +70,23 @@ export default function RecentDocuments({
   const fetchDocuments = useCallback(async () => {
     setLoading(true);
     try {
-      const result = await listDocuments(pageSize, 0);
+      const result = await listDocuments(pageSize, 0, favoritesOnly);
       setDocuments(result.documents);
       setTotal(result.total ?? result.documents.length);
     } catch { /* silent */ }
     finally { setLoading(false); }
-  }, [pageSize]);
+  }, [pageSize, favoritesOnly]);
 
   const loadMore = useCallback(async () => {
     if (loadingMore) return;
     setLoadingMore(true);
     try {
-      const result = await listDocuments(pageSize, documents.length);
+      const result = await listDocuments(pageSize, documents.length, favoritesOnly);
       setDocuments((prev) => [...prev, ...result.documents]);
       setTotal(result.total ?? 0);
     } catch { /* silent */ }
     finally { setLoadingMore(false); }
-  }, [documents.length, loadingMore, pageSize]);
+  }, [documents.length, loadingMore, pageSize, favoritesOnly]);
 
   useEffect(() => { fetchDocuments(); }, [fetchDocuments, refreshKey]);
 
@@ -111,6 +114,23 @@ export default function RecentDocuments({
       setTotal((t) => Math.max(0, t - 1));
     } catch { toastFn?.('删除失败'); }
     finally { setActionLoading(null); }
+  };
+
+  const handleToggleFavorite = async (doc: DocumentListItem) => {
+    const next = !doc.is_favorite;
+    // Optimistic update; rollback on failure
+    setDocuments((prev) => prev.map((d) => (d.id === doc.id ? { ...d, is_favorite: next } : d)));
+    try {
+      await setFavorite(doc.id, next);
+      if (favoritesOnly && !next) {
+        // 收藏视图中取消收藏 → 从列表移除
+        setDocuments((prev) => prev.filter((d) => d.id !== doc.id));
+        setTotal((t) => Math.max(0, t - 1));
+      }
+    } catch {
+      setDocuments((prev) => prev.map((d) => (d.id === doc.id ? { ...d, is_favorite: doc.is_favorite } : d)));
+      toastFn?.('收藏操作失败');
+    }
   };
 
   const handleRetry = async (id: string) => {
@@ -171,17 +191,24 @@ export default function RecentDocuments({
       return (
         <div className="flex flex-col items-center justify-center py-10 px-4 text-center">
           <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="var(--muted-soft)" strokeWidth="1.2" className="mb-3 opacity-50">
-            <path d="M4 19.5A2.5 2.5 0 016.5 17H20" />
-            <path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z" />
+            {favoritesOnly ? (
+              <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+            ) : (
+              <>
+                <path d="M4 19.5A2.5 2.5 0 016.5 17H20" />
+                <path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z" />
+              </>
+            )}
           </svg>
-          <p className="text-xs text-muted-soft">暂无文档</p>
+          <p className="text-xs text-muted-soft">{favoritesOnly ? '暂无收藏' : '暂无文档'}</p>
+          {!favoritesOnly && <p className="text-[10px] text-muted-soft/70 mt-1">上传文档或粘贴链接开始阅读吧</p>}
         </div>
       );
     }
     return (
       <EmptyState
-        title="还没有处理过文档"
-        description="上传文档或粘贴链接开始阅读吧"
+        title={favoritesOnly ? '暂无收藏' : '还没有处理过文档'}
+        description={favoritesOnly ? '在文档上点击星标即可收藏' : '上传文档或粘贴链接开始阅读吧'}
       />
     );
   }
@@ -189,13 +216,17 @@ export default function RecentDocuments({
   // ── Sidebar item hover actions: 收藏 + 删除 ──
   const renderRowActions = (doc: DocumentListItem) => (
     <div className="flex items-center gap-0.5 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
-      {/* 收藏（后端功能待接入，前端占位提示） */}
+      {/* 收藏 */}
       <button
-        className="w-6 h-6 flex items-center justify-center rounded text-muted-soft hover:text-primary hover:bg-primary/10 transition-all touch-area"
-        onClick={() => toastFn?.('收藏功能即将上线')}
-        title="收藏"
+        className={`w-6 h-6 flex items-center justify-center rounded transition-all touch-area ${
+          doc.is_favorite
+            ? 'text-primary'
+            : 'text-muted-soft hover:text-primary hover:bg-primary/10'
+        }`}
+        onClick={() => handleToggleFavorite(doc)}
+        title={doc.is_favorite ? '取消收藏' : '收藏'}
       >
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill={doc.is_favorite ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
           <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
         </svg>
       </button>

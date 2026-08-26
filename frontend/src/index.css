@@ -701,9 +701,9 @@
   vertical-align: middle;
   flex-shrink: 0;
   border-radius: 9999px;
-  border: 1px solid rgba(150, 148, 142, 0.25);
-  background-color: rgba(150, 148, 142, 0.1);
-  color: #97948d;
+  border: 1px solid color-mix(in srgb, var(--muted) 28%, transparent);
+  background-color: color-mix(in srgb, var(--muted) 10%, transparent);
+  color: var(--muted-soft);
   cursor: pointer;
   transition: color 0.15s ease, border-color 0.15s ease, background-color 0.15s ease;
 }
@@ -713,9 +713,9 @@
 }
 .translate-toggle-btn:hover,
 .translate-toggle-btn[aria-expanded='true'] {
-  color: #6c6a64;
-  border-color: rgba(150, 148, 142, 0.45);
-  background-color: rgba(150, 148, 142, 0.18);
+  color: var(--body);
+  border-color: color-mix(in srgb, var(--muted) 45%, transparent);
+  background-color: color-mix(in srgb, var(--muted) 18%, transparent);
 }
 
 /* ── 段尾「从本段开始朗读」图标按钮（与翻译按钮同款式）── */
@@ -729,9 +729,9 @@
   vertical-align: middle;
   flex-shrink: 0;
   border-radius: 9999px;
-  border: 1px solid rgba(150, 148, 142, 0.25);
-  background-color: rgba(150, 148, 142, 0.1);
-  color: #97948d;
+  border: 1px solid color-mix(in srgb, var(--muted) 28%, transparent);
+  background-color: color-mix(in srgb, var(--muted) 10%, transparent);
+  color: var(--muted-soft);
   cursor: pointer;
   transition: color 0.15s ease, border-color 0.15s ease, background-color 0.15s ease;
 }
@@ -740,20 +740,20 @@
   height: 0.55em;
 }
 .paragraph-play-btn:hover {
-  color: #6c6a64;
-  border-color: rgba(150, 148, 142, 0.45);
-  background-color: rgba(150, 148, 142, 0.18);
+  color: var(--body);
+  border-color: color-mix(in srgb, var(--muted) 45%, transparent);
+  background-color: color-mix(in srgb, var(--muted) 18%, transparent);
 }
 /* 本段正在朗读时高亮为主题色 */
 .paragraph-play-btn-active {
-  color: var(--primary, #cc785c);
-  border-color: rgba(204, 120, 92, 0.45);
-  background-color: rgba(204, 120, 92, 0.12);
+  color: var(--primary);
+  border-color: rgba(200, 116, 85, 0.45);
+  background-color: rgba(200, 116, 85, 0.12);
 }
 .paragraph-play-btn-active:hover {
-  color: var(--primary, #cc785c);
-  border-color: rgba(204, 120, 92, 0.6);
-  background-color: rgba(204, 120, 92, 0.2);
+  color: var(--primary);
+  border-color: rgba(200, 116, 85, 0.6);
+  background-color: rgba(200, 116, 85, 0.2);
 }
 
 /* ── 段落首行缩进 + 首段首字下沉 ── */
@@ -803,7 +803,7 @@
 /* ── 校对页悬浮联动（DOM class 直连，不经 React 状态）── */
 /* PDF 解析框 hover → 编辑区段落浅色底（与 bg-primary/5 同色系，靠后定义优先） */
 .review-paragraph-highlight {
-  background-color: rgb(204 120 92 / 0.05);
+  background-color: rgb(200 116 85 / 0.05);
 }
 /* 编辑区段落 hover → PDF 解析框填充高亮（覆盖 border-blue-500/70 常态） */
 .layout-box-hover {
@@ -829,8 +829,8 @@
   animation: word-token-jump-flash-anim 1.8s ease-out;
 }
 @keyframes word-token-jump-flash-anim {
-  0% { background-color: rgb(204 120 92 / 0.55); box-shadow: 0 0 0 3px rgb(204 120 92 / 0.6); }
-  60% { background-color: rgb(204 120 92 / 0.25); box-shadow: 0 0 0 2px rgb(204 120 92 / 0.35); }
+  0% { background-color: rgb(200 116 85 / 0.55); box-shadow: 0 0 0 3px rgb(200 116 85 / 0.6); }
+  60% { background-color: rgb(200 116 85 / 0.25); box-shadow: 0 0 0 2px rgb(200 116 85 / 0.35); }
   100% { box-shadow: 0 0 0 0 transparent; }
 }
 
@@ -847,21 +847,7 @@
   margin-bottom: 0;
 }
 
-/* ── Translation reveal ── */
-.translation-reveal {
-  overflow: hidden;
-  transition: max-height 0.3s ease, opacity 0.3s ease, margin 0.3s ease;
-}
-.translation-reveal-hidden {
-  max-height: 0;
-  opacity: 0;
-  margin-top: 0;
-  margin-bottom: 0;
-}
-.translation-reveal-visible {
-  max-height: 2000px;
-  opacity: 1;
-}
+/* ── Translation reveal（已废弃：译文改为条件渲染，保留占位注释防误加） ── */
 
 /* ── Chinese spoiler (中文释义模糊遮盖) ── */
 .zh-spoiler {

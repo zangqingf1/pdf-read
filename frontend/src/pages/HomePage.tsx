@@ -6,12 +6,11 @@ import DailyQuote from '../components/home/DailyQuote';
 import HomeSidebar, { type HomeNavKey } from '../components/home/HomeSidebar';
 import ApiKeyModal from '../components/common/ApiKeyModal';
 import Modal from '../components/ui/Modal';
-import EmptyState from '../components/ui/EmptyState';
 
 export default function HomePage() {
   const [showApiKeyModal, setShowApiKeyModal] = useState(false);
   const [showAllDocs, setShowAllDocs] = useState(false);
-  const [showFavorites, setShowFavorites] = useState(false);
+  const [activeNav, setActiveNav] = useState<Exclude<HomeNavKey, 'recent'>>('home');
   const [searchParams, setSearchParams] = useSearchParams();
   const [refreshKey, setRefreshKey] = useState(0);
   const [isSelecting, setIsSelecting] = useState(false);
@@ -30,8 +29,9 @@ export default function HomePage() {
 
   const handleSidebarNavigate = useCallback((key: HomeNavKey) => {
     setSidebarOpen(false);
-    if (key === 'recent') setShowAllDocs(true);
-    else if (key === 'favorites') setShowFavorites(true);
+    // 首页 ↔ 我的收藏：切换侧边栏下方面板内容；「查看全部」仍走弹窗
+    if (key === 'home' || key === 'favorites') setActiveNav(key);
+    else if (key === 'recent') setShowAllDocs(true);
   }, []);
 
   return (
@@ -57,6 +57,7 @@ export default function HomePage() {
       >
         <HomeSidebar
           refreshKey={refreshKey}
+          activeNav={activeNav}
           onNavigate={handleSidebarNavigate}
           onCloseMobile={() => setSidebarOpen(false)}
         />
@@ -132,24 +133,6 @@ export default function HomePage() {
         bodyClassName="px-4 py-4 overflow-y-auto"
       >
         <RecentDocuments refreshKey={refreshKey} pageSize={20} showLoadMore />
-      </Modal>
-
-      {/* ── 我的收藏（前端占位，后端功能待接入） ── */}
-      <Modal
-        open={showFavorites}
-        onClose={() => setShowFavorites(false)}
-        title="我的收藏"
-        width="440px"
-      >
-        <EmptyState
-          icon={
-            <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
-              <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
-            </svg>
-          }
-          title="暂无收藏"
-          description="收藏功能即将上线，敬请期待"
-        />
       </Modal>
 
       {/* ── API 配置 ── */}

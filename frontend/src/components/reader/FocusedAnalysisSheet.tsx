@@ -7,6 +7,7 @@ import { useReaderStore } from '../../stores/readerStore';
 import { deleteWordAnalysis, type WordAnalysisResult } from '../../services/wordAnalysisApi';
 import { WordRichTags, ExamTagBadges } from './WordTags';
 import { filterVisibleExamTags } from '../../constants/examTags';
+import { SENTENCE_HEADER_STYLES } from '../../constants/sentenceHeaderStyles';
 import { ChineseSpoiler } from '../common/ChineseSpoiler';
 import { deleteSentenceAnalysis, type SentenceAnalysisResult } from '../../services/sentenceAnalysisApi';
 import { sentenceBodyMarkdown, sentenceBreakdownChunks } from '../../utils/sentenceSections';
@@ -44,7 +45,7 @@ function FocusedWordCard({
   }, [analysis, removeWordAnalysis]);
 
   return (
-    <div className="bg-surface-card border border-hairline rounded-lg p-4">
+    <div className="bg-surface-overlay border border-hairline-soft rounded-lg shadow-soft p-4">
       {/* Header: word + phonetic + delete */}
       <div className="flex items-start justify-between mb-3">
         <div className="flex items-baseline gap-2 flex-wrap">
@@ -126,19 +127,6 @@ function FocusedWordCard({
 
 // ── Focused Sentence Card ──────────────────────────────────────────
 
-// Section header label styles for sentence-analysis markdown (标题名 → 标签配色)
-const SENTENCE_HEADER_STYLES: Record<string, string> = {
-  原句拆解: 'bg-[#fdf3ef] text-[#b85c3a] border border-[#e8b4a0]',
-  理解拆解: 'bg-[#f0f7f1] text-[#4a7c59] border border-[#a3d4a8]',
-  阅读线索: 'bg-[#eef2f8] text-[#5a6d8a] border border-[#a8b8d4]',
-  地道翻译: 'bg-[#fdf6e3] text-[#8a6d3b] border border-[#e6d5a0]',
-  // 旧数据兼容
-  原文: 'bg-[#eef2f8] text-[#5a6d8a] border border-[#a8b8d4]',
-  主干: 'bg-[#fdf3ef] text-[#b85c3a] border border-[#e8b4a0]',
-  讲解: 'bg-[#f0f7f1] text-[#4a7c59] border border-[#a3d4a8]',
-  译文: 'bg-[#eef2f8] text-[#5a6d8a] border border-[#a8b8d4]',
-};
-
 /** 句子卡标题：原句拆解直接作为标题（语块间高亮 / 分隔，完整显示）；旧数据回退原句纯文本 */
 function FocusedSentenceTitle({ analysis }: { analysis: SentenceAnalysisResult }) {
   const chunks = sentenceBreakdownChunks(analysis.content);
@@ -175,7 +163,7 @@ function FocusedSentenceCard({
   }, [analysis, removeSentenceAnalysis]);
 
   return (
-    <div className="bg-surface-card border border-hairline rounded-lg p-4">
+    <div className="bg-surface-overlay border border-hairline-soft rounded-lg shadow-soft p-4">
       {/* Header: 原句拆解直接作为标题 + delete */}
       <div className="flex items-start justify-between mb-3">
         <span className="font-semibold text-ink leading-snug text-base font-reading">
@@ -297,7 +285,7 @@ export default function FocusedAnalysisSheet({
       <div className="flex-1 bg-black/30" onClick={onClose} />
 
       {/* Sheet */}
-      <div className="max-h-[45vh] bg-surface-overlay rounded-t-2xl flex flex-col overflow-hidden shadow-elevated animate-sheet-slide-up">
+      <div className="max-h-[45vh] bg-surface-overlay rounded-t-xl flex flex-col overflow-hidden shadow-elevated animate-sheet-slide-up">
         {/* Content */}
         <div className="flex-1 overflow-y-auto p-4 study-panel-content" style={{ fontSize: wordPanelFontSize }}>
           {!hasData && (

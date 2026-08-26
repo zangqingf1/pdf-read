@@ -15,6 +15,8 @@ interface DocumentState {
   paragraphCount: number;
   pageCount: number | null;
   selectedPages: number[] | null;
+  /** 当前文档收藏状态（阅读页星标按钮） */
+  isFavorite: boolean;
   isLoading: boolean;
 
   // Translation state
@@ -68,6 +70,8 @@ interface DocumentState {
   setTitle: (v: string) => void;
   /** 设置大标题中文翻译 */
   setTitleZh: (v: string) => void;
+  /** 设置当前文档收藏状态 */
+  setIsFavorite: (v: boolean) => void;
   reset: () => void;
   updateTranslations: (items: Array<{ index: number; text: string }>) => void;
   setTranslating: (translating: boolean) => void;
@@ -122,8 +126,8 @@ export const useDocumentStore = create<DocumentState>((set) => ({
   paragraphCount: 0,
   pageCount: null,
   selectedPages: null,
+  isFavorite: false,
   isLoading: false,
-
   translations: {},
   isTranslating: false,
   translationError: null,
@@ -221,6 +225,7 @@ export const useDocumentStore = create<DocumentState>((set) => ({
         paragraphCount: data.paragraph_count,
         pageCount: data.page_count ?? null,
         selectedPages: data.selected_pages ?? null,
+        isFavorite: !!data.is_favorite,
         translations,
         wordAnalyses,
         sentenceAnalyses,
@@ -237,6 +242,7 @@ export const useDocumentStore = create<DocumentState>((set) => ({
 
   setTitleZh: (v) => set({ titleZh: v }),
 
+  setIsFavorite: (v) => set({ isFavorite: v }),
   reset: () =>
     set({
       documentId: null,
@@ -248,6 +254,7 @@ export const useDocumentStore = create<DocumentState>((set) => ({
       paragraphCount: 0,
       pageCount: null,
       selectedPages: null,
+      isFavorite: false,
       isLoading: false,
       translations: {},
       isTranslating: false,

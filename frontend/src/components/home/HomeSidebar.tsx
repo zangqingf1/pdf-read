@@ -1,4 +1,3 @@
-import { useState, useCallback } from 'react';
 import RecentDocuments from './RecentDocuments';
 import UserMenu from '../common/UserMenu';
 
@@ -6,13 +5,14 @@ export type HomeNavKey = 'home' | 'recent' | 'favorites';
 
 interface HomeSidebarProps {
   refreshKey: number;
-  /** 导航点击回调（favorites 由 HomePage 打开弹窗） */
+  /** 当前激活的导航项（由 HomePage 受控，决定下方面板内容） */
+  activeNav: Exclude<HomeNavKey, 'recent'>;
   onNavigate: (key: HomeNavKey) => void;
   /** 移动端抽屉关闭（仅移动端传入） */
   onCloseMobile?: () => void;
 }
 
-const NAV_ITEMS: { key: HomeNavKey; label: string; icon: React.ReactNode }[] = [
+const NAV_ITEMS: { key: Exclude<HomeNavKey, 'recent'>; label: string; icon: React.ReactNode }[] = [
   {
     key: 'home',
     label: '首页',
@@ -34,13 +34,8 @@ const NAV_ITEMS: { key: HomeNavKey; label: string; icon: React.ReactNode }[] = [
   },
 ];
 
-export default function HomeSidebar({ refreshKey, onNavigate, onCloseMobile }: HomeSidebarProps) {
-  const [activeNav, setActiveNav] = useState<HomeNavKey>('home');
-
-  const handleNav = useCallback((key: HomeNavKey) => {
-    setActiveNav(key);
-    onNavigate(key);
-  }, [onNavigate]);
+export default function HomeSidebar({ refreshKey, activeNav, onNavigate, onCloseMobile }: HomeSidebarProps) {
+  const favoritesView = activeNav === 'favorites';
 
   return (
     <div className="h-full flex flex-col bg-canvas-soft">
@@ -79,7 +74,7 @@ export default function HomeSidebar({ refreshKey, onNavigate, onCloseMobile }: H
           return (
             <button
               key={item.key}
-              onClick={() => handleNav(item.key)}
+              onClick={() => onNavigate(item.key)}
               className={[
                 'w-full flex items-center gap-2.5 px-3.5 py-2 rounded-lg text-[13px] transition-colors duration-150',
                 active
@@ -94,21 +89,30 @@ export default function HomeSidebar({ refreshKey, onNavigate, onCloseMobile }: H
         })}
       </nav>
 
-      {/* ── Recent documents panel ── */}
+      {/* ── Document panel：最近阅读 / 我的收藏 ── */}
       <div className="flex-1 min-h-0 flex flex-col px-3.5 pt-4 pb-2">
-        <div className="bg-canvas/80 rounded-xl p-2.5 flex-1 min-h-0 flex flex-col">
+        <div key={activeNav} className="bg-canvas/80 rounded-xl p-2.5 flex-1 min-h-0 flex flex-col animate-fade-in">
           <div className="flex items-center justify-between px-1 mb-2.5 flex-shrink-0">
-            <h3 className="text-[13px] font-semibold text-ink m-0">最近阅读</h3>
-            <button
-              className="text-[11px] text-muted-soft hover:text-primary transition-colors touch-area"
-              onClick={() => onNavigate('recent')}
-            >
-              查看全部
-            </button>
+            <h3 className="text-[13px] font-semibold text-ink m-0 flex items-center gap-1.5">
+              {favoritesView && (
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="var(--primary)" stroke="var(--primary)" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+                  <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+                </svg>
+              )}
+              {favoritesView ? '我的收藏' : '最近阅读'}
+            </h3>
+            {!favoritesView && (
+              <button
+                className="text-[11px] text-muted-soft hover:text-primary transition-colors touch-area"
+                onClick={() => onNavigate('recent')}
+              >
+                查看全部
+              </button>
+            )}
           </div>
 
           <div className="flex-1 overflow-y-auto pr-0.5 min-h-0">
-            <RecentDocuments refreshKey={refreshKey} sidebar />
+            <RecentDocuments refreshKey={refreshKey} sidebar favoritesOnly={favoritesView} />
           </div>
         </div>
       </div>

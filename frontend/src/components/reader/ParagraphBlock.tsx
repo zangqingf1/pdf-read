@@ -410,8 +410,8 @@ const ParagraphBlock = memo(function ParagraphBlock({
 
       {/* Translation section */}
       {showTranslation && translation && (
-        <div className="not-prose mt-2" style={{ fontSize: `${Math.max(fontSize - 4, 12)}px` }}>
-          <div className="p-3.5 bg-surface-card rounded-md text-body border-l-[3px] border-primary shadow-soft">
+        <div className="not-prose mt-2" style={{ fontSize: `${Math.max(fontSize - 5, 12)}px` }}>
+          <div className="pl-3 py-0.5 text-body border-l-[3px] border-primary">
             <span className="font-chinese leading-relaxed">{translation}</span>
           </div>
         </div>

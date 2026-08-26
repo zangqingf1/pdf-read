@@ -62,7 +62,12 @@ export default memo(function ReadingArea({
   return (
     <div>
       {/* ── Document header（mobile）── */}
-      <div className="md:hidden mb-6 pb-4 border-b border-hairline">
+      <div className="md:hidden mb-6 pb-4 border-b border-hairline-soft">
+        <div className="flex items-center justify-center gap-3 mb-2">
+          <span className="h-px w-8 bg-primary/25" />
+          <span className="text-[13px] font-semibold text-primary tracking-wide">正在阅读</span>
+          <span className="h-px w-8 bg-primary/25" />
+        </div>
         <EditableTitle headingClassName="text-display-sm font-display text-ink mb-1 text-center" />
         {titleZh && (
           <p className="text-base font-display text-body text-center mb-2">
@@ -107,7 +112,11 @@ export default memo(function ReadingArea({
       </div>
 
       {/* ── Document header ── */}
-      <div className="hidden md:block mb-10 pb-6 border-b border-hairline">
+      <div className="hidden md:block mb-10 pb-6 border-b border-hairline-soft">
+        <div className="flex items-center gap-3 mb-3">
+          <span className="text-[13px] font-semibold text-primary tracking-wide">正在阅读</span>
+          <span className="h-px w-12 bg-primary/25" />
+        </div>
         <EditableTitle headingClassName="text-display-md font-display text-ink mb-1" />
         {titleZh && (
           <p className="text-lg font-display text-body mb-2">

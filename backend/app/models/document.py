@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import JSON, String, Integer, Text, DateTime, Uuid, ForeignKey, func
+from sqlalchemy import JSON, String, Integer, Text, DateTime, Uuid, ForeignKey, Boolean, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -47,6 +47,9 @@ class Document(Base):
     summary_updated_at: Mapped[datetime | None] = mapped_column(
         DateTime, nullable=True
     )
+
+    # 收藏标记 — 首页「我的收藏」视图过滤用
+    is_favorite: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
 
     # User ownership
     user_id: Mapped[uuid.UUID | None] = mapped_column(

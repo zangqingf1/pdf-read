@@ -392,10 +392,13 @@ class PDFService:
     async def list_documents(
         self, db: AsyncSession, limit: int = 20, offset: int = 0,
         user_id: uuid.UUID | None = None,
+        favorites_only: bool = False,
     ) -> tuple[list[Document], int]:
         """List documents ordered by creation time (newest first).
 
         If user_id is provided, only documents owned by that user are returned.
+        If favorites_only is True, only favorited documents are returned
+        (total reflects the filtered count).
         """
         from sqlalchemy import func as sqlfunc
         from sqlalchemy.orm import defer
@@ -404,6 +407,8 @@ class PDFService:
         count_stmt = select(sqlfunc.count()).select_from(Document)
         if user_id is not None:
             count_stmt = count_stmt.where(Document.user_id == user_id)
+        if favorites_only:
+            count_stmt = count_stmt.where(Document.is_favorite.is_(True))
         total_result = await db.execute(count_stmt)
         total = total_result.scalar_one()
 
@@ -417,6 +422,8 @@ class PDFService:
         )
         if user_id is not None:
             stmt = stmt.where(Document.user_id == user_id)
+        if favorites_only:
+            stmt = stmt.where(Document.is_favorite.is_(True))
         result = await db.execute(stmt)
         documents = result.scalars().all()
 

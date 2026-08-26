@@ -7,6 +7,7 @@ import Badge from '../components/ui/Badge';
 import EmptyState from '../components/ui/EmptyState';
 import Spinner from '../components/ui/Spinner';
 import PhoneticWithSpeakers from '../components/reader/PhoneticWithSpeakers';
+import ErrorBanner from '../components/reader/ErrorBanner';
 import { ChineseSpoiler } from '../components/common/ChineseSpoiler';
 import { ExamTagBadges } from '../components/reader/WordTags';
 import ExamTagFilterPopover from '../components/common/ExamTagFilterPopover';
@@ -215,18 +216,20 @@ export default function VocabularyPage() {
   return (
     <div className="min-h-screen bg-canvas">
       {/* Header */}
-      <header className="sticky top-0 z-10 bg-canvas border-b border-hairline">
-        <div className="max-w-4xl mx-auto px-4 md:px-6 h-[52px] flex items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
+      <header
+        className="sticky top-0 z-10 border-b border-hairline-soft backdrop-blur-md"
+        style={{ backgroundColor: 'color-mix(in srgb, var(--canvas) 88%, transparent)' }}
+      >
+        <div className="px-4 md:px-6 h-[52px] flex items-center justify-between gap-4">
+          <div className="flex items-center gap-3 min-w-0">
             <Link to="/" className="inline-flex items-center gap-2 text-ink hover:text-primary transition-colors">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
                 <path d="M19 12H5M12 19l-7-7 7-7" />
               </svg>
               <span className="text-sm font-medium">返回</span>
             </Link>
-            <span className="text-hairline">|</span>
-            <h1 className="text-base font-display font-medium text-ink m-0">单词本</h1>
-            <Badge variant="coral">{total}</Badge>
+            <h1 className="text-sm font-medium font-sans text-ink m-0 truncate">单词本</h1>
+            <Badge className="bg-primary/15 text-primary ring-1 ring-primary/20 shadow-none">{total}</Badge>
           </div>
           <div className="flex items-center gap-2" />
         </div>
@@ -240,7 +243,7 @@ export default function VocabularyPage() {
               value={searchInput}
               onChange={(e) => setSearchInput(e.target.value)}
               placeholder="搜索单词 / 释义..."
-              className="w-full h-10 pl-10 pr-4 bg-surface-card border border-hairline rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40"
+              className="w-full h-10 pl-10 pr-4 bg-surface-overlay border border-hairline-soft rounded-md text-sm text-ink placeholder:text-muted-soft focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors"
             />
             <svg className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-soft" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
               <circle cx="11" cy="11" r="7" />
@@ -249,28 +252,28 @@ export default function VocabularyPage() {
           </div>
           <div className="flex items-center gap-2">
             <span className="text-xs text-muted whitespace-nowrap">排序：</span>
-            <button
-              onClick={() => handleSortBy('created_at')}
-              className={`px-3 py-1.5 rounded-md text-xs font-medium border transition-colors ${sortBy === 'created_at' ? 'bg-primary text-on-primary border-primary' : 'bg-surface-card text-muted border-hairline hover:border-primary/40'}`}
-            >
-              时间 {sortBy === 'created_at' && (order === 'asc' ? '↑' : '↓')}
-            </button>
-            <button
-              onClick={() => handleSortBy('document_order')}
-              className={`px-3 py-1.5 rounded-md text-xs font-medium border transition-colors ${sortBy === 'document_order' ? 'bg-primary text-on-primary border-primary' : 'bg-surface-card text-muted border-hairline hover:border-primary/40'}`}
-            >
-              文档顺序 {sortBy === 'document_order' && (order === 'asc' ? '↑' : '↓')}
-            </button>
+            {[
+              { key: 'created_at' as const, label: '时间' },
+              { key: 'document_order' as const, label: '文档顺序' },
+            ].map(({ key, label }) => (
+              <button
+                key={key}
+                onClick={() => handleSortBy(key)}
+                className={`h-8 px-3 rounded-md text-xs font-medium border transition-all active:scale-[0.98] ${
+                  sortBy === key
+                    ? 'bg-primary/10 text-primary border-primary/40'
+                    : 'bg-surface-overlay text-muted border-hairline-soft hover:border-primary/60 hover:text-ink'
+                }`}
+              >
+                {label} {sortBy === key && (order === 'asc' ? '↑' : '↓')}
+              </button>
+            ))}
             <ExamTagFilterPopover align="right" />
           </div>
         </div>
 
         {/* Error */}
-        {error && (
-          <div className="mb-4 p-3 bg-error/10 border border-error/20 rounded-md text-sm text-error">
-            {error}
-          </div>
-        )}
+        {error && <ErrorBanner message={error} className="mb-4" />}
 
         {/* Loading */}
         {loading && items.length === 0 ? (
@@ -316,10 +319,10 @@ export default function VocabularyPage() {
                     return (
                       <div key={dk}>
                         {groupByDay && (
-                          <div className="flex items-center gap-2 mb-3">
-                            <span className="text-sm font-medium text-ink">{group.label}</span>
-                            <span className="text-xs text-muted">({dayCounts[dk] ?? [...group.docs.values()].reduce((s, d) => s + d.items.length, 0)} 词)</span>
-                            <div className="flex-1 h-px bg-hairline/60 ml-2" />
+                          <div className="flex items-center gap-3 mb-3">
+                            <span className="text-[13px] font-semibold text-primary tracking-wide">{group.label}</span>
+                            <span className="h-px w-12 bg-primary/25" />
+                            <span className="text-xs text-muted">{dayCounts[dk] ?? [...group.docs.values()].reduce((s, d) => s + d.items.length, 0)} 词</span>
                           </div>
                         )}
                          <div className="flex flex-col gap-4">
@@ -351,8 +354,11 @@ export default function VocabularyPage() {
                               <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                                 {[...docGroup.items]
                                   .sort(docAppearanceCompare)
-                                   .map((entry) => (
-                                  <div key={entry.id} className="bg-surface-card border border-hairline rounded-lg p-4 shadow-soft">
+                                 .map((entry) => (
+                                   <div
+                                     key={entry.id}
+                                     className="group bg-surface-overlay border border-hairline-soft rounded-xl p-4 shadow-soft transition-all duration-200 hover:border-hairline hover:shadow-elevated animate-slide-up"
+                                   >
                                     <div className="flex flex-col gap-2.5">
                                       {/* Row 1: 单词原文 | 音标 —— 删除按钮 */}
                                       <div className="flex items-center justify-between gap-3">
@@ -367,7 +373,7 @@ export default function VocabularyPage() {
                                         <button
                                           onClick={() => handleDelete(entry.id)}
                                           disabled={deletingId === entry.id}
-                                          className="flex-shrink-0 inline-flex items-center justify-center w-7 h-7 rounded-md text-muted-soft hover:text-error hover:bg-error/5 disabled:opacity-50 transition-colors"
+                                          className="flex-shrink-0 inline-flex items-center justify-center w-7 h-7 rounded-md text-muted-soft hover:text-error hover:bg-error/5 disabled:opacity-50 transition-all active:scale-95 md:opacity-0 md:group-hover:opacity-100 focus-visible:opacity-100"
                                           title="删除"
                                           aria-label="删除"
                                         >
@@ -427,8 +433,8 @@ export default function VocabularyPage() {
                                       })()}
 
                                       {/* Part 3: 来源文档（每个文档各占一行）+ 加入日期（仅到日） */}
-                                      <div className="flex flex-col gap-1.5 border-t border-hairline/60 pt-2.5">
-                                        <span className="text-xs text-muted-soft">来源</span>
+                                      <div className="flex flex-col gap-1.5 border-t border-hairline-soft pt-2.5">
+                                        <span className="text-[11px] text-muted-soft">来源</span>
                                         {(() => {
                                           const sources =
                                             entry.all_sources && entry.all_sources.length > 0
@@ -513,7 +519,11 @@ export default function VocabularyPage() {
                     <button
                       key={p}
                       onClick={() => handlePage(p)}
-                      className={`w-8 h-8 rounded-md text-sm font-medium transition-colors ${p === page ? 'bg-primary text-on-primary' : 'bg-surface-card border border-hairline hover:border-primary/40'}`}
+                      className={`w-8 h-8 rounded-md text-sm font-medium transition-all active:scale-[0.98] ${
+                        p === page
+                          ? 'bg-primary/10 text-primary ring-1 ring-primary/20'
+                          : 'bg-surface-overlay border border-hairline-soft hover:border-primary/40'
+                      }`}
                     >
                       {p}
                     </button>

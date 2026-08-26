@@ -4,6 +4,7 @@ import { useReaderStore, BG_COLORS } from '../../stores/readerStore';
 import TypographyDrawer from './TypographyDrawer';
 import EditableTitle from './EditableTitle';
 import ExportButton from '../export/ExportButton';
+import FavoriteStarButton from './FavoriteStarButton';
 import Button from '../ui/Button';
 
 export default function ReaderHeader() {
@@ -14,8 +15,8 @@ export default function ReaderHeader() {
 
   return (
     <header
-      className="sticky top-0 z-50 border-b border-hairline h-[52px] px-4 md:px-6 flex items-center justify-between flex-shrink-0 transition-colors duration-300"
-      style={{ backgroundColor: bgColorValue }}
+      className="sticky top-0 z-50 border-b border-hairline-soft h-[52px] px-4 md:px-6 flex items-center justify-between flex-shrink-0 transition-colors duration-300 backdrop-blur-md"
+      style={{ backgroundColor: `color-mix(in srgb, ${bgColorValue} 88%, transparent)` }}
     >
       <div className="flex items-center gap-2 md:gap-6 min-w-0 flex-1">
         <Button
@@ -42,8 +43,10 @@ export default function ReaderHeader() {
         />
       </div>
 
-      {/* Right: export + typography settings (mobile only) */}
+      {/* Right: favorite + export + typography settings (mobile only) */}
       <div className="flex items-center gap-0.5 md:gap-1 flex-shrink-0">
+        <FavoriteStarButton />
+
         <ExportButton />
 
         {/* Typography settings — mobile only */}

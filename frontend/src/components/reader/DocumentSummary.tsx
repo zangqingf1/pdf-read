@@ -4,6 +4,7 @@ import { generateSummaryStream, saveSummaryDraft } from '../../services/summaryA
 import type { AIProvider } from '../../services/translateApi';
 import Button from '../ui/Button';
 import { TextArea } from '../ui/Input';
+import ErrorBanner from './ErrorBanner';
 
 interface DocumentSummaryProps {
   apiKey: string | null;
@@ -192,13 +193,15 @@ export default function DocumentSummary({ apiKey, onRequireApiKey, provider }: D
   const hasDraft = summaryDraft.trim().length > 0;
 
   return (
-    <section className="mt-10 pt-6 border-t border-hairline">
+    <section className="mt-10 pt-6 border-t border-hairline-soft">
+      <div className="flex items-center gap-3 mb-2">
+        <span className="text-[13px] font-semibold text-primary tracking-wide">读后回顾</span>
+        <span className="h-px w-12 bg-primary/25" />
+      </div>
       <h3 className="text-display-sm font-display text-ink mb-3">全文总结</h3>
 
       {summaryError && !isSummarizing && (
-        <div className="mb-4 p-3 bg-error/10 border border-error/20 rounded-md text-sm text-error">
-          {summaryError}
-        </div>
+        <ErrorBanner message={summaryError} className="mb-4" />
       )}
 
       <TextArea
@@ -215,7 +218,7 @@ export default function DocumentSummary({ apiKey, onRequireApiKey, provider }: D
       {isSummarizing && (
         <div
           ref={streamRef}
-          className="mt-3 border border-primary/30 bg-canvas-soft rounded-lg p-3.5 max-h-64 overflow-y-auto"
+          className="mt-3 border border-primary/25 bg-surface-overlay rounded-lg p-3.5 max-h-64 overflow-y-auto shadow-pop"
         >
           <span className="text-xs text-muted">正在生成…</span>
           <p className="whitespace-pre-wrap text-sm text-ink mt-1">

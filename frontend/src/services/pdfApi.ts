@@ -74,6 +74,7 @@ export interface PDFResultResponse {
   file_ext?: string | null;
   summary?: string | null;
   summary_updated_at?: string | null;
+  is_favorite?: boolean;
 }
 
 export interface ParseUrlRequest {
@@ -103,6 +104,7 @@ export interface DocumentListItem {
   source_type?: string | null;
   file_ext?: string | null;
   created_at: string;
+  is_favorite?: boolean;
 }
 
 export interface DocumentListResponse {
@@ -176,11 +178,29 @@ export async function getPDFResult(taskId: string): Promise<PDFResultResponse> {
 
 export async function listDocuments(
   limit: number = 20,
-  offset: number = 0
+  offset: number = 0,
+  favoriteOnly: boolean = false
 ): Promise<DocumentListResponse> {
   const { data } = await api.get<DocumentListResponse>('/pdf/documents', {
-    params: { limit, offset },
+    params: { limit, offset, favorite: favoriteOnly || undefined },
   });
+  return data;
+}
+
+export interface SetFavoriteResponse {
+  document_id: string;
+  is_favorite: boolean;
+}
+
+/** 设置/取消文档收藏 */
+export async function setFavorite(
+  taskId: string,
+  isFavorite: boolean
+): Promise<SetFavoriteResponse> {
+  const { data } = await api.put<SetFavoriteResponse>(
+    `/pdf/documents/${taskId}/favorite`,
+    { is_favorite: isFavorite }
+  );
   return data;
 }
 

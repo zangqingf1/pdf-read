@@ -10,6 +10,7 @@ import { deleteWordAnalysis, deleteAllWordAnalyses, WordAnalysisResult } from '.
 import { batchAddVocabulary } from '../../services/vocabularyApi';
 import { WordRichTags, ExamTagBadges } from './WordTags';
 import { filterVisibleExamTags } from '../../constants/examTags';
+import { SENTENCE_HEADER_STYLES } from '../../constants/sentenceHeaderStyles';
 import ExamTagFilterPopover from '../common/ExamTagFilterPopover';
 import { deleteSentenceAnalysis, deleteAllSentenceAnalyses } from '../../services/sentenceAnalysisApi';
 import type { SentenceAnalysisResult } from '../../services/sentenceAnalysisApi';
@@ -17,6 +18,8 @@ import { sentenceBodyMarkdown, sentenceBreakdownChunks } from '../../utils/sente
 import { wordPositionMap } from '../../utils/textTokens';
 import { scrollToParagraph } from '../../utils/scrollToParagraph';
 import EmptyState from '../ui/EmptyState';
+import Button from '../ui/Button';
+import ErrorBanner from './ErrorBanner';
 import { ChineseSpoiler } from '../common/ChineseSpoiler';
 import PhoneticWithSpeakers from './PhoneticWithSpeakers';
 
@@ -62,10 +65,9 @@ function StreamingWordCard({
 
   return (
     <div
-      className="bg-surface-card border border-primary/30 rounded-lg p-3.5 mb-3"
+      className="bg-surface-overlay border border-primary/25 rounded-lg p-3.5 mb-3 shadow-pop"
       data-word-key={`${paragraphIndex}:${word.toLowerCase()}`}
       data-paragraph-index={paragraphIndex}
-      style={{ boxShadow: '0 0 0 1px rgba(200,116,85,0.15)' }}
     >
       {/* Word header with streaming indicator */}
       <div className="flex items-center gap-2 mb-2">
@@ -79,7 +81,7 @@ function StreamingWordCard({
       {/* Raw AI output — monospace, scrollable, typewriter feel */}
       <div
         ref={rawTextRef}
-        className="bg-[#faf9f5] border border-hairline rounded-md p-2.5 max-h-[200px] overflow-y-auto"
+        className="bg-canvas border border-hairline rounded-md p-2.5 max-h-[200px] overflow-y-auto"
       >
         <pre className="text-xs font-mono text-body-strong whitespace-pre-wrap break-words m-0 leading-relaxed">
           {rawText || (
@@ -120,7 +122,7 @@ function WordCard({
 
   return (
     <div
-      className="bg-surface-card border border-hairline rounded-lg p-3.5 mb-3 shadow-soft"
+      className="bg-surface-overlay border border-hairline-soft rounded-lg p-3.5 mb-3 shadow-soft"
       data-word-key={`${analysis.paragraph_index}:${analysis.word.toLowerCase()}`}
       data-paragraph-index={analysis.paragraph_index}
     >
@@ -242,10 +244,9 @@ function StreamingSentenceCard({
 
   return (
     <div
-      className="bg-surface-card border border-primary/30 rounded-lg p-3.5 mb-3"
+      className="bg-surface-overlay border border-primary/25 rounded-lg p-3.5 mb-3 shadow-pop"
       data-sentence-key={`${paragraphIndex}:${sentenceIndex}`}
       data-paragraph-index={paragraphIndex}
-      style={{ boxShadow: '0 0 0 1px rgba(200,116,85,0.15)' }}
     >
       {/* Sentence header with streaming indicator */}
       <div className="flex items-center gap-2 mb-2">
@@ -261,7 +262,7 @@ function StreamingSentenceCard({
       {/* Raw AI output — monospace, scrollable, typewriter feel */}
       <div
         ref={rawTextRef}
-        className="bg-[#faf9f5] border border-hairline rounded-md p-2.5 max-h-[200px] overflow-y-auto"
+        className="bg-canvas border border-hairline rounded-md p-2.5 max-h-[200px] overflow-y-auto"
       >
         <pre className="text-xs font-mono text-body-strong whitespace-pre-wrap break-words m-0 leading-relaxed">
           {rawText || (
@@ -274,19 +275,6 @@ function StreamingSentenceCard({
 }
 
 // ── Sentence Card ──────────────────────────────────────────────────
-
-// Section header label styles for sentence-analysis markdown (标题名 → 标签配色)
-const SENTENCE_HEADER_STYLES: Record<string, string> = {
-  原句拆解: 'bg-[#fdf3ef] text-[#b85c3a] border border-[#e8b4a0]',
-  理解拆解: 'bg-[#f0f7f1] text-[#4a7c59] border border-[#a3d4a8]',
-  阅读线索: 'bg-[#eef2f8] text-[#5a6d8a] border border-[#a8b8d4]',
-  地道翻译: 'bg-[#fdf6e3] text-[#8a6d3b] border border-[#e6d5a0]',
-  // 旧数据兼容
-  原文: 'bg-[#eef2f8] text-[#5a6d8a] border border-[#a8b8d4]',
-  主干: 'bg-[#fdf3ef] text-[#b85c3a] border border-[#e8b4a0]',
-  讲解: 'bg-[#f0f7f1] text-[#4a7c59] border border-[#a3d4a8]',
-  译文: 'bg-[#eef2f8] text-[#5a6d8a] border border-[#a8b8d4]',
-};
 
 /** Render AI analysis content using react-markdown with styled section headers. */
 function SentenceContent({ content }: { content: string }) {
@@ -401,7 +389,7 @@ function SentenceCard({
 
   return (
     <div
-      className="bg-surface-card border border-hairline rounded-lg p-3.5 mb-3 shadow-soft"
+      className="bg-surface-overlay border border-hairline-soft rounded-lg p-3.5 mb-3 shadow-soft"
       data-sentence-key={`${analysis.paragraph_index}:${analysis.sentence_index}`}
       data-paragraph-index={analysis.paragraph_index}
     >
@@ -866,45 +854,32 @@ export default function StudyPanel({
 
             {/* Error */}
             {analysisError && !isAnalyzing && (
-              <div className="mb-3 p-3 bg-error/10 border border-error/20 rounded-md text-sm text-error">
-                {analysisError}
-              </div>
+              <ErrorBanner message={analysisError} className="mb-3" />
             )}
 
             {/* Clear error */}
             {clearError && activeTab === 'words' && (
-              <div className="mb-3 p-3 bg-error/10 border border-error/20 rounded-md text-sm text-error flex items-center justify-between">
-                <span>{clearError}</span>
-                <button
-                  className="text-xs text-error underline hover:no-underline ml-2 flex-shrink-0"
-                  onClick={() => setClearError(null)}
-                >
-                  关闭
-                </button>
-              </div>
+              <ErrorBanner
+                message={clearError}
+                className="mb-3"
+                action={
+                  <button
+                    className="text-xs text-error underline hover:no-underline ml-2 flex-shrink-0"
+                    onClick={() => setClearError(null)}
+                  >
+                    关闭
+                  </button>
+                }
+              />
             )}
 
             {/* Batch add to vocabulary */}
             {wordList.length > 0 && (
               <div className="mb-3 flex items-center justify-between gap-2">
                 <span className="text-xs text-muted">已解析 {wordList.length} 个单词</span>
-                <button
-                  onClick={handleBatchAdd}
-                  disabled={vocabAdding}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-primary text-on-primary rounded-md text-xs font-medium hover:bg-primary-active disabled:opacity-50 transition-colors"
-                >
-                  {vocabAdding ? (
-                    <>
-                      <svg className="animate-spin" width="12" height="12" viewBox="0 0 24 24" fill="none">
-                        <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" opacity="0.3" />
-                        <path d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" fill="currentColor" />
-                      </svg>
-                      加入中...
-                    </>
-                  ) : (
-                    <>一键加入单词本 ({wordList.length})</>
-                  )}
-                </button>
+                <Button size="sm" onClick={handleBatchAdd} loading={vocabAdding}>
+                  一键加入单词本 ({wordList.length})
+                </Button>
               </div>
             )}
             {vocabMsg && (
@@ -957,22 +932,23 @@ export default function StudyPanel({
 
             {/* Error */}
             {sentenceAnalysisError && !isAnalyzingSentences && (
-              <div className="mb-3 p-3 bg-error/10 border border-error/20 rounded-md text-sm text-error">
-                {sentenceAnalysisError}
-              </div>
+              <ErrorBanner message={sentenceAnalysisError} className="mb-3" />
             )}
 
             {/* Clear error */}
             {clearError && activeTab === 'sentences' && (
-              <div className="mb-3 p-3 bg-error/10 border border-error/20 rounded-md text-sm text-error flex items-center justify-between">
-                <span>{clearError}</span>
-                <button
-                  className="text-xs text-error underline hover:no-underline ml-2 flex-shrink-0"
-                  onClick={() => setClearError(null)}
-                >
-                  关闭
-                </button>
-              </div>
+              <ErrorBanner
+                message={clearError}
+                className="mb-3"
+                action={
+                  <button
+                    className="text-xs text-error underline hover:no-underline ml-2 flex-shrink-0"
+                    onClick={() => setClearError(null)}
+                  >
+                    关闭
+                  </button>
+                }
+              />
             )}
 
             {/* Empty */}

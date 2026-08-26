@@ -69,6 +69,7 @@ class PDFResultResponse(BaseModel):
     file_ext: str | None = None
     summary: Optional[str] = None
     summary_updated_at: Optional[datetime] = None
+    is_favorite: bool = False
 
 
 class ParseUrlRequest(BaseModel):
@@ -102,11 +103,23 @@ class DocumentListItem(BaseModel):
     source_type: Optional[str] = None
     file_ext: Optional[str] = None
     created_at: datetime
+    is_favorite: bool = False
 
 
 class DocumentListResponse(BaseModel):
     documents: list[DocumentListItem]
     total: int
+
+
+class SetFavoriteRequest(BaseModel):
+    """设置/取消文档收藏。"""
+
+    is_favorite: bool
+
+
+class SetFavoriteResponse(BaseModel):
+    document_id: str
+    is_favorite: bool
 
 
 class UpdateTitleRequest(BaseModel):

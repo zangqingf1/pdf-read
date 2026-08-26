@@ -43,6 +43,8 @@ from app.schemas.pdf import (
     MergeParagraphsResponse,
     ReorderParagraphsRequest,
     ReorderParagraphsResponse,
+    SetFavoriteRequest,
+    SetFavoriteResponse,
 )
 from app.config import settings
 from app.services.pdf_service import pdf_service
@@ -463,6 +465,7 @@ async def get_parse_result(
         file_ext=document.file_ext,
         summary=document.summary,
         summary_updated_at=document.summary_updated_at,
+        is_favorite=bool(document.is_favorite),
     )
 
 
@@ -906,6 +909,7 @@ async def select_pages(
 async def list_documents(
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
+    favorite: bool = Query(False, description="仅返回收藏的文档"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -914,9 +918,11 @@ async def list_documents(
     Args:
         limit: Max results per page (default 20).
         offset: Pagination offset.
+        favorite: If true, only favorited documents are returned.
     """
     docs, total = await pdf_service.list_documents(
-        db, limit=limit, offset=offset, user_id=current_user.id
+        db, limit=limit, offset=offset, user_id=current_user.id,
+        favorites_only=favorite,
     )
 
     items = [
@@ -929,11 +935,28 @@ async def list_documents(
             source_type=d.source_type,
             file_ext=d.file_ext,
             created_at=d.created_at,
+            is_favorite=bool(d.is_favorite),
         )
         for d in docs
     ]
 
     return DocumentListResponse(documents=items, total=total)
+
+
+@router.put("/documents/{task_id}/favorite", response_model=SetFavoriteResponse)
+async def set_document_favorite(
+    task_id: str,
+    body: SetFavoriteRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Set or unset a document's favorite flag."""
+    document = await _get_owned_document(task_id, current_user, db)
+    document.is_favorite = body.is_favorite
+    await db.commit()
+    return SetFavoriteResponse(
+        document_id=str(document.id), is_favorite=bool(document.is_favorite)
+    )
 
 
 @router.post("/documents/batch-delete", response_model=BatchDeleteResponse)
