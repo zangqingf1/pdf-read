@@ -48,9 +48,7 @@ export default function DailyQuote() {
         <div className="h-full overflow-hidden rounded-xl border border-hairline-soft shadow-soft bg-gradient-to-br from-[#fdf4ec] via-[#faf1e6] to-[#f5e6d3] px-6 py-5 md:px-10 md:py-7 relative animate-slide-up flex flex-col">
           {/* 装饰大引号 */}
           <svg
-            className="absolute top-6 right-8 md:top-8 md:right-12 pointer-events-none"
-            width="84"
-            height="63"
+            className="absolute top-4 right-4 w-14 h-auto pointer-events-none md:top-8 md:right-12 md:w-[84px]"
             viewBox="0 0 110 82"
             fill="#eeddc8"
             aria-hidden="true"
@@ -68,7 +66,7 @@ export default function DailyQuote() {
           </div>
 
           {/* 英文引句 */}
-          <p className="font-display italic text-ink leading-[1.35] text-[clamp(1.15rem,1.8vw,1.5rem)] my-3 md:pr-40">
+          <p className="font-display italic text-ink leading-[1.35] text-[clamp(1.15rem,1.8vw,1.5rem)] my-3 pr-20 md:pr-40">
             {quote.en}
           </p>
 

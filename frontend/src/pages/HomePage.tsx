@@ -28,10 +28,13 @@ export default function HomePage() {
   }, []);
 
   const handleSidebarNavigate = useCallback((key: HomeNavKey) => {
+    // 首页 ↔ 我的收藏：切换侧边栏下方面板内容（移动端抽屉保持打开）；「查看全部」仍走弹窗
+    if (key === 'home' || key === 'favorites') {
+      setActiveNav(key);
+      return;
+    }
     setSidebarOpen(false);
-    // 首页 ↔ 我的收藏：切换侧边栏下方面板内容；「查看全部」仍走弹窗
-    if (key === 'home' || key === 'favorites') setActiveNav(key);
-    else if (key === 'recent') setShowAllDocs(true);
+    if (key === 'recent') setShowAllDocs(true);
   }, []);
 
   return (

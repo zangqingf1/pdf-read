@@ -963,6 +963,19 @@
   }
 }
 
+/* ── Hover-reveal actions ──
+   仅在真正支持 hover 的鼠标设备上默认隐藏、hover 行时显现；
+   手机/平板等触屏设备（hover: none）始终可见。 */
+@media (hover: hover) and (pointer: fine) {
+  .hover-reveal {
+    opacity: 0;
+  }
+  .group:hover .hover-reveal,
+  .hover-reveal:focus-within {
+    opacity: 1;
+  }
+}
+
 /* ── Slide-up animation for mobile bottom sheets ── */
 @keyframes sheet-slide-up {
   from {

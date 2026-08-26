@@ -370,7 +370,7 @@ export default function RecentDocuments({
                   </div>
                 ) : (
                   !selectMode && (
-                    <div className="md:opacity-0 md:group-hover:opacity-100 transition-all">
+                    <div className="hover-reveal transition-all">
                       {renderRowActions(doc)}
                     </div>
                   )
@@ -475,7 +475,7 @@ export default function RecentDocuments({
                     </div>
                   ) : (
                     <button
-                      className="w-7 h-7 flex items-center justify-center rounded-md text-muted-soft hover:text-error hover:bg-error/5 md:opacity-0 md:group-hover:opacity-100 transition-all"
+                      className="w-7 h-7 flex items-center justify-center rounded-md text-muted-soft hover:text-error hover:bg-error/5 hover-reveal transition-all"
                       onClick={() => setConfirmDelete(doc.id)}
                       title="删除"
                     >
