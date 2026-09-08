@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import (
     ForeignKey,
+    Float,
     Index,
     Integer,
     String,
@@ -61,6 +62,17 @@ class VocabularyEntry(Base):
     latest_paragraph_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
     latest_token_rank: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
+    # Spaced-repetition scheduling (simplified SM-2, see services/srs_service.py).
+    # Every entry is a review card; srs_due_at NULL means "new card, due now".
+    srs_due_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    srs_interval_days: Mapped[float] = mapped_column(Float, default=0.0)
+    srs_ease: Mapped[float] = mapped_column(Float, default=2.5)
+    srs_reps: Mapped[int] = mapped_column(Integer, default=0)
+    srs_lapses: Mapped[int] = mapped_column(Integer, default=0)
+    # 'active' (in queue) | 'mastered' (removed from queue)
+    srs_status: Mapped[str] = mapped_column(String(16), default="active")
+    srs_last_reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now()
     )
@@ -80,6 +92,7 @@ class VocabularyEntry(Base):
         Index("idx_vocab_user_created", "user_id", "created_at"),
         Index("idx_vocab_user_pos", "user_id", "pos"),
         Index("idx_vocab_user_doc_order", "user_id", "latest_paragraph_index", "latest_token_rank"),
+        Index("idx_vocab_user_srs", "user_id", "srs_status", "srs_due_at"),
     )
 
     def __repr__(self) -> str:

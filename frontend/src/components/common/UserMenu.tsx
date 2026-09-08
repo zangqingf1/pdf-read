@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../../stores/authStore';
 import { avatarUrl } from '../../services/authApi';
+import { getSrsStats, type SrsStats } from '../../services/srsApi';
 
 export default function UserMenu() {
   const user = useAuthStore((s) => s.user);
@@ -9,7 +10,16 @@ export default function UserMenu() {
   const navigate = useNavigate();
   const isSuperuser = user?.is_superuser ?? false;
   const [open, setOpen] = useState(false);
+  const [srsStats, setSrsStats] = useState<SrsStats | null>(null);
   const ref = useRef<HTMLDivElement>(null);
+
+  // 到期角标：只拉一次，轻量失败静默
+  useEffect(() => {
+    if (!user) return;
+    getSrsStats()
+      .then(setSrsStats)
+      .catch(() => undefined);
+  }, [user]);
 
   // Close on outside click
   useEffect(() => {
@@ -84,6 +94,28 @@ export default function UserMenu() {
               <circle cx="12" cy="7" r="4" />
             </svg>
             个人资料
+          </button>
+
+          {/* SRS 今日复习 */}
+          <button
+            onClick={() => {
+              setOpen(false);
+              navigate('/srs');
+            }}
+            className="w-full text-left px-3 py-2 rounded-lg text-sm text-body-strong
+                       hover:text-primary hover:bg-primary/5 transition-colors duration-150
+                       flex items-center gap-2.5"
+          >
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 8v4l3 3" />
+              <circle cx="12" cy="12" r="9" />
+            </svg>
+            <span className="flex-1">今日复习</span>
+            {srsStats && srsStats.due_today > 0 && (
+              <span className="flex-shrink-0 min-w-[18px] h-[18px] px-1 rounded-full bg-primary text-on-primary text-[10px] font-medium flex items-center justify-center">
+                {srsStats.due_today > 99 ? '99+' : srsStats.due_today}
+              </span>
+            )}
           </button>
 
           {/* Vocabulary */}

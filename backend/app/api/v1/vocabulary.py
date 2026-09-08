@@ -285,6 +285,12 @@ def _to_out(
         cognates=entry.cognates or "[]",
         collocations=entry.collocations or "[]",
         exam_tags=entry.exam_tags or "[]",
+        srs_due_at=entry.srs_due_at,
+        srs_interval_days=entry.srs_interval_days or 0.0,
+        srs_ease=entry.srs_ease if entry.srs_ease is not None else 2.5,
+        srs_reps=entry.srs_reps or 0,
+        srs_lapses=entry.srs_lapses or 0,
+        srs_status=entry.srs_status or "active",
         created_at=entry.created_at,
         updated_at=entry.updated_at,
     )

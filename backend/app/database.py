@@ -556,6 +556,43 @@ async def run_migrations():
             "ALTER TABLE documents ADD COLUMN is_favorite BOOLEAN DEFAULT 0",
         )
 
+        # ═══════════════════════════════════════════════════════════════
+        # Migration 016: SRS 间隔重复复习（vocabulary_entries 调度字段）
+        # 每个单词本条目即一张复习卡；srs_due_at NULL = 新卡即到期。
+        # ═══════════════════════════════════════════════════════════════
+        await _apply(
+            "016a_vocab_srs_due_at",
+            "ALTER TABLE vocabulary_entries ADD COLUMN srs_due_at TIMESTAMP NULL",
+        )
+        await _apply(
+            "016b_vocab_srs_interval_days",
+            "ALTER TABLE vocabulary_entries ADD COLUMN srs_interval_days FLOAT DEFAULT 0",
+        )
+        await _apply(
+            "016c_vocab_srs_ease",
+            "ALTER TABLE vocabulary_entries ADD COLUMN srs_ease FLOAT DEFAULT 2.5",
+        )
+        await _apply(
+            "016d_vocab_srs_reps",
+            "ALTER TABLE vocabulary_entries ADD COLUMN srs_reps INTEGER DEFAULT 0",
+        )
+        await _apply(
+            "016e_vocab_srs_lapses",
+            "ALTER TABLE vocabulary_entries ADD COLUMN srs_lapses INTEGER DEFAULT 0",
+        )
+        await _apply(
+            "016f_vocab_srs_status",
+            "ALTER TABLE vocabulary_entries ADD COLUMN srs_status VARCHAR(16) DEFAULT 'active'",
+        )
+        await _apply(
+            "016g_vocab_srs_last_reviewed_at",
+            "ALTER TABLE vocabulary_entries ADD COLUMN srs_last_reviewed_at TIMESTAMP NULL",
+        )
+        await _apply(
+            "016h_vocab_srs_index",
+            "CREATE INDEX IF NOT EXISTS idx_vocab_user_srs ON vocabulary_entries(user_id, srs_status, srs_due_at)",
+        )
+
 
 async def _backfill_vocabulary_phonetics():
     """Fill empty phonetics using the base-form fallback (see dictionary_service)."""

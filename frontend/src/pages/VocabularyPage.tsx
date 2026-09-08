@@ -1,7 +1,8 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useVocabularyStore } from '../stores/vocabularyStore';
 import { type VocabularyEntry } from '../services/vocabularyApi';
+import { setCardMastered } from '../services/srsApi';
 import Button from '../components/ui/Button';
 import Badge from '../components/ui/Badge';
 import EmptyState from '../components/ui/EmptyState';
@@ -125,10 +126,23 @@ function calcCols(): number {
 /** 离开页面时的滚动位置（sessionStorage，返回时一次性消费还原） */
 const VOCAB_SCROLL_KEY = 'vocabulary_scroll';
 
+/** SRS 复习状态徽标文案：新词（未复习过）/ 复习中 / 已掌握 */
+function srsBadge(entry: VocabularyEntry): { label: string; cls: string } | null {
+  if (entry.srs_status === 'mastered') {
+    return { label: '已掌握', cls: 'bg-success/10 text-success ring-success/25' };
+  }
+  if ((entry.srs_reps ?? 0) > 0) {
+    return { label: '复习中', cls: 'bg-primary/10 text-primary ring-primary/25' };
+  }
+  return null;
+}
+
 export default function VocabularyPage() {
   const { items, total, page, pageSize, dayCounts, query, sortBy, order, loading, error, fetchList, setQuery, setSort, remove } = useVocabularyStore();
+  const navigate = useNavigate();
   const [searchInput, setSearchInput] = useState(query);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [masteryingId, setMasteryingId] = useState<string | null>(null);
   const visibleExamTags = useReaderStore((s) => s.visibleExamTags);
 
   /** 每页固定排满 PAGE_ROWS 排：按当前列数换算每页条数 */
@@ -231,7 +245,9 @@ export default function VocabularyPage() {
             <h1 className="text-sm font-medium font-sans text-ink m-0 truncate">单词本</h1>
             <Badge className="bg-primary/15 text-primary ring-1 ring-primary/20 shadow-none">{total}</Badge>
           </div>
-          <div className="flex items-center gap-2" />
+          <div className="flex items-center gap-2">
+            <Button size="sm" onClick={() => navigate('/srs')}>去复习</Button>
+          </div>
         </div>
       </header>
 
@@ -360,7 +376,7 @@ export default function VocabularyPage() {
                                      className="group bg-surface-overlay border border-hairline-soft rounded-xl p-4 shadow-soft transition-all duration-200 hover:border-hairline hover:shadow-elevated animate-slide-up"
                                    >
                                     <div className="flex flex-col gap-2.5">
-                                      {/* Row 1: 单词原文 | 音标 —— 删除按钮 */}
+                                      {/* Row 1: 单词原文 | 音标 —— 掌握切换 / 删除按钮 */}
                                       <div className="flex items-center justify-between gap-3">
                                         <div className="flex items-center gap-2.5 min-w-0">
                                           <span className="font-bold text-ink text-[15px] font-reading break-words">{entry.word_original}</span>
@@ -369,22 +385,57 @@ export default function VocabularyPage() {
                                           ) : (
                                             <span className="text-xs text-muted-soft">暂无音标</span>
                                           )}
+                                          {(() => {
+                                            const b = srsBadge(entry);
+                                            if (!b) return null;
+                                            return (
+                                              <span className={`flex-shrink-0 px-1.5 py-0.5 rounded text-[10px] font-medium ring-1 ${b.cls}`}>
+                                                {b.label}
+                                              </span>
+                                            );
+                                          })()}
                                         </div>
-                                        <button
-                                          onClick={() => handleDelete(entry.id)}
-                                          disabled={deletingId === entry.id}
-                                          className="flex-shrink-0 inline-flex items-center justify-center w-7 h-7 rounded-md text-muted-soft hover:text-error hover:bg-error/5 disabled:opacity-50 transition-all active:scale-95 md:opacity-0 md:group-hover:opacity-100 focus-visible:opacity-100"
-                                          title="删除"
-                                          aria-label="删除"
-                                        >
-                                          {deletingId === entry.id ? (
-                                            <span className="text-[11px]">...</span>
-                                          ) : (
-                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                                              <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />
-                                            </svg>
-                                          )}
-                                        </button>
+                                        <div className="flex-shrink-0 flex items-center gap-1">
+                                          <button
+                                            onClick={async () => {
+                                              setMasteryingId(entry.id);
+                                              try {
+                                                await setCardMastered(entry.id, entry.srs_status !== 'mastered');
+                                                await fetchList({ page });
+                                              } finally {
+                                                setMasteryingId(null);
+                                              }
+                                            }}
+                                            disabled={masteryingId === entry.id}
+                                            className="inline-flex items-center justify-center w-7 h-7 rounded-md text-muted-soft hover:text-success hover:bg-success/5 disabled:opacity-50 transition-all active:scale-95 md:opacity-0 md:group-hover:opacity-100 focus-visible:opacity-100"
+                                            title={entry.srs_status === 'mastered' ? '恢复复习' : '标记掌握'}
+                                            aria-label={entry.srs_status === 'mastered' ? '恢复复习' : '标记掌握'}
+                                          >
+                                            {masteryingId === entry.id ? (
+                                              <span className="text-[11px]">...</span>
+                                            ) : (
+                                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                                                <path d="M22 10L12 5 2 10l10 5 10-5z" />
+                                                <path d="M6 12v5c0 1.7 2.7 3 6 3s6-1.3 6-3v-5" />
+                                              </svg>
+                                            )}
+                                          </button>
+                                          <button
+                                            onClick={() => handleDelete(entry.id)}
+                                            disabled={deletingId === entry.id}
+                                            className="inline-flex items-center justify-center w-7 h-7 rounded-md text-muted-soft hover:text-error hover:bg-error/5 disabled:opacity-50 transition-all active:scale-95 md:opacity-0 md:group-hover:opacity-100 focus-visible:opacity-100"
+                                            title="删除"
+                                            aria-label="删除"
+                                          >
+                                            {deletingId === entry.id ? (
+                                              <span className="text-[11px]">...</span>
+                                            ) : (
+                                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                                                <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />
+                                              </svg>
+                                            )}
+                                          </button>
+                                        </div>
                                       </div>
 
                                       {/* Row 2: 词典源释义（不同词性换行显示；中文默认模糊遮盖，点击揭示） */}

@@ -30,6 +30,13 @@ export interface VocabularyEntry {
   cognates?: string;
   collocations?: string;
   exam_tags?: string;
+  // SRS 调度状态（简化 SM-2，后端 srs_service）
+  srs_due_at?: string | null;
+  srs_interval_days?: number;
+  srs_ease?: number;
+  srs_reps?: number;
+  srs_lapses?: number;
+  srs_status?: 'active' | 'mastered' | string;
   created_at: string | null;
   updated_at: string | null;
 }

@@ -34,6 +34,13 @@ class VocabularyEntryOut(BaseModel):
     cognates: str = "[]"
     collocations: str = "[]"
     exam_tags: str = "[]"
+    # SRS scheduling state (simplified SM-2; see services/srs_service.py)
+    srs_due_at: datetime | None = None
+    srs_interval_days: float = 0.0
+    srs_ease: float = 2.5
+    srs_reps: int = 0
+    srs_lapses: int = 0
+    srs_status: str = "active"
     created_at: datetime | None = None
     updated_at: datetime | None = None
 

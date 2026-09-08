@@ -92,6 +92,12 @@ export default function HomePage() {
                 </button>
                 <button
                   className="h-7 px-2.5 rounded-md bg-surface-overlay border border-hairline hover:border-primary/50 hover:text-primary text-xs font-medium text-body-strong transition-colors"
+                  onClick={() => navigate('/srs')}
+                >
+                  今日复习
+                </button>
+                <button
+                  className="h-7 px-2.5 rounded-md bg-surface-overlay border border-hairline hover:border-primary/50 hover:text-primary text-xs font-medium text-body-strong transition-colors"
                   onClick={() => navigate('/vocabulary')}
                 >
                   单词本
@@ -109,6 +115,12 @@ export default function HomePage() {
               onClick={() => setShowApiKeyModal(true)}
             >
               API 配置
+            </button>
+            <button
+              className="h-8 px-3.5 rounded-md bg-surface-overlay border border-hairline hover:border-primary/50 hover:text-primary text-xs font-medium text-body-strong transition-colors"
+              onClick={() => navigate('/srs')}
+            >
+              今日复习
             </button>
             <button
               className="h-8 px-3.5 rounded-md bg-surface-overlay border border-hairline hover:border-primary/50 hover:text-primary text-xs font-medium text-body-strong transition-colors"
