@@ -41,6 +41,7 @@ app/
 │   ├── sentences.py  # 长难句拆解（analyze + stream SSE + list/delete）
 │   ├── prompts.py    # Prompt 模板管理（两层体系，可编辑/重置/提升为默认）
 │   ├── summary.py    # 全文总结（SSE）+ 草稿保存
+│   ├── qa.py         # 文档 AI 问答（SSE 多轮对话 + 历史恢复/清空，会话持久化）
 │   ├── tts.py        # 单词发音 + 段落朗读（edge-tts, 需鉴权）
 │   └── admin.py      # 管理后台 API（superuser only）
 ├── auth/
@@ -53,7 +54,7 @@ app/
 ├── services/
 │   ├── pdf_service.py     # 解析编排 + 文件保存 + URL 源下载
 │   ├── ocr_engine.py      # MinerU Cloud（batch file-upload / URL 两条路径）
-│   ├── ai_service.py      # DeepSeek: 翻译/单词/句子/总结（并发 + 指数退避重试）
+│   ├── ai_service.py      # DeepSeek: 翻译/单词/句子/总结/文档问答（并发 + 指数退避重试）
 │   ├── prompt_defaults.py # 出厂默认 Prompt + PLACEHOLDERS + TEMPLATE_NAMES
 │   ├── page_utils.py      # PDF 页数统计 + 页面提取
 │   ├── export_service.py  # Chrome 无头渲染 HTML→PDF（零新依赖）
@@ -63,8 +64,9 @@ app/
 │   ├── email_service.py   # SMTP 发送验证码邮件（标准库 smtplib，零新依赖；开发环境 console 兜底）
 │   ├── daily_quote.py     # 每日一句名句库 + 按日期取句（epoch days 取模轮换，无状态）
 │   ├── dictionary_service.py # ECDICT 本地词典（音标/释义）+ lookup_exam_tags 考纲标签批量判定
+│   ├── srs_service.py     # SRS 调度纯函数（简化 SM-2 四键评分 + 间隔预览，无 DB 依赖可单测）
 │   └── avatar_service.py  # 头像保存/删除（白名单扩展名 + 魔数嗅探 + 随机文件名）
-├── models/   # 每类一文件: user/email_verification/document/paragraph/word_analysis/sentence_analysis/prompt_template/daily_quote
+├── models/   # 每类一文件: user/email_verification/document/paragraph/word_analysis/sentence_analysis/qa_message/prompt_template/daily_quote
 ├── schemas/  # 与 api/v1 路由一一对应 + admin
 ├── tasks/    # celery_app（Redis 不可用→None）+ pdf_tasks（Celery 缺失时降级）
 ├── config.py     # pydantic-settings (.env)
@@ -127,6 +129,9 @@ app/
 | DELETE | `/api/v1/sentences/{analysis_id}` | 删除句子解析 |
 | POST | `/api/v1/summary/stream` | 全文总结/修改（SSE，后端自取正文） |
 | PUT | `/api/v1/summary/draft` | 保存总结草稿（空白=清空） |
+| POST | `/api/v1/qa/stream` | 文档 AI 问答（SSE，多轮，服务端取历史/全文/引用段上下文，done 后落库） |
+| GET | `/api/v1/qa/messages/{document_id}` | 恢复某文档的问答对话（按插入顺序） |
+| DELETE | `/api/v1/qa/messages/{document_id}` | 清空某文档的问答对话 |
 | GET | `/api/v1/tts` | 单词发音 mp3（edge-tts，`?word=&accent=us|uk`） |
 | GET | `/api/v1/tts/paragraph/{document_id}` | 段落朗读 mp3 + 词级时间戳（`?index=&accent=&rate=`，卡拉OK高亮/句子起播用） |
 | GET | `/api/v1/prompts` | 列出所有 Prompt（含生效层级） |
@@ -138,6 +143,11 @@ app/
 | POST | `/api/v1/prompts/{name}/reset` | 重置单个（删全部 DB 行） |
 | POST | `/api/v1/prompts/reset-all` | 重置全部 |
 | GET | `/api/v1/quote` | 每日一句（公开，按日期确定性取句：en + zh + author + date） |
+| GET | `/api/v1/srs/queue` | SRS 今日到期复习卡（学习卡优先，含四键间隔预览 + 各类计数） |
+| POST | `/api/v1/srs/review` | 提交复习评分（0=忘了/1=困难/2=良好/3=简单，SM-2 调度落库） |
+| POST | `/api/v1/srs/{entry_id}/mastered` | 标记/取消掌握（取消直接回队列） |
+| POST | `/api/v1/srs/{entry_id}/reset` | 重置调度为新卡 |
+| GET | `/api/v1/srs/stats` | 复习统计（今日到期/已复习/已掌握 + 未来7天预测） |
 | GET | `/api/v1/admin/stats` | 管理统计 |
 | GET | `/api/v1/admin/users` | 用户列表 |
 | PUT | `/api/v1/admin/users/{user_id}` | 编辑用户 |
@@ -151,7 +161,7 @@ app/
 | DELETE | `/api/v1/admin/quotes/{quote_id}` | 删除名句 |
 | GET | `/health` | 健康检查 |
 
-**Prompt 模板**: 四种 (`translate`, `analyze_words`, `analyze_sentences`, `summary`) 全部可编辑。`_VALID_NAMES` 从 `DEFAULT_PROMPTS.keys()` 动态派生。
+**Prompt 模板**: 六种 (`translate`, `analyze_words`, `analyze_sentences`, `summary`, `doc_qa`, `doc_quiz`) 全部可编辑。`_VALID_NAMES` 从 `DEFAULT_PROMPTS.keys()` 动态派生。
 
 ### 数据模型
 
@@ -162,6 +172,7 @@ app/
 - **WordAnalysis**: `(document_id, paragraph_index, word)` 唯一, upsert。含 phonetic, definition, cognates, synonyms_antonyms, exam_tags（考纲标签 JSON 数组）等
 - **SentenceAnalysis**: `(document_id, paragraph_index, sentence_index)` 唯一, upsert。含 `structure_json`（新格式 `{"content": ...}`，旧格式向前兼容重建）
 - **PromptTemplate**: **复合主键 `(name, is_default)`**, `system_prompt` + `user_prompt`。无 DB 行=出厂默认
+- **QaMessage**: 文档 AI 问答对话（多轮持久化）。**自增整数主键**（对话按插入顺序回放，UUID 无单调性），`document_id` cascade delete, `role`(user/assistant), `content`, `prompt_name`(assistant 行记录所用模板), `paragraph_index`(引用句所在段落, nullable), `created_at`。新表由 `create_all` 自动建，无需迁移登记
 - **DailyQuote**: 每日一句名句库（管理后台「句子管理」维护）。`text_en`/`text_zh`/`author`/`active`(启停)/`created_at`；`GET /quote` 按日期序数对 active 行取模轮换
 
 ### 解析流程
@@ -179,8 +190,8 @@ pages/          # Home/Reader/Review/Login/Register/ForgotPassword/Profile + adm
 components/
 ├── home/       # DailyQuote, PDFUploader, PageSelector, RecentDocuments
 ├── reader/     # ReaderHeader, ReadingArea, ParagraphBlock, StudyPanel, StudySheet,
-│               #   FocusedAnalysisSheet, TypographyDrawer, DocumentSummary, EditableTitle,
-│               #   SpeakerButton, PhoneticWithSpeakers, AudioPlayerBar(朗读播放条)
+│               #   QAPanel(AI 问答对话面板), FocusedAnalysisSheet, TypographyDrawer, DocumentSummary,
+│               #   EditableTitle, SpeakerButton, PhoneticWithSpeakers, AudioPlayerBar(朗读播放条)
 ├── review/     # EditableParagraph(Panel), PageGroup, PDFViewerPanel(布局解析框),
 │               #   ReviewHeader, UndoRedoToolbar
 ├── export/     # ExportButton, ExportPreview, ExportSettingsModal/Panel
@@ -192,7 +203,7 @@ export/         # 导出排版管线: data/blocks/measure/paginate/themes/serial
 hooks/          # useSplitPane, useUndoRedo(50步), useResponsiveBreakpoint, useExportPagination,
                 #   useParagraphAudioPlayer(段落朗读引擎，模块级单例)
 stores/         # authStore, documentStore(文档/段落/翻译/解析全状态), readerStore(persist),
-                #   promptStore, exportPreferencesStore, audioPlayerStore(朗读播放状态)
+                #   qaStore(AI 问答会话), promptStore, exportPreferencesStore, audioPlayerStore(朗读播放状态)
 services/       # 每个 API 域一个文件 (authApi/pdfApi/translateApi/wordAnalysisApi/paragraphTtsApi/...)
 utils/          # textTokens(token化), ttsAlign(WordBoundary↔词token贪婪对齐), sentenceSections,
                 #   phonetic, speak, uuid
@@ -203,10 +214,12 @@ constants/      # examTags(考纲标签常量/配色/显隐过滤)
 - 无 Ant Design — 全部自定义 `ui/` 组件 + Tailwind CSS
 - 暖色调设计系统: `--canvas: #faf9f5`, `--primary: #cc785c`, `--ink: #141413`
 - **阅读页考纲标注**: 排版抽屉「考纲标注」多选（readerStore `syllabusTags` 持久化，与解析卡片的 `visibleExamTags` 显隐过滤完全独立）。`useSyllabusHighlight` 收集全文去重词元 → `POST /words/syllabus-match` 后端 ECDICT 离线判定（含屈折还原）→ 命中集合存 documentStore `syllabusWords`（+`syllabusVersion` 供 SentenceToken 签名感知），token 命中加 `.word-token-syllabus`（琥珀虚线下划线）。按「文档+考纲组合+正文指纹」模块级缓存，编辑正文后自动补查新词；失败静默降级不影响阅读。仅阅读页生效（校对页/导出不标）
-- 阅读页桌面端: 左右分栏，拖拽分隔条调宽度；解析面板可 ✕ 关闭 (右侧竖条按钮恢复)；点击已解析单词/句子自动打开面板并定位
-- 阅读页移动端: 单栏 + 底部 FAB → StudySheet (45vh 弹出)；已解析内容点击 → FocusedAnalysisSheet (max 45vh)
+- 阅读页桌面端: 左右分栏，拖拽分隔条调宽度；右侧面板在「解析 / AI 问答」间 Tab 切换（同一滑入滑出容器，ReaderHeader 对话图标 / 浮动操作条「问 AI」进入），可 ✕ 关闭 (右侧竖条按钮恢复)；点击已解析单词/句子自动打开面板并定位
+- 阅读页移动端: 单栏 + 底部双 FAB（解析 / AI 问答）→ StudySheet (45vh 弹出，内容按 Tab 切换)；已解析内容点击 → FocusedAnalysisSheet (max 45vh)
 - 段落渲染: `react-markdown` + `remark-gfm`，单词/句子 token 化注入，支持选中/解析/已解析三种状态
 - 分析功能: 前端选中 → API → AI 分析 → upsert 持久化 → 下次打开自动恢复（翻译/单词/句子/总结均持久化）
+- **文档 AI 问答（外刊精读）**: 阅读页右侧面板 Tab「AI 问答」（移动端 StudySheet 内容切换），多轮对话由后端持久化（`qa_messages` 表，自增 id 保证回放顺序；**done 时才落库 user+assistant 两条**，流中断不留孤儿行）。`POST /qa/stream` 服务端组装 messages：system = prompt 模板（`doc_qa` 问答 / `doc_quiz` 出题批改，占位符含 `{document_title}/{document_text}/{target_sentence}/{paragraph_context}`，system 部分由端点用 `_SafeDict` 显式格式化——`_resolve_prompt` 只格式化 user 部分）+ 最近 `QA_HISTORY_MESSAGES=20` 条历史 + 当前问题；全文截断复用 summary 的 head 60% + tail 40%（`QA_MAX_CHARS=24000`）。入口：浮动操作条「问 AI」（选中句子 → 引用句卡片 + 快捷问题 chips）/ ReaderHeader 对话图标 / 移动端聊天 FAB；「出 3 道阅读理解题」chip 走 `doc_quiz`，用户作答后同对话批改。前端 `qaStore` 内存态（临时负 id，成功后本地追加 assistant 消息），切文档懒加载历史、卸载 reset
+- **SRS 间隔重复复习**: 单词本全部条目自动成为复习卡（`vocabulary_entries` 上的 `srs_*` 列，迁移 016a~016h；`srs_due_at` NULL = 新卡即到期）。简化 SM-2 四键评分（`srs_service.next_state` 纯函数）：忘了/困难 → 10 分钟学习步；良好 → 毕业 1 天；简单 → 4 天；复习阶段 间隔×ease（困难 ×1.2、简单 ×1.3 加成），遗忘 ease−0.20 进重学；ease 夹 [1.3,3.0]，间隔 ≥21 天自动 `status='mastered'` 出队列。前端 `/srs` 翻卡页（空格翻面、键盘 1-4 评分、间隔预览仅展示、调度以后端为准），入口在 UserMenu（带到期角标）/首页快捷区/单词本「去复习」；单词本卡片显示 新词/复习中/已掌握 徽标 + 掌握切换按钮。`srs_last_reviewed_at` 供「今日已复习」统计；`GET /srs/stats` 含未来 7 天到期预测。v1 未联动阅读页高亮（已掌握词仍显示已解析样式）
 - **导出**: 前端 `export/` 完成排版分页 (`useExportPagination`) → 序列化 HTML → `POST /pdf/export` 服务端 Chrome 无头渲染；服务器需装 Chrome/Edge 和中文字体（否则乱码），见 `.env.example` 注释
 - 认证: JWT 存 localStorage，`ProtectedRoute` 拦截未登录，`AdminRouteGuard` 检查 `is_superuser`
 - 错误边界: `ErrorBoundary` 包裹 App，中文提示 + 返回首页

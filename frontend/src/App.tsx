@@ -9,9 +9,11 @@ import { useAuthStore } from './stores/authStore';
 // 路由级代码分割：react-pdf/pdfjs、导出管线、admin 页面等重依赖
 // 只在进入对应路由时才下载，主 chunk 不再背负全部页面。
 const HomePage = lazy(() => import('./pages/HomePage'));
+const LandingPage = lazy(() => import('./pages/LandingPage'));
 const ReaderPage = lazy(() => import('./pages/ReaderPage'));
 const ReviewPage = lazy(() => import('./pages/ReviewPage'));
 const VocabularyPage = lazy(() => import('./pages/VocabularyPage'));
+const SrsReviewPage = lazy(() => import('./pages/SrsReviewPage'));
 const LoginPage = lazy(() => import('./pages/LoginPage'));
 const RegisterPage = lazy(() => import('./pages/RegisterPage'));
 const ForgotPasswordPage = lazy(() => import('./pages/ForgotPasswordPage'));
@@ -77,6 +79,7 @@ export default function App() {
         <Suspense fallback={<PageSpinner />}>
           <Routes>
           {/* Public routes */}
+          <Route path="/welcome" element={<LandingPage />} />
           <Route path="/login" element={<LoginPage />} />
           <Route path="/register" element={<RegisterPage />} />
           <Route path="/forgot-password" element={<ForgotPasswordPage />} />
@@ -121,6 +124,14 @@ export default function App() {
             element={
               <ProtectedRoute>
                 <VocabularyPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/srs"
+            element={
+              <ProtectedRoute>
+                <SrsReviewPage />
               </ProtectedRoute>
             }
           />

@@ -82,3 +82,7 @@ frontend/run_render_probe.cjs
 .agents/
 .codex/
 frontend/spacing_sample.json
+
+# 本机会话产物（agent 工具缓存，勿提交）
+.workbuddy/
+.zcode/

@@ -107,6 +107,10 @@ export default function LoginPage() {
           <Link to="/register" className="text-primary hover:underline font-medium">
             去注册
           </Link>
+          {' · '}
+          <Link to="/welcome" className="text-muted hover:underline">
+            先看看功能
+          </Link>
         </p>
       </div>
     </div>

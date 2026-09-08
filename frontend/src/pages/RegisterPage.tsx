@@ -331,6 +331,10 @@ export default function RegisterPage() {
           <Link to="/login" className="text-primary hover:underline font-medium">
             去登录
           </Link>
+          {' · '}
+          <Link to="/welcome" className="text-muted hover:underline">
+            先看看功能
+          </Link>
         </p>
       </div>
     </div>
