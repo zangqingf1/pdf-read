@@ -221,10 +221,13 @@ async def test_word_analysis_upsert_updates_without_duplicate(db):
     entry["definition_zh"] = "新释义"
     await words_module._persist_analyses(str(doc.id), [entry], db)
 
-    db.expire_all()
+    # 不能用 expire_all() + 惰性加载（async 会话会 MissingGreenlet）；
+    # populate_existing 让 select 从 DB 重读以覆盖身份映射里的旧对象。
     rows = (
         await db.execute(
-            select(WordAnalysis).where(WordAnalysis.document_id == str(doc.id))
+            select(WordAnalysis)
+            .where(WordAnalysis.document_id == str(doc.id))
+            .execution_options(populate_existing=True)
         )
     ).scalars().all()
     assert len(rows) == 1
@@ -246,12 +249,11 @@ async def test_sentence_analysis_upsert_updates_without_duplicate(db):
     entry["content"] = "new"
     await sentences_module._persist_analyses(str(doc.id), [entry], db)
 
-    db.expire_all()
     rows = (
         await db.execute(
-            select(SentenceAnalysis).where(
-                SentenceAnalysis.document_id == str(doc.id)
-            )
+            select(SentenceAnalysis)
+            .where(SentenceAnalysis.document_id == str(doc.id))
+            .execution_options(populate_existing=True)
         )
     ).scalars().all()
     assert len(rows) == 1
@@ -278,12 +280,12 @@ async def test_reshift_analysis_indices_delete(db):
     await pdf_module._reshift_analysis_indices(db, doc.id, delete_at=1)
     await db.commit()
 
-    db.expire_all()
     rows = (
         await db.execute(
             select(WordAnalysis)
             .where(WordAnalysis.document_id == str(doc.id))
             .order_by(WordAnalysis.paragraph_index)
+            .execution_options(populate_existing=True)
         )
     ).scalars().all()
     assert [r.paragraph_index for r in rows] == [0, 1]
@@ -309,12 +311,12 @@ async def test_reshift_analysis_indices_reorder_no_unique_conflict(db):
     )
     await db.commit()
 
-    db.expire_all()
     rows = (
         await db.execute(
             select(WordAnalysis)
             .where(WordAnalysis.document_id == str(doc.id))
             .order_by(WordAnalysis.paragraph_index)
+            .execution_options(populate_existing=True)
         )
     ).scalars().all()
     assert len(rows) == 2
