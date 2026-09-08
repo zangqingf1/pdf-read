@@ -721,6 +721,121 @@ class AIService:
                 task.cancel()
             await asyncio.gather(task, return_exceptions=True)
 
+    async def chat_stream(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        max_tokens: int = 2048,
+    ) -> AsyncGenerator[dict, None]:
+        """Stream a multi-turn chat completion for a pre-built messages list.
+
+        Unlike ``summarize_stream`` the caller assembles ``messages`` (system
+        context + conversation history + current question).  Yields the same
+        tagged dicts: ``chunk`` / ``heartbeat`` / ``done`` (with ``text``).
+        """
+        if not self.api_key or not self.api_key.strip():
+            raise ValueError(
+                "AI API Key 未配置。请点击页面右上角🔑图标设置。"
+            )
+
+        payload = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": 0.5,
+            "max_tokens": max_tokens,
+            "thinking": {"type": "disabled"},
+            "stream": True,
+        }
+
+        queue: asyncio.Queue[dict] = asyncio.Queue()
+
+        async def _reader() -> None:
+            """Read the SSE stream, pushing chunk deltas into the queue."""
+            accumulated = ""
+            for attempt in range(3):
+                try:
+                    async with self.client.stream(
+                        "POST", "/chat/completions", json=payload
+                    ) as response:
+                        response.raise_for_status()
+                        async for line in response.aiter_lines():
+                            if not line.startswith("data: "):
+                                continue
+                            data_str = line[6:]
+                            if data_str.strip() == "[DONE]":
+                                break
+                            try:
+                                chunk_data = json.loads(data_str)
+                                choices = chunk_data.get("choices", [])
+                                if choices:
+                                    delta = choices[0].get("delta", {})
+                                    content = delta.get("content", "")
+                                    if content:
+                                        accumulated += content
+                                        await queue.put({"type": "chunk", "text": content})
+                            except (json.JSONDecodeError, KeyError, IndexError):
+                                continue
+
+                    # Stream finished — empty content is retried like a failure
+                    if not accumulated.strip():
+                        if attempt < 2:
+                            logger.warning(
+                                "Chat stream attempt %d returned empty content, retrying",
+                                attempt + 1,
+                            )
+                            await asyncio.sleep(_retry_delay(attempt))
+                            continue
+                        await queue.put({"type": "error", "message": "AI 返回空内容，回答失败"})
+                        return
+                    await queue.put({"type": "done", "text": accumulated.strip()})
+                    return
+
+                except (httpx.HTTPError, httpx.TimeoutException) as e:
+                    if _is_fatal_error(e):
+                        # Auth/config errors — propagate raw message so the
+                        # endpoint can map 401 → actionable Chinese hint.
+                        await queue.put({"type": "error", "message": str(e)})
+                        return
+                    if accumulated:
+                        # Mid-stream failure — cannot retry without duplicating text
+                        logger.warning(
+                            "Chat stream dropped after %d chars: %s",
+                            len(accumulated), e,
+                        )
+                        await queue.put({"type": "error", "message": f"回答生成中断: {e}"})
+                        return
+                    if attempt < 2:
+                        logger.warning(
+                            "Chat stream attempt %d failed, retrying: %s",
+                            attempt + 1, e,
+                        )
+                        await asyncio.sleep(_retry_delay(attempt, e))
+                        continue
+                    logger.exception("Chat stream failed after 3 attempts")
+                    await queue.put({"type": "error", "message": f"回答失败: {e}"})
+                    return
+
+        task = asyncio.create_task(_reader())
+
+        try:
+            while True:
+                try:
+                    event = await asyncio.wait_for(
+                        queue.get(), timeout=self.heartbeat_interval
+                    )
+                except asyncio.TimeoutError:
+                    yield {"type": "heartbeat"}
+                    continue
+                if event.get("type") == "error":
+                    raise RuntimeError(event.get("message", "回答失败"))
+                yield event
+                if event.get("type") == "done":
+                    break
+        finally:
+            if not task.done():
+                task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
     @staticmethod
     def _normalize_word_result(r: dict, para_index: int) -> None:
         """Normalize fields in a single word analysis result (mutates dict in place)."""

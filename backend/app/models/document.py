@@ -11,6 +11,7 @@ from app.database import Base
 
 if TYPE_CHECKING:
     from app.models.paragraph import Paragraph
+    from app.models.qa_message import QaMessage
     from app.models.sentence_analysis import SentenceAnalysis
     from app.models.user import User
     from app.models.word_analysis import WordAnalysis
@@ -73,6 +74,9 @@ class Document(Base):
     )
     sentence_analyses: Mapped[list["SentenceAnalysis"]] = relationship(
         "SentenceAnalysis", back_populates="document", cascade="all, delete-orphan"
+    )
+    qa_messages: Mapped[list["QaMessage"]] = relationship(
+        "QaMessage", back_populates="document", cascade="all, delete-orphan"
     )
 
     def __repr__(self) -> str:

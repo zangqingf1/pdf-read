@@ -2,6 +2,7 @@ from app.models.document import Document
 from app.models.email_verification import EmailVerification
 from app.models.paragraph import Paragraph
 from app.models.prompt_template import PromptTemplate
+from app.models.qa_message import QaMessage
 from app.models.sentence_analysis import SentenceAnalysis
 from app.models.user import User
 from app.models.vocabulary import VocabularyEntry
@@ -14,6 +15,7 @@ __all__ = [
     "EmailVerification",
     "Paragraph",
     "PromptTemplate",
+    "QaMessage",
     "SentenceAnalysis",
     "User",
     "VocabularyEntry",

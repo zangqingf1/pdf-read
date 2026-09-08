@@ -88,6 +88,10 @@ class Settings(BaseSettings):
     # Full-document summary
     SUMMARY_MAX_CHARS: int = 30000  # 拼装后的全文最大字符数（超出部分 head+tail 截断）
 
+    # Document Q&A chat（多轮对话每轮都携带全文，上限低于 summary 控制 token 成本）
+    QA_MAX_CHARS: int = 24000  # 拼装后的全文最大字符数（超出部分 head+tail 截断）
+    QA_HISTORY_MESSAGES: int = 20  # 随请求携带的最大历史消息条数
+
     # Chrome headless PDF export（留空自动探测 PATH / 常见安装路径）
     CHROME_PATH: str = ""
     PDF_EXPORT_HTML_MAX_MB: int = 5

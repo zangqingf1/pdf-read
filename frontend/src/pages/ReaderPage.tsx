@@ -22,6 +22,9 @@ import AudioPlayerBar from '../components/reader/AudioPlayerBar';
 import StudyPanel from '../components/reader/StudyPanel';
 import StudySheet from '../components/reader/StudySheet';
 import FocusedAnalysisSheet from '../components/reader/FocusedAnalysisSheet';
+import QAPanel from '../components/reader/QAPanel';
+import PanelSwitch from '../components/reader/PanelSwitch';
+import { useQaStore } from '../stores/qaStore';
 import { setOnOpenFocusedAnalysis } from '../components/reader/ParagraphBlock';
 import { setOnOpenPanel, triggerScrollToAnalysis } from '../components/reader/StudyPanel';
 import { scrollToParagraph } from '../utils/scrollToParagraph';
@@ -170,6 +173,8 @@ export default function ReaderPage() {
   const [studySheetOpen, setStudySheetOpen] = useState(false);
   const [focusedAnalysis, setFocusedAnalysis] = useState<{ type: 'word' | 'sentence'; key: string } | null>(null);
   const [panelOpen, setPanelOpen] = useState(true);
+  // 右侧面板内容切换：解析 / AI 问答（同一滑入滑出容器）
+  const [activePanel, setActivePanel] = useState<'study' | 'qa'>('study');
   // 打开面板瞬间抑制正文宽度过渡（原文直接到位，不播放动画）
   const [panelJustOpened, setPanelJustOpened] = useState(false);
   const playerStatus = useAudioPlayerStore((s) => s.status);
@@ -188,6 +193,8 @@ export default function ReaderPage() {
       || !!sentenceAnalysisError,
     [wordAnalyses, sentenceAnalyses, isAnalyzing, isAnalyzingSentences, analysisError, sentenceAnalysisError]
   );
+  // AI 问答面板即使还没有解析结果也可打开（分栏随之出现）
+  const panelVisible = hasAnalyses || activePanel === 'qa';
   const selectedWordCount = useMemo(() => Object.keys(selectedWords).length, [selectedWords]);
   const selectedSentenceCount = useMemo(() => Object.keys(selectedSentences).length, [selectedSentences]);
   const hasUntranslated = useMemo(
@@ -441,6 +448,7 @@ export default function ReaderPage() {
 
   // ── Register open-panel callback (for clicking analyzed words/sentences when panel is closed) ──
   const handleOpenPanel = useCallback(() => {
+    setActivePanel('study');
     setPanelOpen(true);
     setPanelJustOpened(true);
     requestAnimationFrame(() => setPanelJustOpened(false));
@@ -450,6 +458,50 @@ export default function ReaderPage() {
     setOnOpenPanel(() => handleOpenPanel());
     return () => setOnOpenPanel(null);
   }, [handleOpenPanel]);
+
+  // ── Open the AI Q&A panel (header button / floating bar「问 AI」) ──
+  const handleOpenQa = useCallback(() => {
+    setActivePanel('qa');
+    setPanelOpen(true);
+    setPanelJustOpened(true);
+    requestAnimationFrame(() => setPanelJustOpened(false));
+    if (isMobile) setStudySheetOpen(true);
+  }, [isMobile]);
+
+  // ── AI 问答会话：进入页面懒加载历史，离开时丢弃内存状态 ──
+  useEffect(() => {
+    if (documentId) void useQaStore.getState().loadConversation(documentId);
+  }, [documentId]);
+  useEffect(() => {
+    return () => useQaStore.getState().reset();
+  }, []);
+
+  // ── 面板内「解析 ⇄ AI 问答」切换（桌面头部内嵌 / 移动端 Sheet 顶栏）──
+  const handleSwitchToStudy = useCallback(() => {
+    setActivePanel('study');
+  }, []);
+
+  const handleSwitchToQa = useCallback(() => {
+    setActivePanel('qa');
+    if (isMobile) setStudySheetOpen(true);
+  }, [isMobile]);
+
+  // 「问 AI」浮动按钮：把当前选中句子带入问答面板作为引用句
+  const handleAskAi = useCallback(() => {
+    const first = Object.entries(selectedSentences)[0];
+    if (first) {
+      const [key, val] = first;
+      const paragraphIndex = parseInt(key.split(':')[0], 10);
+      if (!isNaN(paragraphIndex)) {
+        useQaStore.getState().setPendingQuote({
+          paragraphIndex,
+          sentenceText: val.text,
+        });
+      }
+    }
+    clearSentenceSelection();
+    handleOpenQa();
+  }, [selectedSentences, clearSentenceSelection, handleOpenQa]);
 
   // ── Auto-translate (streaming) ──
   useEffect(() => {
@@ -832,7 +884,7 @@ export default function ReaderPage() {
 
   return (
     <div className="h-screen flex flex-col overflow-hidden transition-colors duration-300" style={{ ...bgAdaptiveStyle, backgroundColor: bgColorValue }}>
-      <ReaderHeader />
+      <ReaderHeader onOpenQa={handleOpenQa} />
 
       {/* ── Desktop: horizontal split layout ── */}
       {!isMobile && (
@@ -840,15 +892,15 @@ export default function ReaderPage() {
           {/* Left: Reading area */}
           <div
             className={`overflow-y-auto flex-shrink-0 min-h-0 ${panelJustOpened ? '' : 'transition-[width] duration-300 ease-out'}`}
-            style={{ width: hasAnalyses && panelOpen ? leftWidth : '100%', backgroundColor: bgColorValue }}
+            style={{ width: panelVisible && panelOpen ? leftWidth : '100%', backgroundColor: bgColorValue }}
           >
-            <div className={hasAnalyses && panelOpen ? 'px-6 py-6 max-w-none' : 'px-8 py-6 max-w-[950px] mx-auto'}>
+            <div className={panelVisible && panelOpen ? 'px-6 py-6 max-w-none' : 'px-8 py-6 max-w-[950px] mx-auto'}>
               {readingAreaContent}
             </div>
           </div>
 
           {/* Resizable divider */}
-          {hasAnalyses && panelOpen && (
+          {panelVisible && panelOpen && (
             <div
               className={`resize-handle ${isDragging ? '!bg-primary' : ''}`}
               onMouseDown={handleDividerMouseDown}
@@ -856,27 +908,39 @@ export default function ReaderPage() {
             />
           )}
 
-          {/* Right: Study panel（始终挂载，通过 transform/opacity 滑动进出） */}
-          {hasAnalyses && (
+          {/* Right: Study / QA panel（始终挂载，通过 transform/opacity 滑动进出） */}
+          {panelVisible && (
             <div
               className={`flex-1 min-h-0 overflow-hidden flex flex-col transition-all duration-300 ease-out ${panelOpen ? 'translate-x-0 opacity-100' : 'translate-x-full opacity-0'}`}
             >
-              <StudyPanel onClose={() => setPanelOpen(false)} />
+              {activePanel === 'qa' ? (
+                <QAPanel
+                  onClose={() => setPanelOpen(false)}
+                  onSwitchToStudy={handleSwitchToStudy}
+                  apiKey={apiKey}
+                  provider={selectedProvider}
+                  onRequireApiKey={() => setShowApiKeyModal(true)}
+                />
+              ) : (
+                <StudyPanel onClose={() => setPanelOpen(false)} onSwitchToQa={handleSwitchToQa} />
+              )}
             </div>
           )}
 
           {/* Reopen panel button — shown when panel is closed but has analyses */}
-          {hasAnalyses && !panelOpen && (
+          {panelVisible && !panelOpen && (
             <button
-              onClick={handleOpenPanel}
+              onClick={activePanel === 'qa' ? handleOpenQa : handleOpenPanel}
               className="fixed right-3 top-1/2 -translate-y-1/2 z-40 w-9 h-24 bg-reader-surface border border-reader-line-soft rounded-l-xl shadow-soft flex flex-col items-center justify-center gap-1.5 hover:brightness-[0.96] transition-all touch-area group"
-              title="打开解析面板"
+              title={activePanel === 'qa' ? '打开 AI 问答' : '打开解析面板'}
               style={{ borderRight: 'none' }}
             >
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="group-hover:scale-110 transition-transform">
                 <path d="M15 18l-6-6 6-6" />
               </svg>
-              <span className="text-[10px] text-muted-soft font-medium leading-tight text-center group-hover:text-primary transition-colors">解析<br/>面板</span>
+              <span className="text-[10px] text-muted-soft font-medium leading-tight text-center group-hover:text-primary transition-colors">
+                {activePanel === 'qa' ? (<>AI<br/>问答</>) : (<>解析<br/>面板</>)}
+              </span>
             </button>
           )}
         </div>
@@ -891,10 +955,32 @@ export default function ReaderPage() {
         </div>
       )}
 
-      {/* ── Mobile: Study panel bottom sheet ── */}
-      {isMobile && hasAnalyses && (
-        <StudySheet open={studySheetOpen} onClose={() => setStudySheetOpen(false)}>
-          <StudyPanel mobile />
+      {/* ── Mobile: Study / QA panel bottom sheet ── */}
+      {isMobile && (hasAnalyses || studySheetOpen) && (
+        <StudySheet
+          open={studySheetOpen}
+          onClose={() => setStudySheetOpen(false)}
+          topBar={
+            <PanelSwitch
+              active={activePanel}
+              onChange={(v) => (v === 'qa' ? handleSwitchToQa() : handleSwitchToStudy())}
+            />
+          }
+        >
+          {activePanel === 'qa' ? (
+            <QAPanel
+              mobile
+              onSwitchToStudy={handleSwitchToStudy}
+              apiKey={apiKey}
+              provider={selectedProvider}
+              onRequireApiKey={() => {
+                setStudySheetOpen(false);
+                setShowApiKeyModal(true);
+              }}
+            />
+          ) : (
+            <StudyPanel mobile onSwitchToQa={handleSwitchToQa} />
+          )}
         </StudySheet>
       )}
 
@@ -907,10 +993,26 @@ export default function ReaderPage() {
         />
       )}
 
+      {/* ── Mobile: FAB for AI 问答 ── */}
+      {isMobile && !studySheetOpen && !focusedAnalysis && (
+        <button
+          onClick={handleOpenQa}
+          className="fixed bottom-24 right-4 z-40 w-12 h-12 rounded-full bg-reader-surface border border-reader-line-soft text-primary shadow-pop flex items-center justify-center hover:brightness-[0.96] transition-colors touch-area"
+          aria-label="打开 AI 问答"
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
+          </svg>
+        </button>
+      )}
+
       {/* ── Mobile: FAB for study panel ── */}
       {isMobile && hasAnalyses && !studySheetOpen && !focusedAnalysis && (
         <button
-          onClick={() => setStudySheetOpen(true)}
+          onClick={() => {
+            setActivePanel('study');
+            setStudySheetOpen(true);
+          }}
           className="fixed bottom-6 right-4 z-40 w-12 h-12 rounded-full bg-primary text-white shadow-pop flex items-center justify-center hover:bg-primary-active transition-colors touch-area"
           aria-label="打开解析面板"
         >
@@ -951,6 +1053,9 @@ export default function ReaderPage() {
               </span>
               <Button variant="primary" size="sm" loading={isAnalyzingSentences} onClick={handleAnalyzeSentences}>
                 解析句子
+              </Button>
+              <Button variant="secondary" size="sm" onClick={handleAskAi}>
+                问 AI
               </Button>
               <Button variant="ghost" size="sm" onClick={clearSentenceSelection}>
                 清除

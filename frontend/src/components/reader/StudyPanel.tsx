@@ -22,6 +22,7 @@ import Button from '../ui/Button';
 import ErrorBanner from './ErrorBanner';
 import { ChineseSpoiler } from '../common/ChineseSpoiler';
 import PhoneticWithSpeakers from './PhoneticWithSpeakers';
+import PanelSwitch from './PanelSwitch';
 
 // ── Module-level callback for reverse navigation ──
 let _scrollToAnalysis: ((key: string, tab: 'words' | 'sentences') => void) | null = null;
@@ -442,9 +443,12 @@ function SentenceCard({
 
 export default function StudyPanel({
   onClose,
+  onSwitchToQa,
   mobile = false,
 }: {
   onClose?: () => void;
+  /** 切换到 AI 问答面板 */
+  onSwitchToQa?: () => void;
   /** Mobile bottom-sheet mode: the sheet covers the lower viewport, so the
    *  located paragraph must scroll to the top of the reading area */
   mobile?: boolean;
@@ -719,7 +723,13 @@ export default function StudyPanel({
               </svg>
             </button>
           )}
-          <h3 className="text-sm font-display font-medium text-ink m-0">解析面板</h3>
+          {/* Panel switch */}
+          {onSwitchToQa && (
+            <PanelSwitch
+              active="study"
+              onChange={(v) => { if (v === 'qa') onSwitchToQa(); }}
+            />
+          )}
         </div>
         <div className="flex items-center gap-1">
           {/* Font size controls */}

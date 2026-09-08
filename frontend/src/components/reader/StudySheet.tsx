@@ -4,6 +4,8 @@ interface StudySheetProps {
   children: ReactNode;
   onClose: () => void;
   open: boolean;
+  /** 可选右上角控件（如解析/AI问答切换） */
+  topBar?: ReactNode;
 }
 
 const CLOSE_ANIM_MS = 300;
@@ -13,7 +15,7 @@ const CLOSE_ANIM_MS = 300;
  * Renders as a full-viewport overlay that slides up from the bottom.
  * Keeps itself mounted through the closing animation before unmounting.
  */
-export default function StudySheet({ children, onClose, open }: StudySheetProps) {
+export default function StudySheet({ children, onClose, open, topBar }: StudySheetProps) {
   const [rendered, setRendered] = useState(open);
   const [closing, setClosing] = useState(false);
 
@@ -44,8 +46,13 @@ export default function StudySheet({ children, onClose, open }: StudySheetProps)
       {/* Sheet */}
       <div className={`h-[45vh] bg-reader-surface rounded-t-xl flex flex-col overflow-hidden shadow-elevated ${closing ? 'animate-sheet-slide-down' : 'animate-sheet-slide-up'}`}>
         {/* Drag handle indicator */}
-        <div className="flex justify-center pt-2 pb-1 flex-shrink-0">
+        <div className="flex justify-center pt-2 pb-1 flex-shrink-0 relative">
           <div className="w-10 h-1 rounded-full bg-[color-mix(in_srgb,var(--ink)_18%,transparent)]" />
+          {topBar && (
+            <div className="absolute right-2 top-1.5">
+              {topBar}
+            </div>
+          )}
         </div>
 
 
