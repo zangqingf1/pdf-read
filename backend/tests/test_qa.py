@@ -342,6 +342,7 @@ async def test_stream_endpoint_quiz_prompt_and_target_sentence(monkeypatch):
             prompt_name="doc_quiz",
             target_paragraph_index=0,
             target_sentence="Target paragraph.",
+            target_sentence_index=1,
         )
         resp = await qa_module.qa_stream(request, db, user)
         await _collect_events(resp)
@@ -358,6 +359,8 @@ async def test_stream_endpoint_quiz_prompt_and_target_sentence(monkeypatch):
             )
         ).scalars().all()
         assert rows[0].paragraph_index == 0, "引用段落索引应落库"
+        assert rows[0].sentence_index == 1, "引用句段内索引应落库"
+        assert rows[0].sentence_text == "Target paragraph.", "引用句原文应落库"
         assert rows[1].prompt_name == "doc_quiz"
     finally:
         await db.close()

@@ -10,6 +10,8 @@ import {
 /** 引用句：选中文本后「问 AI」带入面板的目标句 */
 export interface QaQuote {
   paragraphIndex: number;
+  /** 引用句在所在段落内的句子索引（精确跳句/落库用） */
+  sentenceIndex: number;
   sentenceText: string;
 }
 
@@ -121,6 +123,7 @@ export const useQaStore = create<QaState>()((set, get) => ({
           role: 'user' as const,
           content: trimmed,
           paragraph_index: activeQuote?.paragraphIndex ?? null,
+          sentence_index: activeQuote?.sentenceIndex ?? null,
           sentence_text: activeQuote?.sentenceText ?? null,
           created_at: '',
         },
@@ -136,6 +139,7 @@ export const useQaStore = create<QaState>()((set, get) => ({
           question: trimmed,
           prompt_name: promptName,
           target_paragraph_index: activeQuote?.paragraphIndex,
+          target_sentence_index: activeQuote?.sentenceIndex,
           target_sentence: activeQuote?.sentenceText,
           api_key: apiKey,
           provider,

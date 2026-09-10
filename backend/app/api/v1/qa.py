@@ -218,6 +218,12 @@ async def qa_stream(
                             role="user",
                             content=request.question.strip(),
                             paragraph_index=request.target_paragraph_index,
+                            sentence_index=request.target_sentence_index,
+                            sentence_text=(
+                                request.target_sentence.strip()
+                                if request.target_sentence
+                                else None
+                            ),
                         )
                         assistant_row = QaMessage(
                             document_id=doc_uuid,
@@ -290,6 +296,8 @@ async def list_qa_messages(
                 content=row.content,
                 prompt_name=row.prompt_name,
                 paragraph_index=row.paragraph_index,
+                sentence_index=row.sentence_index,
+                sentence_text=row.sentence_text,
                 created_at=row.created_at.isoformat() if row.created_at else "",
             )
             for row in rows

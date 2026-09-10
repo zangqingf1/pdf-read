@@ -170,7 +170,12 @@ const SentenceToken = memo(function SentenceToken({
     }
     const sentenceSelected = s.selectedSentences[sentenceKey] ? '1' : '0';
     const sentenceAnalyzed = s.sentenceAnalyses[sentenceKey] ? '1' : '0';
-    return `${selectedBits}|${analyzedBits}|${syllabusBits}|${sentenceSelected}${sentenceAnalyzed}|v${s.syllabusVersion}`;
+    const quoteLocated =
+      s.quoteLocate?.paragraphIndex === paragraphIndex &&
+      s.quoteLocate?.sentenceIndex === sentence.index
+        ? '1'
+        : '0';
+    return `${selectedBits}|${analyzedBits}|${syllabusBits}|${sentenceSelected}${sentenceAnalyzed}${quoteLocated}|v${s.syllabusVersion}`;
   });
 
   // 本句签名变化时才重渲染；渲染时读取当前 store 快照（非响应式读取）。
@@ -179,6 +184,7 @@ const SentenceToken = memo(function SentenceToken({
     wordAnalyses,
     selectedSentences,
     sentenceAnalyses,
+    quoteLocate,
     toggleWordSelection,
     toggleSentenceSelection,
     syllabusWords,
@@ -196,6 +202,10 @@ const SentenceToken = memo(function SentenceToken({
   const isSelected = !!selectedSentences[sentenceKey];
   const hasAnalysis = !!sentenceAnalyses[sentenceKey];
   const isTtsActive = activeWordIdx !== null;
+  const isQuoteLocated =
+    quoteLocate != null &&
+    quoteLocate.paragraphIndex === paragraphIndex &&
+    quoteLocate.sentenceIndex === sentence.index;
 
   const sentenceRef = useRef<HTMLSpanElement>(null);
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -301,6 +311,7 @@ const SentenceToken = memo(function SentenceToken({
     isSelected ? 'sentence-token-selected' : '',
     hasAnalysis && !isSelected ? 'sentence-token-has-analysis' : '',
     isTtsActive ? 'tts-current-sentence' : '',
+    isQuoteLocated ? 'sentence-token-located' : '',
   ].filter(Boolean).join(' ');
 
   return (

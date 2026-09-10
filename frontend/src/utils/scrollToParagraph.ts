@@ -54,3 +54,50 @@ export function scrollToParagraph(
     }
   }, retryIntervalMs);
 }
+
+export interface ScrollToSentenceOptions {
+  /** scrollIntoView 的对齐方式，默认居中 */
+  block?: ScrollLogicalPosition;
+  /** 元素尚未渲染时的重试次数（默认 ~3 秒） */
+  retries?: number;
+  /** 重试间隔毫秒 */
+  retryIntervalMs?: number;
+}
+
+function findSentenceElement(
+  paragraphIndex: number,
+  sentenceIndex: number,
+): HTMLElement | null {
+  return document.querySelector<HTMLElement>(
+    `[data-paragraph-index="${paragraphIndex}"] .sentence-token[data-sentence-index="${sentenceIndex}"]`,
+  );
+}
+
+/**
+ * 滚动到指定段落的某一句话（句子 span 精确居中）。
+ * 与 scrollToParagraph 一样带元素未渲染重试；始终找不到时（段落被编辑/
+ * 索引错位等）回退到整段定位，不静默失败。
+ */
+export function scrollToSentence(
+  paragraphIndex: number,
+  sentenceIndex: number,
+  { block = 'center', retries = 20, retryIntervalMs = 150 }: ScrollToSentenceOptions = {},
+): void {
+  let found = false;
+  const scrollOnce = () => {
+    const el = findSentenceElement(paragraphIndex, sentenceIndex);
+    if (!el) return false;
+    found = true;
+    el.scrollIntoView({ behavior: 'smooth', block });
+    return true;
+  };
+  if (scrollOnce()) return;
+  let attempts = 0;
+  const timer = setInterval(() => {
+    attempts += 1;
+    if (scrollOnce() || attempts >= retries) {
+      clearInterval(timer);
+      if (!found) scrollToParagraph(paragraphIndex, { block });
+    }
+  }, retryIntervalMs);
+}

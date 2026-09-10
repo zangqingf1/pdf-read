@@ -593,6 +593,20 @@ async def run_migrations():
             "CREATE INDEX IF NOT EXISTS idx_vocab_user_srs ON vocabulary_entries(user_id, srs_status, srs_due_at)",
         )
 
+        # ═══════════════════════════════════════════════════════════════
+        # Migration 017: QA 引用句精确定位（引用句所在句子索引 + 原文）
+        # user 消息若带引用句，把 sentence_index/sentence_text 一并落库，
+        # 历史会话刷新后引用卡仍能显示句原文并精确跳句。
+        # ═══════════════════════════════════════════════════════════════
+        await _apply(
+            "017a_qa_messages_sentence_index",
+            "ALTER TABLE qa_messages ADD COLUMN sentence_index INTEGER NULL",
+        )
+        await _apply(
+            "017b_qa_messages_sentence_text",
+            "ALTER TABLE qa_messages ADD COLUMN sentence_text TEXT NULL",
+        )
+
 
 async def _backfill_vocabulary_phonetics():
     """Fill empty phonetics using the base-form fallback (see dictionary_service)."""

@@ -13,7 +13,7 @@ import Button from '../ui/Button';
 import EmptyState from '../ui/EmptyState';
 import ErrorBanner from './ErrorBanner';
 import { safeMarkdownComponents } from '../../utils/markdownComponents';
-import { scrollToParagraph } from '../../utils/scrollToParagraph';
+import { scrollToParagraph, scrollToSentence } from '../../utils/scrollToParagraph';
 import { useReaderStore, BG_COLORS } from '../../stores/readerStore';
 import { useQaStore, type QaQuote } from '../../stores/qaStore';
 import PanelSwitch from './PanelSwitch';
@@ -27,6 +27,9 @@ interface QAPanelProps {
   apiKey?: string;
   provider?: 'deepseek';
   onRequireApiKey?: () => void;
+  /** 点击引用卡跳转到原文：由阅读页容器实现（移动端需先收起弹层露出正文）。
+   *  sentenceIndex 为 null 时表示旧数据无句级信息，走整段定位。 */
+  onJumpToQuote?: (paragraphIndex: number, sentenceIndex: number | null) => void;
 }
 
 /** 预填输入框的快捷问题（引用句存在时才显示前两个） */
@@ -42,6 +45,7 @@ export default function QAPanel({
   apiKey,
   provider,
   onRequireApiKey,
+  onJumpToQuote,
 }: QAPanelProps) {
   const { bgColor } = useReaderStore();
   const bgColorValue = BG_COLORS.find(c => c.key === bgColor)?.value ?? BG_COLORS[0].value;
@@ -190,7 +194,9 @@ export default function QAPanel({
               {msg.paragraph_index != null && msg.paragraph_index >= 0 && (
                 <QuoteChip
                   paragraphIndex={msg.paragraph_index}
+                  sentenceIndex={msg.sentence_index}
                   sentenceText={msg.sentence_text}
+                  onJump={onJumpToQuote}
                 />
               )}
               <div className="max-w-[85%] px-3.5 py-2 rounded-2xl rounded-br-md bg-primary/10 border border-primary/20 text-sm text-ink whitespace-pre-wrap break-words">
@@ -253,7 +259,9 @@ export default function QAPanel({
             <div className="w-full mb-1">
               <QuoteChip
                 paragraphIndex={pendingQuote.paragraphIndex}
+                sentenceIndex={pendingQuote.sentenceIndex}
                 sentenceText={pendingQuote.sentenceText}
+                onJump={onJumpToQuote}
                 onRemove={() => useQaStore.getState().setPendingQuote(null)}
               />
             </div>
@@ -309,25 +317,37 @@ export default function QAPanel({
   );
 }
 
-/** 引用句小卡：点击定位到原文段落 */
+/** 引用句小卡：点击定位到原文（有句索引则精确跳到句子，否则整段定位） */
 function QuoteChip({
   paragraphIndex,
+  sentenceIndex,
   sentenceText,
   onRemove,
+  onJump,
 }: {
   paragraphIndex: number;
+  sentenceIndex?: number | null;
   sentenceText?: string | null;
   onRemove?: () => void;
+  onJump?: (paragraphIndex: number, sentenceIndex: number | null) => void;
 }) {
   const handleClick = useCallback(() => {
-    scrollToParagraph(paragraphIndex, { block: 'center', retries: 1 });
-  }, [paragraphIndex]);
+    if (onJump) {
+      onJump(paragraphIndex, sentenceIndex ?? null);
+      return;
+    }
+    if (sentenceIndex != null) {
+      scrollToSentence(paragraphIndex, sentenceIndex, { block: 'center', retries: 1 });
+    } else {
+      scrollToParagraph(paragraphIndex, { block: 'center', retries: 1 });
+    }
+  }, [paragraphIndex, sentenceIndex, onJump]);
 
   return (
     <div
       className="max-w-[85%] flex items-start gap-1.5 px-2.5 py-1.5 mb-1 rounded-lg border-l-2 border-primary bg-reader-surface text-xs text-muted cursor-pointer hover:brightness-[0.97] transition-all group"
       onClick={handleClick}
-      title="点击定位到原文段落"
+      title={sentenceIndex != null ? '点击定位到原文对应句子' : '点击定位到原文段落'}
     >
       <span className="flex-1 italic line-clamp-2 break-words">
         {sentenceText ? `「${sentenceText}」` : `第 ${paragraphIndex + 1} 段`}

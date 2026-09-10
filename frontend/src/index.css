@@ -679,6 +679,14 @@
   background-color: #d6e6f5;
 }
 
+/* 问答引用句定位高亮：点击 AI 问答引用卡后跳到该句并持续标亮，
+   直到点击正文其他位置才由 store 清除（独立于 -selected，勿与选句混淆） */
+.sentence-token-located {
+  background-color: rgba(200, 116, 85, 0.16);
+  box-shadow: 0 0 0 1.5px var(--primary);
+  border-radius: 3px;
+}
+
 /* ── 朗读卡拉OK高亮 ── */
 .tts-current-sentence {
   background-color: rgba(200, 116, 85, 0.12);

@@ -11,9 +11,11 @@ export interface QaMessage {
   content: string;
   prompt_name?: string | null;
   paragraph_index?: number | null;
-  created_at: string;
-  /** 仅前端本地使用：user 消息发送时引用的句子原文（后端不存，历史消息无此字段） */
+  /** 引用句在所在段落内的句子索引（user 行持久化，旧数据可能缺失） */
+  sentence_index?: number | null;
+  /** 引用句原文（user 行持久化；旧历史数据无此字段） */
   sentence_text?: string | null;
+  created_at: string;
 }
 
 export interface QaStreamRequestBody {
@@ -23,6 +25,8 @@ export interface QaStreamRequestBody {
   prompt_name?: QaPromptName;
   /** 引用句所在段落（可选） */
   target_paragraph_index?: number;
+  /** 引用句在段内的句子索引（可选） */
+  target_sentence_index?: number;
   /** 引用句原文（可选） */
   target_sentence?: string;
   api_key?: string;
@@ -82,6 +86,7 @@ export async function streamQaAnswer(
         question: body.question,
         prompt_name: body.prompt_name || undefined,
         target_paragraph_index: body.target_paragraph_index ?? undefined,
+        target_sentence_index: body.target_sentence_index ?? undefined,
         target_sentence: body.target_sentence || undefined,
         api_key: body.api_key || undefined,
         provider: body.provider || undefined,

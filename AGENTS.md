@@ -172,7 +172,7 @@ app/
 - **WordAnalysis**: `(document_id, paragraph_index, word)` 唯一, upsert。含 phonetic, definition, cognates, synonyms_antonyms, exam_tags（考纲标签 JSON 数组）等
 - **SentenceAnalysis**: `(document_id, paragraph_index, sentence_index)` 唯一, upsert。含 `structure_json`（新格式 `{"content": ...}`，旧格式向前兼容重建）
 - **PromptTemplate**: **复合主键 `(name, is_default)`**, `system_prompt` + `user_prompt`。无 DB 行=出厂默认
-- **QaMessage**: 文档 AI 问答对话（多轮持久化）。**自增整数主键**（对话按插入顺序回放，UUID 无单调性），`document_id` cascade delete, `role`(user/assistant), `content`, `prompt_name`(assistant 行记录所用模板), `paragraph_index`(引用句所在段落, nullable), `created_at`。新表由 `create_all` 自动建，无需迁移登记
+- **QaMessage**: 文档 AI 问答对话（多轮持久化）。**自增整数主键**（对话按插入顺序回放，UUID 无单调性），`document_id` cascade delete, `role`(user/assistant), `content`, `prompt_name`(assistant 行记录所用模板), `paragraph_index`(引用句所在段落, nullable), `sentence_index`(引用句在段内的句子索引, user 行, nullable, 迁移 `017a`), `sentence_text`(引用句原文, user 行, nullable, 迁移 `017b`), `created_at`。新表由 `create_all` 自动建，但**既有表加列必须登记迁移**
 - **DailyQuote**: 每日一句名句库（管理后台「句子管理」维护）。`text_en`/`text_zh`/`author`/`active`(启停)/`created_at`；`GET /quote` 按日期序数对 active 行取模轮换
 
 ### 解析流程
@@ -218,7 +218,7 @@ constants/      # examTags(考纲标签常量/配色/显隐过滤)
 - 阅读页移动端: 单栏 + 底部双 FAB（解析 / AI 问答）→ StudySheet (45vh 弹出，内容按 Tab 切换)；已解析内容点击 → FocusedAnalysisSheet (max 45vh)
 - 段落渲染: `react-markdown` + `remark-gfm`，单词/句子 token 化注入，支持选中/解析/已解析三种状态
 - 分析功能: 前端选中 → API → AI 分析 → upsert 持久化 → 下次打开自动恢复（翻译/单词/句子/总结均持久化）
-- **文档 AI 问答（外刊精读）**: 阅读页右侧面板 Tab「AI 问答」（移动端 StudySheet 内容切换），多轮对话由后端持久化（`qa_messages` 表，自增 id 保证回放顺序；**done 时才落库 user+assistant 两条**，流中断不留孤儿行）。`POST /qa/stream` 服务端组装 messages：system = prompt 模板（`doc_qa` 问答 / `doc_quiz` 出题批改，占位符含 `{document_title}/{document_text}/{target_sentence}/{paragraph_context}`，system 部分由端点用 `_SafeDict` 显式格式化——`_resolve_prompt` 只格式化 user 部分）+ 最近 `QA_HISTORY_MESSAGES=20` 条历史 + 当前问题；全文截断复用 summary 的 head 60% + tail 40%（`QA_MAX_CHARS=24000`）。入口：浮动操作条「问 AI」（选中句子 → 引用句卡片 + 快捷问题 chips）/ ReaderHeader 对话图标 / 移动端聊天 FAB；「出 3 道阅读理解题」chip 走 `doc_quiz`，用户作答后同对话批改。前端 `qaStore` 内存态（临时负 id，成功后本地追加 assistant 消息），切文档懒加载历史、卸载 reset
+- **文档 AI 问答（外刊精读）**: 阅读页右侧面板 Tab「AI 问答」（移动端 StudySheet 内容切换），多轮对话由后端持久化（`qa_messages` 表，自增 id 保证回放顺序；**done 时才落库 user+assistant 两条**，流中断不留孤儿行）。`POST /qa/stream` 服务端组装 messages：system = prompt 模板（`doc_qa` 问答 / `doc_quiz` 出题批改，占位符含 `{document_title}/{document_text}/{target_sentence}/{paragraph_context}`，system 部分由端点用 `_SafeDict` 显式格式化——`_resolve_prompt` 只格式化 user 部分）+ 最近 `QA_HISTORY_MESSAGES=20` 条历史 + 当前问题；全文截断复用 summary 的 head 60% + tail 40%（`QA_MAX_CHARS=24000`）。入口：浮动操作条「问 AI」（选中句子 → 引用句卡片 + 快捷问题 chips）/ ReaderHeader 对话图标 / 移动端聊天 FAB；「出 3 道阅读理解题」chip 走 `doc_quiz`，用户作答后同对话批改。前端 `qaStore` 内存态（临时负 id，成功后本地追加 assistant 消息），切文档懒加载历史、卸载 reset。**引用句精确跳转**：引用卡（`QuoteChip`）带 `sentence_index`/`sentence_text` 落库（迁移 `017a/017b`），点击后由阅读页容器 `onJumpToQuote` 调 `scrollToSentence()` 精确居中该句（`[data-paragraph-index] .sentence-token[data-sentence-index]`，找不到时重试后回退整段定位），并把定位句写入 `documentStore.quoteLocate` 持续高亮（`.sentence-token-located`，点击正文其他位置 `onPointerDown` 清除）；旧历史数据无句级字段则整段定位。移动端先收 StudySheet 再定位（等 350ms 收起动画）
 - **SRS 间隔重复复习**: 单词本全部条目自动成为复习卡（`vocabulary_entries` 上的 `srs_*` 列，迁移 016a~016h；`srs_due_at` NULL = 新卡即到期）。简化 SM-2 四键评分（`srs_service.next_state` 纯函数）：忘了/困难 → 10 分钟学习步；良好 → 毕业 1 天；简单 → 4 天；复习阶段 间隔×ease（困难 ×1.2、简单 ×1.3 加成），遗忘 ease−0.20 进重学；ease 夹 [1.3,3.0]，间隔 ≥21 天自动 `status='mastered'` 出队列。前端 `/srs` 翻卡页（空格翻面、键盘 1-4 评分、间隔预览仅展示、调度以后端为准），入口在 UserMenu（带到期角标）/首页快捷区/单词本「去复习」；单词本卡片显示 新词/复习中/已掌握 徽标 + 掌握切换按钮。`srs_last_reviewed_at` 供「今日已复习」统计；`GET /srs/stats` 含未来 7 天到期预测。v1 未联动阅读页高亮（已掌握词仍显示已解析样式）
 - **导出**: 前端 `export/` 完成排版分页 (`useExportPagination`) → 序列化 HTML → `POST /pdf/export` 服务端 Chrome 无头渲染；服务器需装 Chrome/Edge 和中文字体（否则乱码），见 `.env.example` 注释
 - 认证: JWT 存 localStorage，`ProtectedRoute` 拦截未登录，`AdminRouteGuard` 检查 `is_superuser`
@@ -230,6 +230,7 @@ constants/      # examTags(考纲标签常量/配色/显隐过滤)
 - `.word-token-selected` — 选中状态, 蓝底+光晕
 - `.word-token-has-analysis` — 已解析, 绿色虚线底+浅绿背景
 - `.sentence-token` / `.sentence-token-selected` / `.sentence-token-has-analysis` — 同单词三态
+- `.sentence-token-located` — 问答引用句定位高亮（暖橙底 + primary 描边），独立于 `-selected`（不触发浮动操作条）
 - `.tts-current-word` / `.tts-current-sentence` — 朗读卡拉OK高亮（当前词/当前句）
 - `.sentence-play-btn` — 句子级「从这句朗读」按钮（桌面 hover 显示，触屏常显）
 - `.paragraph-flash` / `@keyframes paragraph-flash-anim` — 黄色闪烁 1.5s

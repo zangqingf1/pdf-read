@@ -27,7 +27,7 @@ import PanelSwitch from '../components/reader/PanelSwitch';
 import { useQaStore } from '../stores/qaStore';
 import { setOnOpenFocusedAnalysis } from '../components/reader/ParagraphBlock';
 import { setOnOpenPanel, triggerScrollToAnalysis } from '../components/reader/StudyPanel';
-import { scrollToParagraph } from '../utils/scrollToParagraph';
+import { scrollToParagraph, scrollToSentence } from '../utils/scrollToParagraph';
 import Button from '../components/ui/Button';
 import Spinner from '../components/ui/Spinner';
 
@@ -491,10 +491,13 @@ export default function ReaderPage() {
     const first = Object.entries(selectedSentences)[0];
     if (first) {
       const [key, val] = first;
-      const paragraphIndex = parseInt(key.split(':')[0], 10);
+      const [pStr, sStr] = key.split(':');
+      const paragraphIndex = parseInt(pStr, 10);
+      const sentenceIndex = parseInt(sStr ?? '', 10);
       if (!isNaN(paragraphIndex)) {
         useQaStore.getState().setPendingQuote({
           paragraphIndex,
+          sentenceIndex: isNaN(sentenceIndex) ? 0 : sentenceIndex,
           sentenceText: val.text,
         });
       }
@@ -502,6 +505,36 @@ export default function ReaderPage() {
     clearSentenceSelection();
     handleOpenQa();
   }, [selectedSentences, clearSentenceSelection, handleOpenQa]);
+
+  // ── AI 问答引用卡跳转：定位到引用句所在位置并持续高亮 ──
+  // （高亮由 documentStore.quoteLocate 驱动，点击正文其他位置取消）
+  const handleJumpToQuote = useCallback((paragraphIndex: number, sentenceIndex: number | null) => {
+    const jump = () => {
+      if (sentenceIndex != null) {
+        useDocumentStore.getState().locateSentence(paragraphIndex, sentenceIndex);
+        scrollToSentence(paragraphIndex, sentenceIndex, { block: 'center', retries: 1 });
+      } else {
+        // 旧历史数据没有句级索引 → 整段定位，同时清掉可能残留的句高亮
+        useDocumentStore.getState().clearQuoteLocate();
+        scrollToParagraph(paragraphIndex, { block: 'center', retries: 1 });
+      }
+    };
+    if (isMobile) {
+      // 移动端：弹层盖住正文，先收起露出文章，等收起动画结束再定位
+      setStudySheetOpen(false);
+      window.setTimeout(jump, 350);
+    } else {
+      jump();
+    }
+  }, [isMobile]);
+
+  // ── 持续高亮清除：点击正文其他位置（非当前定位句）取消 ──
+  const handleReadingPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if ((e.target as HTMLElement).closest('.sentence-token-located')) return;
+    if (useDocumentStore.getState().quoteLocate) {
+      useDocumentStore.getState().clearQuoteLocate();
+    }
+  }, []);
 
   // ── Auto-translate (streaming) ──
   useEffect(() => {
@@ -893,6 +926,7 @@ export default function ReaderPage() {
           <div
             className={`overflow-y-auto flex-shrink-0 min-h-0 ${panelJustOpened ? '' : 'transition-[width] duration-300 ease-out'}`}
             style={{ width: panelVisible && panelOpen ? leftWidth : '100%', backgroundColor: bgColorValue }}
+            onPointerDown={handleReadingPointerDown}
           >
             <div className={panelVisible && panelOpen ? 'px-6 py-6 max-w-none' : 'px-8 py-6 max-w-[950px] mx-auto'}>
               {readingAreaContent}
@@ -920,6 +954,7 @@ export default function ReaderPage() {
                   apiKey={apiKey}
                   provider={selectedProvider}
                   onRequireApiKey={() => setShowApiKeyModal(true)}
+                  onJumpToQuote={handleJumpToQuote}
                 />
               ) : (
                 <StudyPanel onClose={() => setPanelOpen(false)} onSwitchToQa={handleSwitchToQa} />
@@ -948,7 +983,11 @@ export default function ReaderPage() {
 
       {/* ── Mobile: single column layout ── */}
       {isMobile && (
-        <div className="flex-1 min-h-0 overflow-y-auto" style={{ backgroundColor: bgColorValue }}>
+        <div
+          className="flex-1 min-h-0 overflow-y-auto"
+          style={{ backgroundColor: bgColorValue }}
+          onPointerDown={handleReadingPointerDown}
+        >
           <div className="px-4 py-4 max-w-none">
             {readingAreaContent}
           </div>
@@ -973,6 +1012,7 @@ export default function ReaderPage() {
               onSwitchToStudy={handleSwitchToStudy}
               apiKey={apiKey}
               provider={selectedProvider}
+              onJumpToQuote={handleJumpToQuote}
               onRequireApiKey={() => {
                 setStudySheetOpen(false);
                 setShowApiKeyModal(true);

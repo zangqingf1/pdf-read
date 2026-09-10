@@ -29,6 +29,12 @@ class QaMessage(Base):
     prompt_name: Mapped[str | None] = mapped_column(String(50), nullable=True)
     # Paragraph index of the quoted sentence the question was asked about.
     paragraph_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Sentence index within the quoted paragraph (user rows only), so the
+    # quote chip can jump back to the exact sentence even after a reload.
+    sentence_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Original text of the quoted sentence (user rows only) — the backend
+    # previously dropped it, leaving history messages with only a paragraph.
+    sentence_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

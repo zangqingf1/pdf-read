@@ -16,6 +16,9 @@ class QaStreamRequest(BaseModel):
     # Optional quoted sentence the question is about (from the reader panel).
     target_paragraph_index: Optional[int] = Field(None, ge=0)
     target_sentence: Optional[str] = Field(None, max_length=4000)
+    # Index of the quoted sentence within its paragraph — lets the quote chip
+    # jump back to the exact sentence after the conversation is reloaded.
+    target_sentence_index: Optional[int] = Field(None, ge=0)
     api_key: Optional[str] = None
     provider: Optional[Literal["deepseek"]] = None
 
@@ -26,6 +29,8 @@ class QaMessageOut(BaseModel):
     content: str
     prompt_name: Optional[str] = None
     paragraph_index: Optional[int] = None
+    sentence_index: Optional[int] = None
+    sentence_text: Optional[str] = None
     created_at: str
 
 

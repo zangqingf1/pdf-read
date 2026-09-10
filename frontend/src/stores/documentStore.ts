@@ -63,6 +63,10 @@ interface DocumentState {
   syllabusWords: Set<string> | null;
   syllabusVersion: number;
 
+  // 问答引用句定位：AI 问答面板点击引用卡后正文中持续高亮的句子。
+  // 独立于 selectedSentences（选句会触发浮动操作条），点击正文其他位置清除。
+  quoteLocate: { paragraphIndex: number; sentenceIndex: number } | null;
+
   // Actions
   setDocument: (data: PDFResultResponse) => void;
   setLoading: (loading: boolean) => void;
@@ -114,6 +118,10 @@ interface DocumentState {
 
   // 考纲标注
   setSyllabusWords: (words: Set<string> | null) => void;
+
+  // 问答引用句定位
+  locateSentence: (paragraphIndex: number, sentenceIndex: number) => void;
+  clearQuoteLocate: () => void;
 }
 
 export const useDocumentStore = create<DocumentState>((set) => ({
@@ -156,6 +164,8 @@ export const useDocumentStore = create<DocumentState>((set) => ({
 
   syllabusWords: null,
   syllabusVersion: 0,
+
+  quoteLocate: null,
 
   setDocument: (data) => {
     set((state) => {
@@ -279,6 +289,7 @@ export const useDocumentStore = create<DocumentState>((set) => ({
       highlightedAnalysisTab: null,
       syllabusWords: null,
       syllabusVersion: 0,
+      quoteLocate: null,
     }),
 
   updateTranslations: (items) =>
@@ -435,4 +446,11 @@ export const useDocumentStore = create<DocumentState>((set) => ({
       syllabusWords: words,
       syllabusVersion: state.syllabusVersion + 1,
     })),
+
+  // ── 问答引用句定位 ────────────────────────────────────────────
+
+  locateSentence: (paragraphIndex, sentenceIndex) =>
+    set({ quoteLocate: { paragraphIndex, sentenceIndex } }),
+
+  clearQuoteLocate: () => set({ quoteLocate: null }),
 }));
