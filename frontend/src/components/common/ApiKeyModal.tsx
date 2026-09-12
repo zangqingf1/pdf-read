@@ -35,9 +35,11 @@ export function setStoredAIProvider(provider: AIProvider) {
 interface Props {
   open: boolean;
   onClose: () => void;
+  /** 由守卫触发打开时的说明文案（如「解析前需要先配置 MinerU Token」） */
+  notice?: string;
 }
 
-export default function ApiKeyModal({ open, onClose }: Props) {
+export default function ApiKeyModal({ open, onClose, notice }: Props) {
   const [mineruToken, setMineruToken] = useState('');
   const [deepseekKey, setDeepseekKey] = useState('');
   const [saved, setSaved] = useState(false);
@@ -72,6 +74,16 @@ export default function ApiKeyModal({ open, onClose }: Props) {
         </>
       }
     >
+      {notice && (
+        <div className="mb-4 p-3 bg-error/10 border border-error/25 rounded-md text-sm text-error flex items-start gap-1.5">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="flex-shrink-0 mt-0.5">
+            <circle cx="12" cy="12" r="10" />
+            <path d="M12 8v4M12 16h.01" />
+          </svg>
+          <span>{notice}</span>
+        </div>
+      )}
+
       <div className="mb-4 p-3 bg-canvas-soft border border-hairline rounded-md text-sm text-muted">
         <span className="flex items-center gap-1.5">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">

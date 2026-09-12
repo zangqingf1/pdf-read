@@ -1,5 +1,6 @@
 """FastAPI application entry point."""
 
+import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -12,8 +13,18 @@ from app.models import *  # noqa: F401,F403 — ensure all models are registered
 from app.models.document import Document
 from app.services.daily_quote import seed_daily_quotes
 from app.services.ai_service import close_ai_clients
+from app.services.dictionary_service import ensure_local_index
 from app.api.v1 import api_v1_router
 from app.auth.router import router as auth_router
+
+# Strong refs to fire-and-forget startup work (the loop only keeps weak refs).
+_background_tasks: set[asyncio.Task] = set()
+
+
+def _spawn(coro) -> None:
+    task = asyncio.create_task(coro)
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
 
 
 @asynccontextmanager
@@ -43,6 +54,11 @@ async def lifespan(app: FastAPI):
     # Seed daily quote library on first startup
     async with async_session_factory() as db:
         await seed_daily_quotes(db)
+
+    # Warm the ECDICT lower(word) index in the background: creating it can take
+    # a while on a multi-million-row dictionary, so it must not block readiness.
+    # No-op when the index (or the ECDICT file) is already in place.
+    _spawn(ensure_local_index())
 
     yield
     # Shutdown

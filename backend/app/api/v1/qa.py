@@ -25,6 +25,7 @@ from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.deps import get_current_user
+from app.api.deps import ai_rate_limit
 from app.config import settings
 from app.database import get_db
 from app.models.document import Document
@@ -136,6 +137,7 @@ async def qa_stream(
     request: QaStreamRequest,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    _rate_limit: None = Depends(ai_rate_limit),
 ):
     """Stream an AI answer for one QA turn (conversation persisted server-side)."""
     if not request.question.strip():

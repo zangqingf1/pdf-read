@@ -11,7 +11,7 @@ import { useResponsiveBreakpoint } from '../../hooks/useResponsiveBreakpoint';
 import { useDocumentStore } from '../../stores/documentStore';
 import { useExportPreferences } from '../../stores/exportPreferencesStore';
 import { pickExportPrefs } from '../../stores/exportPreferencesStore';
-import { buildExportData } from '../../export/data';
+import { buildExportData, type ExportData } from '../../export/data';
 import { useExportPagination } from '../../hooks/useExportPagination';
 import { serializeExportHtml } from '../../export/serializeExportHtml';
 import { exportPdf } from '../../services/pdfApi';
@@ -20,6 +20,23 @@ import { exportPdf } from '../../services/pdfApi';
 function sanitizeFileName(s: string): string {
   return s.replace(/[\\/:*?"<>|]/g, '_').replace(/\s+/g, ' ').trim() || 'export';
 }
+
+/**
+ * 弹窗关闭时的占位数据。本组件常挂在阅读页顶栏，若一直装配真实导出数据，
+ * 翻译/解析流式更新每批都会触发一次全量排序与索引构建（外加随之而来的整篇测量）。
+ */
+const EMPTY_EXPORT_DATA: ExportData = {
+  title: 'Untitled',
+  titleZh: '',
+  paragraphs: [],
+  translations: {},
+  words: [],
+  sentences: [],
+  summary: null,
+  paragraphsByIndex: new Map(),
+  wordsByKey: {},
+  sentencesByKey: {},
+};
 
 /** 解析导出错误（blob 错误响应是 JSON） */
 async function parseExportError(err: unknown): Promise<string> {
@@ -59,16 +76,18 @@ export default function ExportSettingsModal({
 
   const data = useMemo(
     () =>
-      buildExportData({
-        title: title || '',
-        titleZh,
-        paragraphs,
-        translations,
-        wordAnalyses,
-        sentenceAnalyses,
-        summary,
-      }),
-    [paragraphs, translations, wordAnalyses, sentenceAnalyses, summary, title, titleZh]
+      open
+        ? buildExportData({
+            title: title || '',
+            titleZh,
+            paragraphs,
+            translations,
+            wordAnalyses,
+            sentenceAnalyses,
+            summary,
+          })
+        : EMPTY_EXPORT_DATA,
+    [open, paragraphs, translations, wordAnalyses, sentenceAnalyses, summary, title, titleZh]
   );
 
   const [exporting, setExporting] = useState(false);
@@ -77,8 +96,9 @@ export default function ExportSettingsModal({
   const { isMobile } = useResponsiveBreakpoint();
   const [showPreview, setShowPreview] = useState(false);
 
-  // 分页 plan 在弹窗级计算：预览与「导出 PDF」共用同一份测量结果
-  const { plan, getPlan } = useExportPagination(data, prefs);
+  // 分页 plan 在弹窗级计算：预览与「导出 PDF」共用同一份测量结果。
+  // enabled=open：弹窗未打开时不测量（测量需离屏渲染整篇 + 逐字符取矩形）。
+  const { plan, getPlan } = useExportPagination(data, prefs, open);
 
   // 重新打开弹窗时回到设置视图
   useEffect(() => {

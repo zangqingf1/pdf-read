@@ -47,7 +47,8 @@ class VocabularyEntryOut(BaseModel):
 
 class VocabularyBatchAddRequest(BaseModel):
     document_id: str = Field(..., min_length=1)
-    words: list[str] | None = Field(default=None, description="Optional subset; if empty, all analyzed words of the document are added")
+    # 无上限时会触发超大 IN(...) 查询与逐词 N+1；前端传整篇文档已分析单词，5000 足够
+    words: list[str] | None = Field(default=None, max_length=5000, description="Optional subset; if empty, all analyzed words of the document are added")
 
 
 class VocabularyBatchAddResponse(BaseModel):
@@ -69,7 +70,7 @@ class VocabularyListResponse(BaseModel):
 
 
 class VocabularyBatchDeleteRequest(BaseModel):
-    ids: list[str] = Field(..., min_length=1)
+    ids: list[str] = Field(..., min_length=1, max_length=1000)
 
 
 class VocabularyBatchDeleteResponse(BaseModel):

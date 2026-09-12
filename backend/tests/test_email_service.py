@@ -86,3 +86,62 @@ def test_send_email_unavailable_in_production_without_smtp(monkeypatch):
     monkeypatch.setattr(settings, "SMTP_USER", "")
     with pytest.raises(EmailServiceUnavailable):
         send_email("a@b.com", "subject", "body", None)
+
+
+def _smtp_settings(monkeypatch, security: str) -> None:
+    monkeypatch.setattr(settings, "SMTP_HOST", "smtp.example.com")
+    monkeypatch.setattr(settings, "SMTP_PORT", 465)
+    monkeypatch.setattr(settings, "SMTP_USER", "sender@example.com")
+    monkeypatch.setattr(settings, "SMTP_PASSWORD", "secret")
+    monkeypatch.setattr(settings, "SMTP_SECURITY", security)
+
+
+def test_send_email_ssl_verifies_certificate(monkeypatch):
+    """SSL 分支必须传入校验证书的 context（不传时 stdlib 默认 CERT_NONE）。"""
+    import ssl
+
+    _smtp_settings(monkeypatch, "ssl")
+    smtp_ctx = mock.MagicMock()
+    smtp_ctx.__enter__.return_value = mock.MagicMock()
+
+    with mock.patch.object(
+        email_service.smtplib, "SMTP_SSL", return_value=smtp_ctx
+    ) as smtp_ssl:
+        send_email("to@example.com", "subject", "body", None)
+
+    context = smtp_ssl.call_args.kwargs["context"]
+    assert isinstance(context, ssl.SSLContext)
+    assert context.verify_mode == ssl.CERT_REQUIRED
+    assert context.check_hostname is True
+
+
+def test_send_email_starttls_verifies_certificate(monkeypatch):
+    import ssl
+
+    _smtp_settings(monkeypatch, "starttls")
+    server = mock.MagicMock()
+    smtp_ctx = mock.MagicMock()
+    smtp_ctx.__enter__.return_value = server
+
+    with mock.patch.object(email_service.smtplib, "SMTP", return_value=smtp_ctx):
+        send_email("to@example.com", "subject", "body", None)
+
+    context = server.starttls.call_args.kwargs["context"]
+    assert isinstance(context, ssl.SSLContext)
+    assert context.verify_mode == ssl.CERT_REQUIRED
+
+
+def test_send_email_refuses_plaintext_with_credentials(monkeypatch):
+    """配置了凭据时绝不允许明文连接（否则链路上的中间人可窃取邮箱授权码）。"""
+    _smtp_settings(monkeypatch, "none")
+    server = mock.MagicMock()
+    smtp_ctx = mock.MagicMock()
+    smtp_ctx.__enter__.return_value = server
+
+    with mock.patch.object(email_service.smtplib, "SMTP", return_value=smtp_ctx):
+        with pytest.raises(email_service.EmailServiceError) as exc:
+            send_email("to@example.com", "subject", "body", None)
+
+    assert "SMTP_SECURITY" in str(exc.value)
+    server.login.assert_not_called()
+    server.send_message.assert_not_called()

@@ -492,6 +492,23 @@ async def batch_add(
         for e in new_entries:
             existing_map[e.word] = e
 
+    # 已存在 (entry, document) 的关联一次性查出：逐词一次 SELECT 在整篇加入
+    # （几百上千词）时会产生同量级的数据库往返。
+    existing_source_entry_ids: set = set()
+    if all_entry_ids:
+        existing_source_entry_ids = set(
+            (
+                await db.execute(
+                    select(VocabularySource.vocabulary_entry_id).where(
+                        VocabularySource.document_id == request.document_id,
+                        VocabularySource.vocabulary_entry_id.in_(all_entry_ids),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+
     # Insert into vocabulary_sources for all target words (new and existing) if not already present
     # and update latest_* for existing ones
     for w in target_words:
@@ -503,16 +520,7 @@ async def batch_add(
         para_idx = word_to_para.get(lower)
         if para_idx is None:
             para_idx = rank_map.get(lower, (None, None))[0]
-        # Check if source already exists for this doc
-        exists = (
-            await db.execute(
-                select(VocabularySource).where(
-                    VocabularySource.vocabulary_entry_id == entry.id,
-                    VocabularySource.document_id == request.document_id,
-                )
-            )
-        ).scalar_one_or_none()
-        if exists is None:
+        if entry.id not in existing_source_entry_ids:
             vs = VocabularySource(
                 vocabulary_entry_id=entry.id,
                 document_id=request.document_id,

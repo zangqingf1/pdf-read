@@ -28,6 +28,34 @@ engine = create_async_engine(
     **_pool_config,
 )
 
+if "sqlite" in settings.DATABASE_URL:
+    from sqlalchemy import event as _sa_event
+
+    @_sa_event.listens_for(engine.sync_engine, "connect")
+    def _sqlite_perf_pragmas(dbapi_connection, _connection_record) -> None:
+        """Per-connection SQLite tuning.
+
+        - ``journal_mode=WAL``: with the default rollback journal a single write
+          transaction blocks every reader for its whole duration; WAL lets reads
+          proceed concurrently (important for an async app on SQLite).
+        - ``busy_timeout``: turns "database is locked" into a bounded wait when
+          two requests write at once instead of failing immediately.
+        - ``cache_size``/``temp_store``: keep pages and sort temp tables in
+          memory for the large list/aggregate queries.
+
+        Left at SQLite defaults on purpose: ``synchronous`` (durability) and
+        ``foreign_keys`` (enforcement semantics — turning it on would change
+        existing delete behaviour, so it is not flipped here).
+        """
+        cursor = dbapi_connection.cursor()
+        try:
+            cursor.execute("PRAGMA journal_mode=WAL")
+            cursor.execute("PRAGMA busy_timeout=5000")
+            cursor.execute("PRAGMA cache_size=-32000")
+            cursor.execute("PRAGMA temp_store=MEMORY")
+        finally:
+            cursor.close()
+
 async_session_factory = async_sessionmaker(
     engine,
     class_=AsyncSession,
@@ -606,6 +634,59 @@ async def run_migrations():
             "017b_qa_messages_sentence_text",
             "ALTER TABLE qa_messages ADD COLUMN sentence_text TEXT NULL",
         )
+
+        # ═══════════════════════════════════════════════════════════════
+        # Migration 018: documents 列表/启动恢复用的索引
+        # - (user_id, created_at)：文档列表按创建时间倒序分页
+        # - created_at：管理后台全量按创建时间倒序
+        # - parse_status：启动时把孤儿 processing/awaiting_selection 改 failed，
+        #   原先无索引 → 每次启动两次全表扫描
+        # ═══════════════════════════════════════════════════════════════
+        await _apply(
+            "018a_documents_idx_user_created",
+            "CREATE INDEX IF NOT EXISTS idx_documents_user_created "
+            "ON documents(user_id, created_at)",
+        )
+        await _apply(
+            "018b_documents_idx_created_at",
+            "CREATE INDEX IF NOT EXISTS idx_documents_created_at ON documents(created_at)",
+        )
+        await _apply(
+            "018c_documents_idx_parse_status",
+            "CREATE INDEX IF NOT EXISTS idx_documents_parse_status ON documents(parse_status)",
+        )
+
+        # ═══════════════════════════════════════════════════════════════
+        # Migration 019: feedbacks 支持多张截图（最多 FEEDBACK_MAX_IMAGES 张）
+        # 单列 image_path 换成 JSON 数组文本 image_paths；老库先加列，
+        # 再把已存在的单张路径回填成 ["<path>"]（019b，best-effort）。
+        # ═══════════════════════════════════════════════════════════════
+        await _apply(
+            "019a_feedbacks_image_paths",
+            "ALTER TABLE feedbacks ADD COLUMN image_paths TEXT NULL",
+        )
+        # 老库单图数据回填为单元素数组。新库没有 image_path 列，UPDATE 会报错，
+        # 由 except 兜住并记录 —— 回填类迁移永不阻塞启动。
+        try:
+            if "019b_feedbacks_image_paths_backfill" not in applied:
+                await conn.exec_driver_sql(
+                    "UPDATE feedbacks SET image_paths = '[\"' || image_path || '\"]'"
+                    " WHERE image_path IS NOT NULL AND image_paths IS NULL"
+                )
+                await conn.exec_driver_sql(
+                    "INSERT INTO _migrations (name) VALUES "
+                    "('019b_feedbacks_image_paths_backfill')"
+                )
+                logger.info("Migration 019b: feedback image paths backfill applied")
+        except Exception as exc:
+            logger.warning("Migration 019b: backfill skipped (%s)", exc)
+            try:
+                await conn.exec_driver_sql(
+                    "INSERT INTO _migrations (name) VALUES "
+                    "('019b_feedbacks_image_paths_backfill')"
+                )
+            except Exception:
+                pass
 
 
 async def _backfill_vocabulary_phonetics():

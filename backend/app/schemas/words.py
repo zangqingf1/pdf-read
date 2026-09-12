@@ -19,7 +19,8 @@ class WordEntry(BaseModel):
 class WordAnalysisRequest(BaseModel):
     """Request to analyze selected words."""
 
-    entries: list[WordEntry] = Field(..., min_length=1)
+    # 上限防止单个请求携带超大列表耗尽服务端（前端按段落分组一次性发送，量级为百）
+    entries: list[WordEntry] = Field(..., min_length=1, max_length=1000)
     api_key: str | None = Field(default=None)
     document_id: str = Field(..., min_length=1, description="Document ID for persisting results")
     provider: Literal["deepseek"] | None = Field(

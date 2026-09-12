@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useMemo, useRef, isValidElement, Fragment } from 'react';
+import { useState, useCallback, useEffect, useMemo, useRef, isValidElement, Fragment, memo } from 'react';
 import { flushSync } from 'react-dom';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -16,7 +16,7 @@ import { deleteSentenceAnalysis, deleteAllSentenceAnalyses } from '../../service
 import type { SentenceAnalysisResult } from '../../services/sentenceAnalysisApi';
 import { sentenceBodyMarkdown, sentenceBreakdownChunks } from '../../utils/sentenceSections';
 import { wordPositionMap } from '../../utils/textTokens';
-import { scrollToParagraph } from '../../utils/scrollToParagraph';
+import { scrollToParagraph, scrollToSentence } from '../../utils/scrollToParagraph';
 import EmptyState from '../ui/EmptyState';
 import Button from '../ui/Button';
 import ErrorBanner from './ErrorBanner';
@@ -46,7 +46,11 @@ export function triggerScrollToAnalysis(key: string, tab: 'words' | 'sentences')
 
 // ── Streaming Word Card (shows raw AI output as itʼs generated) ──────
 
-function StreamingWordCard({
+/**
+ * memo：流式期间父组件每个 chunk 都会重渲染，只有正在生成的那张卡片的
+ * rawText 变了，其余卡片必须能跳过（否则每张卡的 Markdown 都会重新解析）。
+ */
+const StreamingWordCard = memo(function StreamingWordCard({
   word,
   paragraphIndex,
   rawText,
@@ -92,18 +96,24 @@ function StreamingWordCard({
       </div>
     </div>
   );
-}
+});
 
 // ── Word Card ──────────────────────────────────────────────────────
 
-function WordCard({
+/**
+ * memo：父组件在流式期间每个 chunk 都重渲染；卡片 props 均来自 store 的稳定
+ * 引用，只有真正变化的那张卡需要重渲染（否则每张卡的 Markdown 都会重解析）。
+ * onDelete 由父级 useCallback 提供并接收 analysis 参数，避免内联箭头函数
+ * 每次渲染都换新引用而让 memo 失效。
+ */
+const WordCard = memo(function WordCard({
   analysis,
-  onScrollToParagraph,
+  onLocate,
   onDelete,
 }: {
   analysis: WordAnalysisResult;
-  onScrollToParagraph: (index: number) => void;
-  onDelete: () => void;
+  onLocate: (analysis: WordAnalysisResult) => void;
+  onDelete: (analysis: WordAnalysisResult) => void;
 }) {
   const [deleting, setDeleting] = useState(false);
   const [confirming, setConfirming] = useState(false);
@@ -114,12 +124,12 @@ function WordCard({
     setDeleting(true);
     try {
       if (analysis.id) await deleteWordAnalysis(analysis.id);
-      onDelete();
+      onDelete(analysis);
     } catch {
       // Keep card visible if API call fails — user can retry
     }
     finally { setDeleting(false); setConfirming(false); }
-  }, [analysis.id, onDelete]);
+  }, [analysis, onDelete]);
 
   return (
     <div
@@ -132,7 +142,7 @@ function WordCard({
         <div className="flex items-baseline gap-2 flex-wrap">
           <span
             className="font-bold text-ink cursor-pointer hover:text-primary transition-colors text-base font-reading"
-            onClick={() => onScrollToParagraph(analysis.paragraph_index)}
+            onClick={() => onLocate(analysis)}
             title="点击定位到原文位置"
           >
             {analysis.word}
@@ -219,11 +229,11 @@ function WordCard({
       {examTags.length > 0 && <ExamTagBadges tags={examTags} />}
     </div>
   );
-}
+});
 
 // ── Streaming Sentence Card (shows raw AI output as itʼs generated) ──
 
-function StreamingSentenceCard({
+const StreamingSentenceCard = memo(function StreamingSentenceCard({
   sentenceText,
   paragraphIndex,
   sentenceIndex,
@@ -273,12 +283,13 @@ function StreamingSentenceCard({
       </div>
     </div>
   );
-}
+});
 
 // ── Sentence Card ──────────────────────────────────────────────────
 
-/** Render AI analysis content using react-markdown with styled section headers. */
-function SentenceContent({ content }: { content: string }) {
+/** Render AI analysis content using react-markdown with styled section headers.
+ *  memo：content 字符串未变时不重新解析 Markdown（流式期间最重要的省功点）。 */
+const SentenceContent = memo(function SentenceContent({ content }: { content: string }) {
   if (!content) return null;
 
   return (
@@ -347,7 +358,7 @@ function SentenceContent({ content }: { content: string }) {
       </ReactMarkdown>
     </div>
   );
-}
+});
 
 /** 句子卡标题：原句拆解直接作为标题（语块间高亮 / 分隔，完整显示）；旧数据回退原句纯文本 */
 function SentenceTitle({ analysis }: { analysis: SentenceAnalysisResult }) {
@@ -365,14 +376,14 @@ function SentenceTitle({ analysis }: { analysis: SentenceAnalysisResult }) {
   );
 }
 
-function SentenceCard({
+const SentenceCard = memo(function SentenceCard({
   analysis,
-  onScrollToParagraph,
+  onLocate,
   onDelete,
 }: {
   analysis: SentenceAnalysisResult;
-  onScrollToParagraph: (index: number) => void;
-  onDelete: () => void;
+  onLocate: (analysis: SentenceAnalysisResult) => void;
+  onDelete: (analysis: SentenceAnalysisResult) => void;
 }) {
   const [deleting, setDeleting] = useState(false);
   const [confirming, setConfirming] = useState(false);
@@ -381,12 +392,12 @@ function SentenceCard({
     setDeleting(true);
     try {
       if (analysis.id) await deleteSentenceAnalysis(analysis.id);
-      onDelete();
+      onDelete(analysis);
     } catch {
       // Keep card visible if API call fails — user can retry
     }
     finally { setDeleting(false); setConfirming(false); }
-  }, [analysis.id, onDelete]);
+  }, [analysis, onDelete]);
 
   return (
     <div
@@ -398,7 +409,7 @@ function SentenceCard({
       <div className="flex items-start justify-between mb-3">
         <span
           className="font-semibold text-ink cursor-pointer hover:text-primary transition-colors leading-snug text-sm font-reading"
-          onClick={() => onScrollToParagraph(analysis.paragraph_index)}
+          onClick={() => onLocate(analysis)}
           title="点击定位到原文位置"
         >
           <SentenceTitle analysis={analysis} />
@@ -437,7 +448,7 @@ function SentenceCard({
       <SentenceContent content={sentenceBodyMarkdown(analysis.content)} />
     </div>
   );
-}
+});
 
 // ── Main Panel ─────────────────────────────────────────────────────
 
@@ -605,10 +616,24 @@ export default function StudyPanel({
     return () => { cancelled = true; _scrollToAnalysis = null; };
   }, []);
 
-  const handleScrollToParagraph = useCallback((paragraphIndex: number) => {
+  const handleLocateWord = useCallback((analysis: WordAnalysisResult) => {
     // Mobile: the bottom sheet covers the lower viewport, so align the
-    // paragraph to the top of the reading area instead of centering it
-    scrollToParagraph(paragraphIndex, { block: mobile ? 'start' : 'center', retries: 1 });
+    // paragraph to the top of the reading area instead of centering it.
+    // 段落闪动的同时让正文里该单词 token 也闪一下，明确落在哪个词上。
+    scrollToParagraph(analysis.paragraph_index, {
+      block: mobile ? 'start' : 'center',
+      word: analysis.word,
+      retries: 1,
+    });
+  }, [mobile]);
+
+  const handleLocateSentence = useCallback((analysis: SentenceAnalysisResult) => {
+    // 句子精确居中 + 该句 span 闪动；找不到句元素时 scrollToSentence 内部
+    // 会自动回退到整段定位
+    scrollToSentence(analysis.paragraph_index, analysis.sentence_index, {
+      block: mobile ? 'start' : 'center',
+      retries: 1,
+    });
   }, [mobile]);
 
   const handleDeleteWord = useCallback(
@@ -923,8 +948,8 @@ export default function StudyPanel({
                 <WordCard
                   key={key}
                   analysis={analysis}
-                  onScrollToParagraph={handleScrollToParagraph}
-                  onDelete={() => handleDeleteWord(analysis)}
+                  onLocate={handleLocateWord}
+                  onDelete={handleDeleteWord}
                 />
               );
             })}
@@ -987,8 +1012,8 @@ export default function StudyPanel({
                 <SentenceCard
                   key={key}
                   analysis={analysis}
-                  onScrollToParagraph={handleScrollToParagraph}
-                  onDelete={() => handleDeleteSentence(analysis)}
+                  onLocate={handleLocateSentence}
+                  onDelete={handleDeleteSentence}
                 />
               );
             })}

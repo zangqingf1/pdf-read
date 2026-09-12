@@ -13,7 +13,8 @@ class SentenceEntry(BaseModel):
 
 
 class SentenceAnalysisRequest(BaseModel):
-    entries: list[SentenceEntry] = Field(min_length=1)
+    # 无上限时单个请求可携带整篇文档的句子，拖垮 worker；前端不分片，2000 足够
+    entries: list[SentenceEntry] = Field(min_length=1, max_length=2000)
     api_key: str | None = None
     document_id: str = Field(..., min_length=1, description="Document ID for persisting results")
     provider: Literal["deepseek"] | None = Field(

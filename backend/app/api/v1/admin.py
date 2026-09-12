@@ -2,6 +2,7 @@
 
 import os as _os
 import uuid
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import delete, func, select, update
@@ -11,6 +12,7 @@ from sqlalchemy.orm import selectinload
 from app.auth.deps import require_superuser
 from app.database import get_db
 from app.models.document import Document
+from app.models.feedback import Feedback
 from app.models.paragraph import Paragraph
 from app.models.sentence_analysis import SentenceAnalysis
 from app.models.user import User
@@ -29,6 +31,13 @@ from app.schemas.admin import (
     AdminUserListResponse,
     AdminUserUpdateRequest,
 )
+from app.schemas.feedback import (
+    STATUS_VALUES,
+    AdminFeedbackItem,
+    AdminFeedbackListResponse,
+    AdminFeedbackUpdateRequest,
+)
+from app.services import feedback_service
 from app.models.daily_quote import DailyQuote
 
 router = APIRouter()
@@ -469,3 +478,95 @@ async def delete_quote(
     await db.delete(quote)
     await db.commit()
     return {"detail": "Quote deleted successfully"}
+
+
+# ── Feedback Management ──
+
+@router.get("/feedback", response_model=AdminFeedbackListResponse)
+async def list_feedback(
+    search: str = Query("", description="Search content, contact, email or nickname"),
+    status_filter: str | None = Query(
+        None, alias="status", description="Filter by status"
+    ),
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_superuser),
+):
+    """List user feedback with optional search, status filter and pagination."""
+    if status_filter is not None and status_filter not in STATUS_VALUES:
+        raise HTTPException(status_code=400, detail="Invalid status filter.")
+
+    base_q = select(Feedback, User).join(User, Feedback.user_id == User.id)
+    count_q = select(func.count(Feedback.id)).join(User, Feedback.user_id == User.id)
+
+    if search:
+        pattern = f"%{search}%"
+        filter_clause = (
+            Feedback.content.ilike(pattern)
+            | Feedback.contact.ilike(pattern)
+            | User.email.ilike(pattern)
+            | User.nickname.ilike(pattern)
+        )
+        base_q = base_q.where(filter_clause)
+        count_q = count_q.where(filter_clause)
+
+    if status_filter is not None:
+        base_q = base_q.where(Feedback.status == status_filter)
+        count_q = count_q.where(Feedback.status == status_filter)
+
+    total = (await db.execute(count_q)).scalar() or 0
+    rows = (
+        await db.execute(
+            base_q.order_by(Feedback.id.desc()).offset(offset).limit(limit)
+        )
+    ).all()
+
+    return AdminFeedbackListResponse(
+        feedbacks=[AdminFeedbackItem.from_feedback(fb, user) for fb, user in rows],
+        total=total,
+    )
+
+
+@router.put("/feedback/{feedback_id}", response_model=AdminFeedbackItem)
+async def update_feedback(
+    feedback_id: int,
+    body: AdminFeedbackUpdateRequest,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_superuser),
+):
+    """Update a feedback's status and/or admin reply."""
+    fb = await db.get(Feedback, feedback_id)
+    if fb is None:
+        raise HTTPException(status_code=404, detail="Feedback not found.")
+
+    if body.status is not None:
+        fb.status = body.status
+    if body.admin_reply is not None:
+        reply = body.admin_reply.strip()
+        fb.admin_reply = reply or None
+        # 回复时间随回复内容走：清空回复时一并清空
+        fb.replied_at = datetime.now() if reply else None
+
+    await db.commit()
+    await db.refresh(fb)
+    user = await db.get(User, fb.user_id)
+    return AdminFeedbackItem.from_feedback(fb, user)
+
+
+@router.delete("/feedback/{feedback_id}")
+async def delete_feedback(
+    feedback_id: int,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_superuser),
+):
+    """Delete a feedback row and its screenshots (if any)."""
+    fb = await db.get(Feedback, feedback_id)
+    if fb is None:
+        raise HTTPException(status_code=404, detail="Feedback not found.")
+
+    image_paths = feedback_service.decode_image_paths(fb.image_paths)
+    await db.delete(fb)
+    await db.commit()
+    feedback_service.delete_feedback_images(image_paths)
+    return {"detail": "Feedback deleted successfully"}

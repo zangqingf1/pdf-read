@@ -9,6 +9,7 @@ import Modal from '../components/ui/Modal';
 
 export default function HomePage() {
   const [showApiKeyModal, setShowApiKeyModal] = useState(false);
+  const [apiKeyNotice, setApiKeyNotice] = useState('');
   const [showAllDocs, setShowAllDocs] = useState(false);
   const [activeNav, setActiveNav] = useState<Exclude<HomeNavKey, 'recent'>>('home');
   const [searchParams, setSearchParams] = useSearchParams();
@@ -25,6 +26,17 @@ export default function HomePage() {
 
   const handleDocumentChanged = useCallback(() => {
     setRefreshKey((k) => k + 1);
+  }, []);
+
+  // 手动打开（顶栏按钮）与缺 Token 守卫打开共用：前者不带提示文案
+  const openApiKeyModal = useCallback((notice = '') => {
+    setApiKeyNotice(notice);
+    setShowApiKeyModal(true);
+  }, []);
+
+  const closeApiKeyModal = useCallback(() => {
+    setShowApiKeyModal(false);
+    setApiKeyNotice('');
   }, []);
 
   const handleSidebarNavigate = useCallback((key: HomeNavKey) => {
@@ -86,7 +98,7 @@ export default function HomePage() {
               <>
                 <button
                   className="h-7 px-2.5 rounded-md bg-surface-card hover:bg-surface-cream-strong text-xs font-medium text-body-strong transition-colors"
-                  onClick={() => setShowApiKeyModal(true)}
+                  onClick={() => openApiKeyModal()}
                 >
                   API 配置
                 </button>
@@ -112,7 +124,7 @@ export default function HomePage() {
           <div className="hidden md:flex items-center justify-end gap-2.5 px-4 md:px-10 pt-6">
             <button
               className="h-8 px-3.5 rounded-md bg-surface-card hover:bg-surface-cream-strong text-xs font-medium text-body-strong transition-colors"
-              onClick={() => setShowApiKeyModal(true)}
+              onClick={() => openApiKeyModal()}
             >
               API 配置
             </button>
@@ -142,6 +154,7 @@ export default function HomePage() {
             onResumed={handleResumed}
             onDocumentChanged={handleDocumentChanged}
             onSelectionChange={setIsSelecting}
+            onRequireApiKey={openApiKeyModal}
           />
         </div>
       </main>
@@ -160,7 +173,8 @@ export default function HomePage() {
       {/* ── API 配置 ── */}
       <ApiKeyModal
         open={showApiKeyModal}
-        onClose={() => setShowApiKeyModal(false)}
+        onClose={closeApiKeyModal}
+        notice={apiKeyNotice}
       />
     </div>
   );

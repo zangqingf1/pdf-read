@@ -10,6 +10,18 @@ production/DEBUG=false，测试也能拿到确定性行为：
 
 import os
 
+import pytest
+
 os.environ.setdefault("ENVIRONMENT", "development")
 os.environ.setdefault("DEBUG", "true")
 os.environ.setdefault("EXPOSE_DEV_CODES", "true")
+
+
+@pytest.fixture(autouse=True)
+def _reset_user_rate_limits():
+    """按用户限流是进程内状态，必须逐用例清空，否则计数会跨用例累积误触 429。"""
+    from app.utils.rate_limit import reset_rate_limits
+
+    reset_rate_limits()
+    yield
+    reset_rate_limits()

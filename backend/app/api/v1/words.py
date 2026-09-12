@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import load_only
 
 from app.auth.deps import get_current_user
+from app.api.deps import ai_rate_limit, syllabus_rate_limit
 from app.config import settings
 from app.database import get_db
 from app.models.document import Document
@@ -181,6 +182,7 @@ async def analyze_words(
     request: WordAnalysisRequest,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    _rate_limit: None = Depends(ai_rate_limit),
 ):
     """Analyze selected words using AI (DeepSeek).
 
@@ -306,6 +308,7 @@ async def analyze_words_stream(
     request: WordAnalysisRequest,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    _rate_limit: None = Depends(ai_rate_limit),
 ):
     """Analyze words with SSE streaming — results arrive progressively.
 
@@ -483,6 +486,7 @@ async def analyze_words_stream(
 async def match_syllabus_words(
     request: SyllabusMatchRequest,
     current_user: User = Depends(get_current_user),
+    _rate_limit: None = Depends(syllabus_rate_limit),
 ):
     """Return words belonging to any of the requested exam syllabi (考纲标注).
 

@@ -1,10 +1,12 @@
 """Dictionary service — ECDICT local SQLite primary, dictionaryapi.dev fallback."""
 
 import asyncio
+import dataclasses
 import logging
 import pathlib
 import re
 import sqlite3
+import threading
 from typing import Any
 
 import httpx
@@ -184,110 +186,204 @@ def _dict_db_path() -> pathlib.Path | None:
     return db_path
 
 
+# ── Local ECDICT access ────────────────────────────────────────────────────
+#
+# Every lookup used to open a fresh sqlite3 connection and re-run the
+# sqlite_master + PRAGMA table_info schema probes before the single useful
+# SELECT. The ECDICT file is static at runtime, so both the connection (one per
+# thread — sqlite3 connections must not be shared across threads) and the
+# resolved schema/SQL are cached here instead.
+
+
+@dataclasses.dataclass(frozen=True)
+class _LocalSchema:
+    """Resolved ECDICT table/column layout plus the compiled lookup SQL."""
+
+    target: str
+    word_col: str
+    phonetic_col: str | None
+    pos_col: str | None
+    trans_col: str | None
+    def_col: str | None
+    lookup_sql: str
+
+
+_local_schema_cache: dict[str, _LocalSchema | None] = {}
+_local_conn_tls = threading.local()
+
+
+def _local_connection(db_path: pathlib.Path) -> sqlite3.Connection:
+    """Reused per-thread connection to the ECDICT file."""
+    conns: dict[str, sqlite3.Connection] | None = getattr(_local_conn_tls, "conns", None)
+    if conns is None:
+        conns = {}
+        _local_conn_tls.conns = conns
+    key = str(db_path)
+    conn = conns.get(key)
+    if conn is None:
+        conn = sqlite3.connect(key)
+        conn.row_factory = sqlite3.Row
+        conns[key] = conn
+    return conn
+
+
+def _drop_local_connection(db_path: pathlib.Path) -> None:
+    """Forget the cached connection/schema after a failure so the next call retries."""
+    conns: dict[str, sqlite3.Connection] | None = getattr(_local_conn_tls, "conns", None)
+    if conns is not None:
+        conn = conns.pop(str(db_path), None)
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:  # noqa: BLE001 — best-effort cleanup
+                pass
+    _local_schema_cache.pop(str(db_path), None)
+
+
+def resolve_local_schema(conn: sqlite3.Connection) -> _LocalSchema | None:
+    """Detect the table/columns once per file (ECDICT ships several variants)."""
+    cur = conn.cursor()
+    cur.execute("SELECT name FROM sqlite_master WHERE type='table'")
+    tables = [r[0] for r in cur.fetchall()]
+    if not tables:
+        return None
+    # Prefer table named 'stardict' or 'ecdict', else first table with word column
+    target = None
+    for t in ("stardict", "ecdict", "dict", "words"):
+        if t in tables:
+            target = t
+            break
+    if target is None:
+        target = tables[0]
+
+    cur.execute(f"PRAGMA table_info({target})")
+    cols = {row[1] for row in cur.fetchall()}
+    word_col = next((c for c in ("word", "headword", "entry", "term") if c in cols), None)
+    if word_col is None:
+        return None
+
+    phonetic_col = next((c for c in ("phonetic", "phone", "ipa", "pron") if c in cols), None)
+    pos_col = next((c for c in ("pos", "part_of_speech", "type", "lexical_category") if c in cols), None)
+    trans_col = next((c for c in ("translation", "trans", "chinese", "zh", "definition", "meaning") if c in cols), None)
+    def_col = next((c for c in ("definition", "meaning", "english", "en_def") if c in cols and c != trans_col), None)
+
+    select_cols = [word_col]
+    for col in (phonetic_col, pos_col, trans_col, def_col):
+        if col:
+            select_cols.append(col)
+    lookup_sql = (
+        f"SELECT {', '.join(select_cols)} FROM {target} "
+        f"WHERE lower({word_col}) = lower(?) LIMIT 1"
+    )
+    return _LocalSchema(target, word_col, phonetic_col, pos_col, trans_col, def_col, lookup_sql)
+
+
+def _schema_for(db_path: pathlib.Path, conn: sqlite3.Connection) -> _LocalSchema | None:
+    key = str(db_path)
+    if key not in _local_schema_cache:
+        try:
+            _local_schema_cache[key] = resolve_local_schema(conn)
+        except Exception as exc:  # noqa: BLE001 — detection failure is not cached
+            logger.warning("ECDICT schema detection failed (%s): %s", db_path, exc)
+            return None
+    return _local_schema_cache[key]
+
+
+def _lookup_local_sync(db_path: pathlib.Path, word: str) -> dict[str, Any] | None:
+    try:
+        conn = _local_connection(db_path)
+        schema = _schema_for(db_path, conn)
+        if schema is None:
+            return None
+        row = conn.execute(schema.lookup_sql, (word,)).fetchone()
+        if row is None:
+            return None
+
+        result: dict[str, Any] = {"word": word}
+        result["phonetic"] = (row[schema.phonetic_col] or "") if schema.phonetic_col else ""
+        result["translation"] = (row[schema.trans_col] or "") if schema.trans_col else ""
+        result["definition_en"] = (row[schema.def_col] or "") if schema.def_col else ""
+        raw_pos = (row[schema.pos_col] or "") if schema.pos_col else ""
+        # ECDICT pos column is a frequency tag ('n:100'); prefer the real
+        # part of speech embedded at the start of the Chinese translation.
+        result["pos"] = _pos_from_translation(result["translation"]) or _normalize_pos(
+            raw_pos.split(",")[0].strip() if raw_pos else ""
+        )
+        result["pos_raw"] = raw_pos
+        return result
+    except sqlite3.Error as exc:
+        # Stale handle (file replaced/removed) — drop it so the next call reconnects.
+        logger.warning("ECDICT local lookup failed for %s: %s", word, exc)
+        _drop_local_connection(db_path)
+        return None
+    except Exception as exc:  # noqa: BLE001 — never break the caller over a lookup
+        logger.warning("ECDICT local lookup failed for %s: %s", word, exc)
+        return None
+
+
 async def _lookup_local(word: str) -> dict[str, Any] | None:
-    """Try ECDICT local SQLite via aiosqlite (fallback to sqlite3 in thread)."""
+    """Try ECDICT local SQLite (one reused connection per thread)."""
     db_path = _dict_db_path()
     if db_path is None:
         return None
+    return await asyncio.to_thread(_lookup_local_sync, db_path, word)
 
-    def _query() -> dict[str, Any] | None:
+
+# ── Index warm-up ──────────────────────────────────────────────────────────
+
+_index_attempted: set[str] = set()
+_index_lock = threading.Lock()
+
+
+def ensure_local_index_sync(db_path: pathlib.Path) -> None:
+    """Best-effort create the ``lower(word)`` index both lookup paths rely on.
+
+    Queries filter on ``lower(word)``, so without a matching expression index
+    SQLite scans the whole ECDICT table (millions of rows) per lookup. Attempt
+    this once per process and never let it raise into the caller.
+    """
+    key = str(db_path)
+    with _index_lock:
+        if key in _index_attempted:
+            return
+        _index_attempted.add(key)
+    try:
+        conn = sqlite3.connect(key)
         try:
-            conn = sqlite3.connect(str(db_path))
-            conn.row_factory = sqlite3.Row
-            # ECDICT schema variants: try common table/column names
-            # stardict: word, phonetic, definition/translation, pos
-            # Try to detect columns
             cur = conn.cursor()
-            # Check tables
-            cur.execute("SELECT name FROM sqlite_master WHERE type='table'")
-            tables = [r[0] for r in cur.fetchall()]
-            if not tables:
-                conn.close()
-                return None
-            # Prefer table named 'stardict' or 'ecdict' or first table with word column
-            target = None
-            for t in ("stardict", "ecdict", "dict", "words"):
-                if t in tables:
-                    target = t
-                    break
-            if target is None:
-                target = tables[0]
-
-            # Detect columns
-            cur.execute(f"PRAGMA table_info({target})")
-            cols = {row[1] for row in cur.fetchall()}
-            # word column variants
-            word_col = None
-            for c in ("word", "headword", "entry", "term"):
-                if c in cols:
-                    word_col = c
-                    break
-            if word_col is None:
-                conn.close()
-                return None
-
-            phonetic_col = next((c for c in ("phonetic", "phone", "ipa", "pron") if c in cols), None)
-            pos_col = next((c for c in ("pos", "part_of_speech", "type", "lexical_category") if c in cols), None)
-            trans_col = next((c for c in ("translation", "trans", "chinese", "zh", "definition", "meaning") if c in cols), None)
-            def_col = next((c for c in ("definition", "meaning", "english", "en_def") if c in cols and c != trans_col), None)
-
-            # Build select
-            select_cols = [word_col]
-            if phonetic_col:
-                select_cols.append(phonetic_col)
-            if pos_col:
-                select_cols.append(pos_col)
-            if trans_col:
-                select_cols.append(trans_col)
-            if def_col:
-                select_cols.append(def_col)
-
-            # Case-insensitive exact match
             cur.execute(
-                f"SELECT {', '.join(select_cols)} FROM {target} WHERE lower({word_col}) = lower(?) LIMIT 1",
-                (word,),
+                "SELECT 1 FROM sqlite_master WHERE type='index' AND name=?",
+                ("idx_stardict_lword",),
             )
-            row = cur.fetchone()
+            if cur.fetchone() is not None:
+                return
+            schema = resolve_local_schema(conn)
+            if schema is None:
+                return
+            logger.info(
+                "ECDICT: creating missing index idx_stardict_lword on %s(lower(%s)) "
+                "— one-time cost, avoids a full table scan per lookup",
+                schema.target,
+                schema.word_col,
+            )
+            cur.execute(
+                f"CREATE INDEX IF NOT EXISTS idx_stardict_lword "
+                f"ON {schema.target}(lower({schema.word_col}))"
+            )
+            conn.commit()
+            logger.info("ECDICT: index idx_stardict_lword created")
+        finally:
             conn.close()
-            if row is None:
-                return None
+    except Exception as exc:  # noqa: BLE001 — read-only DB / disk full must not break startup
+        logger.warning("ECDICT: could not create lower(word) index: %s", exc)
 
-            # row is sqlite3.Row — access by index/col name
-            idx = 0
-            # need to map back
-            result: dict[str, Any] = {"word": word}
-            # word_col is idx 0
-            idx = 1
-            if phonetic_col:
-                result["phonetic"] = row[idx] or ""
-                idx += 1
-            else:
-                result["phonetic"] = ""
-            raw_pos = ""
-            if pos_col:
-                raw_pos = row[idx] or ""
-                idx += 1
-            if trans_col:
-                result["translation"] = row[idx] or ""
-                idx += 1
-            else:
-                result["translation"] = ""
-            if def_col:
-                result["definition_en"] = row[idx] or ""
-            else:
-                result["definition_en"] = ""
-            # ECDICT pos column is a frequency tag ('n:100'); prefer the real
-            # part of speech embedded at the start of the Chinese translation.
-            result["pos"] = _pos_from_translation(result["translation"]) or _normalize_pos(
-                raw_pos.split(",")[0].strip() if raw_pos else ""
-            )
-            result["pos_raw"] = raw_pos
-            return result
-        except Exception as exc:
-            logger.warning("ECDICT local lookup failed for %s: %s", word, exc)
-            return None
 
-    return await asyncio.to_thread(_query)
+async def ensure_local_index() -> None:
+    """Non-blocking startup wrapper: no-op when the ECDICT file is absent."""
+    db_path = _dict_db_path()
+    if db_path is None:
+        return
+    await asyncio.to_thread(ensure_local_index_sync, db_path)
 
 
 _shared_client: httpx.AsyncClient | None = None

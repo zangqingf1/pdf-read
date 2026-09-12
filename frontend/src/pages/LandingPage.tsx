@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import LandingNav from '../components/landing/LandingNav';
 import Hero from '../components/landing/Hero';
 import AuthenticitySection from '../components/landing/AuthenticitySection';
@@ -5,8 +6,15 @@ import FeaturesShowcase from '../components/landing/FeaturesShowcase';
 import WorkflowSection from '../components/landing/WorkflowSection';
 import AudienceSection from '../components/landing/AudienceSection';
 import ClosingSection from '../components/landing/ClosingSection';
+import { markLandingVisited } from '../services/visitStorage';
 
 export default function LandingPage() {
+  // 欢迎页真的渲染出来才算「看过」：否则首次用户一落 `/` 就被标记，
+  // 刷新后会被直接送去登录页，再也看不到欢迎页
+  useEffect(() => {
+    markLandingVisited();
+  }, []);
+
   return (
     <div className="min-h-[100dvh] bg-canvas text-body antialiased">
       <a

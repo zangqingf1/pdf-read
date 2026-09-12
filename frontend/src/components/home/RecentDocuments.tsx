@@ -53,6 +53,8 @@ export default function RecentDocuments({
   const [loading, setLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+  // toast 未接入前端（setRecentToast 无调用方），操作失败必须内联可见
+  const [actionError, setActionError] = useState('');
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
 
   // Batch selection — 支持受控（导航触发）与内部状态两种模式
@@ -116,7 +118,7 @@ export default function RecentDocuments({
       setDocuments((prev) => prev.filter((d) => d.id !== id));
       setTotal((t) => Math.max(0, t - 1));
       onChanged?.();
-    } catch { toastFn?.('删除失败'); }
+    } catch (err: any) { setActionError(err?.response?.data?.detail || '删除失败'); }
     finally { setActionLoading(null); }
   };
 
@@ -134,7 +136,7 @@ export default function RecentDocuments({
       onChanged?.();
     } catch {
       setDocuments((prev) => prev.map((d) => (d.id === doc.id ? { ...d, is_favorite: doc.is_favorite } : d)));
-      toastFn?.('收藏操作失败');
+      setActionError('收藏操作失败');
     }
   };
 
@@ -142,6 +144,7 @@ export default function RecentDocuments({
     setActionLoading(id);
     try {
       const result = await retryDocument(id, getStoredMineruToken());
+      setActionError('');
       if (result.status === 'awaiting_selection') {
         navigate(`/?resume=${id}`);
       } else {
@@ -149,7 +152,7 @@ export default function RecentDocuments({
         await fetchDocuments();
       }
     } catch (err: any) {
-      toastFn?.(err?.response?.data?.detail || '重试失败');
+      setActionError(err?.response?.data?.detail || '重试失败');
     } finally { setActionLoading(null); }
   };
 
@@ -178,7 +181,7 @@ export default function RecentDocuments({
       await fetchDocuments();
       onChanged?.();
     } catch (err: any) {
-      toastFn?.(err?.response?.data?.detail || '批量删除失败');
+      setActionError(err?.response?.data?.detail || '批量删除失败');
     } finally {
       setBatchDeleting(false);
     }
@@ -251,6 +254,25 @@ export default function RecentDocuments({
 
   return (
     <div>
+      {/* 操作失败提示 */}
+      {actionError && (
+        <div className="flex items-start gap-2 mb-3 px-3 py-2 rounded-md bg-error/10 border border-error/25 text-xs text-error animate-fade-in">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" className="flex-shrink-0 mt-0.5">
+            <circle cx="12" cy="12" r="10" />
+            <path d="M12 8v4M12 16h.01" />
+          </svg>
+          <span className="flex-1">{actionError}</span>
+          <button
+            type="button"
+            onClick={() => setActionError('')}
+            className="flex-shrink-0 text-error/70 hover:text-error"
+            aria-label="关闭提示"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
       {/* Non-sidebar header (modal full list) */}
       {!sidebar && (
         <div className="flex items-center justify-between mb-4">

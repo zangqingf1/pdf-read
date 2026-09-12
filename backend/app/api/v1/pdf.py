@@ -13,6 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.deps import get_current_user
+from app.api.deps import export_rate_limit
 from app.database import get_db, async_session_factory
 from app.models.document import Document
 from app.models.paragraph import Paragraph
@@ -83,6 +84,22 @@ async def _get_owned_document(
 
 _logger = logging.getLogger(__name__)
 
+#: 解析链路（OCR/版面分析）全部依赖用户自填的 MinerU Token。缺失时后台任务
+#: 只能报一句笼统的“解析失败”，所以入口处先拦下来给出可操作的提示。
+MINERU_TOKEN_MISSING = "MinerU API Token 未配置，请先点击「API 配置」填写 Token 后再解析文档。"
+
+
+def _require_mineru_token(token: str | None) -> str:
+    """校验 MinerU Token 已配置，返回去除首尾空白的 Token。
+
+    Token 存在前端 localStorage、随每个解析请求传上来；没有它后台任务必然
+    失败，因此在建文档/改状态/起后台任务之前就返回 400。
+    """
+    cleaned = (token or "").strip()
+    if not cleaned:
+        raise HTTPException(status_code=400, detail=MINERU_TOKEN_MISSING)
+    return cleaned
+
 
 def _parse_layout(bbox_json: str | None) -> dict | None:
     """Parse a Paragraph.bbox_json into a layout dict (or None if invalid).
@@ -141,7 +158,7 @@ async def _reshift_analysis_indices(
             through unique temporary indices first so a swap can never hit
             the UNIQUE constraint mid-update.
     """
-    from sqlalchemy import delete as sa_delete, update as sa_update
+    from sqlalchemy import case as sa_case, delete as sa_delete, update as sa_update
 
     if delete_at is not None:
         for model in (WordAnalysis, SentenceAnalysis):
@@ -164,25 +181,27 @@ async def _reshift_analysis_indices(
         for model in (WordAnalysis, SentenceAnalysis):
             # Phase 1: every mapped paragraph moves to a unique negative
             # index so phase 2 cannot collide with rows still at old indices.
-            for old_idx in index_map:
-                await db.execute(
-                    sa_update(model)
-                    .where(
-                        model.document_id == str(document_id),
-                        model.paragraph_index == old_idx,
-                    )
-                    .values(paragraph_index=temp_indices[old_idx])
+            # One CASE statement per phase (instead of one UPDATE per
+            # paragraph) keeps a large reorder from issuing thousands of
+            # round trips; the WHERE restricts rows to the mapped indices.
+            await db.execute(
+                sa_update(model)
+                .where(
+                    model.document_id == str(document_id),
+                    model.paragraph_index.in_(list(index_map.keys())),
                 )
+                .values(paragraph_index=sa_case(temp_indices, value=model.paragraph_index))
+            )
             # Phase 2: move into the final contiguous indices.
-            for old_idx, new_idx in index_map.items():
-                await db.execute(
-                    sa_update(model)
-                    .where(
-                        model.document_id == str(document_id),
-                        model.paragraph_index == temp_indices[old_idx],
-                    )
-                    .values(paragraph_index=new_idx)
+            back_map = {temp_indices[old]: new for old, new in index_map.items()}
+            await db.execute(
+                sa_update(model)
+                .where(
+                    model.document_id == str(document_id),
+                    model.paragraph_index.in_(list(back_map.keys())),
                 )
+                .values(paragraph_index=sa_case(back_map, value=model.paragraph_index))
+            )
 
 
 async def _parse_in_background(doc_id: uuid.UUID, file_path: str, token: str):
@@ -216,6 +235,9 @@ async def upload_pdf(
     Request: multipart/form-data with 'file' field and optional 'mineru_token'.
     Response: {task_id, status, page_count, source_type, file_ext}
     """
+    # 没有 MinerU Token 时解析必然失败 —— 在保存文件、建文档之前就拦下来
+    mineru_token = _require_mineru_token(mineru_token)
+
     # Create document record and save file (file-type whitelist is validated
     # inside pdf_service.upload_and_save)
     try:
@@ -267,6 +289,8 @@ async def parse_url_document(
     batch flow; HTML pages via MinerU-HTML server-side fetch) and returns a
     task_id for status polling. URL sources always skip page selection.
     """
+    mineru_token = _require_mineru_token(body.mineru_token)
+
     try:
         document = await pdf_service.save_url_document(
             body.url, db, user_id=current_user.id
@@ -276,7 +300,7 @@ async def parse_url_document(
         raise HTTPException(status_code=400, detail=str(e))
 
     background_tasks.add_task(
-        _parse_in_background, document.id, document.file_path or "", body.mineru_token
+        _parse_in_background, document.id, document.file_path or "", mineru_token
     )
 
     return PDFUploadResponse(
@@ -864,6 +888,9 @@ async def select_pages(
             detail=f"Cannot select pages when status is '{document.parse_status}'",
         )
 
+    # 校验放最前面：不通过时不改动 document 状态
+    mineru_token = _require_mineru_token(body.mineru_token)
+
     # Validate page range (only if specific pages selected)
     if body.selected_pages is not None and len(body.selected_pages) > 0:
         if document.page_count is None:
@@ -894,7 +921,7 @@ async def select_pages(
 
     # Start background parsing with user's MinerU token
     background_tasks.add_task(
-        _parse_in_background, document.id, document.file_path, body.mineru_token or ""
+        _parse_in_background, document.id, document.file_path, mineru_token
     )
 
     return SelectPagesResponse(
@@ -1120,6 +1147,7 @@ async def retry_document(
                 file_ext=document.file_ext,
             )
         else:
+            mineru_token = _require_mineru_token(body.mineru_token if body else "")
             document.parse_status = "processing"
             document.error_message = None
             await db.commit()
@@ -1127,7 +1155,7 @@ async def retry_document(
                 _parse_in_background,
                 document.id,
                 document.file_path,
-                body.mineru_token if body else "",
+                mineru_token,
             )
             return PDFUploadResponse(
                 task_id=task_id,
@@ -1152,6 +1180,7 @@ async def retry_document(
 async def export_pdf(
     body: PDFExportRequest,
     current_user: User = Depends(get_current_user),
+    _rate_limit: None = Depends(export_rate_limit),
 ):
     """导出 PDF：接收序列化 HTML → Chrome 无头渲染 → 返回文件流。
 

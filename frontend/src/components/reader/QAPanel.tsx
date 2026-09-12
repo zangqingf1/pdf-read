@@ -6,7 +6,7 @@
  * 进入阅读页时通过 qaStore.loadConversation 懒加载。
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { useShallow } from 'zustand/react/shallow';
 import Button from '../ui/Button';
@@ -37,6 +37,15 @@ const QUICK_QUESTIONS_WITH_QUOTE = [
   '这句话为什么用这个时态？',
   '作者这里的立场是什么？',
 ] as const;
+
+/**
+ * memo 化的 Markdown 回答渲染：content 未变时跳过 react-markdown 解析。
+ * 流式期间面板每个 token 都会重渲染，历史问答必须能跳过重新解析，
+ * 否则长会话下的成本随消息数线性叠加。
+ */
+const AnswerMarkdown = memo(function AnswerMarkdown({ content }: { content: string }) {
+  return <ReactMarkdown components={safeMarkdownComponents}>{content}</ReactMarkdown>;
+});
 
 export default function QAPanel({
   onClose,
@@ -206,9 +215,7 @@ export default function QAPanel({
           ) : (
             <div key={msg.id} className="mb-4">
               <div className="qa-answer prose-reader text-sm text-ink break-words [&_p]:my-1.5 [&_ul]:my-1.5 [&_ol]:my-1.5 [&_li]:ml-4">
-                <ReactMarkdown components={safeMarkdownComponents}>
-                  {msg.content}
-                </ReactMarkdown>
+                <AnswerMarkdown content={msg.content} />
               </div>
             </div>
           )

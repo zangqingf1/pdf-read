@@ -10,11 +10,17 @@ Security / operational rules:
 
 The SMTP connection is established per message (simple, stateless, fine for
 low-volume verification mail).
+
+TLS is always certificate-verified: see ``_tls_context()``. Combined with the
+rule that credentials are never sent over a plaintext connection, this stops a
+network attacker from harvesting the mailbox auth code, which is also the
+password-reset channel.
 """
 
 import html
 import logging
 import smtplib
+import ssl
 from email.message import EmailMessage
 
 from app.config import settings
@@ -28,6 +34,17 @@ class EmailServiceError(Exception):
 
 class EmailServiceUnavailable(EmailServiceError):
     """SMTP is not configured (production) — cannot send mail."""
+
+
+def _tls_context() -> ssl.SSLContext:
+    """TLS context with real certificate verification.
+
+    smtplib defaults to ``ssl._create_stdlib_context()`` when no context is
+    passed — that is ``verify_mode=CERT_NONE`` + ``check_hostname=False``, i.e.
+    no verification at all, so a MITM could read the SMTP AUTH credentials.
+    Always pass an explicit verifying context.
+    """
+    return ssl.create_default_context()
 
 
 def smtp_configured() -> bool:
@@ -72,15 +89,29 @@ def send_email(to: str, subject: str, text_body: str, html_body: str | None = No
     security = (settings.SMTP_SECURITY or "ssl").lower()
     timeout = settings.SMTP_TIMEOUT
 
+    # 明文连接下发送 AUTH 凭据 = 把邮箱密码交给链路上的任何人；而该邮箱是密码重置
+    # 验证码的投递通道，泄露即等于账号接管。因此配置了凭据就拒绝明文。
+    if security not in ("ssl", "starttls") and settings.SMTP_USER:
+        raise EmailServiceError(
+            "SMTP_SECURITY 必须为 'ssl' 或 'starttls'：配置了 SMTP_USER 时不允许明文发送凭据。"
+        )
+    if security not in ("ssl", "starttls"):
+        logger.warning(
+            "SMTP_SECURITY=%s 且未配置 SMTP_USER：正在使用未加密连接发送邮件。", security
+        )
+
+    context = _tls_context()
     try:
         if security == "ssl":
-            with smtplib.SMTP_SSL(settings.SMTP_HOST, settings.SMTP_PORT, timeout=timeout) as server:
+            with smtplib.SMTP_SSL(
+                settings.SMTP_HOST, settings.SMTP_PORT, timeout=timeout, context=context
+            ) as server:
                 _authenticate(server)
                 server.send_message(msg)
         else:
             with smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT, timeout=timeout) as server:
                 if security == "starttls":
-                    server.starttls()
+                    server.starttls(context=context)
                 _authenticate(server)
                 server.send_message(msg)
     except smtplib.SMTPException as exc:

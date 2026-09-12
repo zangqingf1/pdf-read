@@ -6,7 +6,7 @@ import type { WordAnalysisResult } from '../../services/wordAnalysisApi';
 import { useReaderStore, FONT_FAMILIES, LINE_HEIGHTS } from '../../stores/readerStore';
 import { useDocumentStore } from '../../stores/documentStore';
 import { triggerScrollToAnalysis } from './StudyPanel';
-import { splitSentences, tokenizeWords, wordAnalysisKey, sentenceAnalysisKey } from '../../utils/textTokens';
+import { splitSentences, splitLines, tokenizeWords, wordAnalysisKey, sentenceAnalysisKey } from '../../utils/textTokens';
 import { useAudioPlayerStore } from '../../stores/audioPlayerStore';
 import { playFromParagraph, togglePlay } from '../../hooks/useParagraphAudioPlayer';
 import { safeMarkdownComponents } from '../../utils/markdownComponents';
@@ -55,6 +55,40 @@ function cachedTokenizeWords(text: string): ReturnType<typeof tokenizeWords> {
   return tokens;
 }
 
+/**
+ * 每句「词分析键 + 小写词干」缓存。
+ *
+ * store 每次 set 都会重新执行所有句子的订阅 selector，而签名要逐词看选中/
+ * 已解析状态；若在 selector 内现算 wordAnalysisKey，每次 set 都会产生上万次
+ * 字符串分配。这里把键与词干预计算一次复用（有界，防长会话内存增长）。
+ */
+const _SENTENCE_KEYS_MAX = 5000;
+const _sentenceKeysCache = new Map<string, { keys: string[]; stemsLower: string[] }>();
+
+function cachedSentenceKeys(
+  paragraphIndex: number,
+  text: string
+): { keys: string[]; stemsLower: string[] } {
+  const cacheKey = `${paragraphIndex}|${text}`;
+  let entry = _sentenceKeysCache.get(cacheKey);
+  if (!entry) {
+    const keys: string[] = [];
+    const stemsLower: string[] = [];
+    for (const token of cachedTokenizeWords(text)) {
+      if (!token.stem) continue;
+      keys.push(wordAnalysisKey(paragraphIndex, token.stem));
+      stemsLower.push(token.stem.toLowerCase());
+    }
+    entry = { keys, stemsLower };
+    if (_sentenceKeysCache.size >= _SENTENCE_KEYS_MAX) {
+      const oldest = _sentenceKeysCache.keys().next().value;
+      if (oldest !== undefined) _sentenceKeysCache.delete(oldest);
+    }
+    _sentenceKeysCache.set(cacheKey, entry);
+  }
+  return entry;
+}
+
 interface ParagraphBlockProps {
   paragraph: ParagraphResult;
   translation?: string;
@@ -76,9 +110,24 @@ function renderWordTokens(
   syllabusWords?: Set<string> | null,
 ): React.ReactNode[] {
   let wordIdx = 0;
-  return tokenizeWords(text).map((token, i) => {
+  return cachedTokenizeWords(text).map((token, i) => {
     if (!token.stem) {
-      return token.raw;
+      // 空白片段里的换行（句内手动换行 / Markdown 软换行）→ 真实换行，
+      // 否则浏览器默认 white-space:normal 会把它折叠成空格
+      if (!/[\r\n]/.test(token.raw)) {
+        return token.raw;
+      }
+      const lines = splitLines(token.raw);
+      return (
+        <React.Fragment key={i}>
+          {lines.map((line, li) => (
+            <React.Fragment key={li}>
+              {li > 0 && <br />}
+              {line}
+            </React.Fragment>
+          ))}
+        </React.Fragment>
+      );
     }
     const currentIdx = wordIdx;
     wordIdx += 1;
@@ -156,17 +205,15 @@ const SentenceToken = memo(function SentenceToken({
   );
 
   // 签名：本句内每个词的选中/已解析/考纲命中状态 + 本句选中/已解析状态。
+  // 逐词键与词干走缓存，selector 内只做查表与拼位串（每 bit 一个字符）。
   const stateSignature = useDocumentStore((s) => {
-    const tokens = cachedTokenizeWords(sentence.text);
-    let selectedBits = '';
-    let analyzedBits = '';
-    let syllabusBits = '';
-    for (const token of tokens) {
-      if (!token.stem) continue;
-      const key = wordAnalysisKey(paragraphIndex, token.stem);
-      selectedBits += s.selectedWords[key] ? '1' : '0';
-      analyzedBits += s.wordAnalyses[key] ? '1' : '0';
-      syllabusBits += s.syllabusWords?.has(token.stem.toLowerCase()) ? '1' : '0';
+    const { keys, stemsLower } = cachedSentenceKeys(paragraphIndex, sentence.text);
+    let bits = '';
+    for (let i = 0; i < keys.length; i++) {
+      const key = keys[i];
+      bits += s.selectedWords[key] ? '1' : '0';
+      bits += s.wordAnalyses[key] ? '1' : '0';
+      bits += s.syllabusWords?.has(stemsLower[i]) ? '1' : '0';
     }
     const sentenceSelected = s.selectedSentences[sentenceKey] ? '1' : '0';
     const sentenceAnalyzed = s.sentenceAnalyses[sentenceKey] ? '1' : '0';
@@ -175,7 +222,7 @@ const SentenceToken = memo(function SentenceToken({
       s.quoteLocate?.sentenceIndex === sentence.index
         ? '1'
         : '0';
-    return `${selectedBits}|${analyzedBits}|${syllabusBits}|${sentenceSelected}${sentenceAnalyzed}${quoteLocated}|v${s.syllabusVersion}`;
+    return `${bits}|${sentenceSelected}${sentenceAnalyzed}${quoteLocated}|v${s.syllabusVersion}`;
   });
 
   // 本句签名变化时才重渲染；渲染时读取当前 store 快照（非响应式读取）。
@@ -382,12 +429,17 @@ const ParagraphBlock = memo(function ParagraphBlock({
       {/* Sentence-level rendering + 段尾展开翻译图标按钮 */}
       <p className={`text-ink !mb-0${paragraph.index === 0 ? ' paragraph-dropcap' : ' paragraph-indent'}`}>
         {sentences.map((sentence) => (
-          <SentenceToken
-            key={sentence.index}
-            sentence={sentence}
-            paragraphIndex={paragraph.index}
-            isTouchDevice={isTouchDevice}
-          />
+          <React.Fragment key={sentence.index}>
+            {/* 句间换行被 splitSentences 当分隔符消费，按数量还原（双击回车 = 空行） */}
+            {Array.from({ length: sentence.breaksBefore }, (_, k) => (
+              <br key={k} />
+            ))}
+            <SentenceToken
+              sentence={sentence}
+              paragraphIndex={paragraph.index}
+              isTouchDevice={isTouchDevice}
+            />
+          </React.Fragment>
         ))}{translation && (
           <button
             type="button"

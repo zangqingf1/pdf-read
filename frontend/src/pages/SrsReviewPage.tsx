@@ -98,8 +98,8 @@ export default function SrsReviewPage() {
               <Badge className="bg-primary/15 text-primary ring-1 ring-primary/20 shadow-none">{counts.due_total}</Badge>
             )}
           </div>
-          <Link to="/vocabulary" className="text-xs text-muted hover:text-primary transition-colors whitespace-nowrap">
-            单词本 →
+          <Link to="/vocabulary">
+            <Button size="sm" variant="secondary">单词本</Button>
           </Link>
         </div>
       </header>
@@ -184,9 +184,13 @@ export default function SrsReviewPage() {
               {!flipped ? (
                 /* 正面：单词 */
                 <div className="flex flex-col items-center gap-3">
-                  <div className="flex items-center gap-3 flex-wrap justify-center">
+                  <div className="flex flex-col items-center gap-1">
                     <span className="text-3xl font-bold text-ink font-reading">{current.word_original}</span>
-                    {current.phonetic && <PhoneticWithSpeakers word={current.word_original} phonetic={current.phonetic} />}
+                    {current.phonetic && (
+                      <span className="text-lg" onClick={(e) => e.stopPropagation()}>
+                        <PhoneticWithSpeakers word={current.word_original} phonetic={current.phonetic} />
+                      </span>
+                    )}
                   </div>
                   {current.pos && <span className="text-sm text-muted italic">{current.pos}</span>}
                   {examTagsOf(current).length > 0 && <ExamTagBadges tags={examTagsOf(current)} />}
@@ -195,9 +199,13 @@ export default function SrsReviewPage() {
               ) : (
                 /* 背面：释义 */
                 <div className="flex flex-col items-center gap-3 w-full">
-                  <div className="flex items-center gap-3 flex-wrap justify-center">
+                  <div className="flex flex-col items-center gap-1">
                     <span className="text-2xl font-bold text-ink font-reading">{current.word_original}</span>
-                    {current.phonetic && <PhoneticWithSpeakers word={current.word_original} phonetic={current.phonetic} />}
+                    {current.phonetic && (
+                      <span className="text-lg" onClick={(e) => e.stopPropagation()}>
+                        <PhoneticWithSpeakers word={current.word_original} phonetic={current.phonetic} />
+                      </span>
+                    )}
                   </div>
                   {current.translation ? (
                     <p className="text-base text-body-strong font-chinese m-0 leading-relaxed">{current.translation}</p>

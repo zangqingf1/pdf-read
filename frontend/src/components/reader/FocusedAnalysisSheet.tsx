@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect, isValidElement, Fragment } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { safeMarkdownComponents } from '../../utils/markdownComponents';
@@ -29,7 +30,7 @@ function FocusedWordCard({
   analysis: WordAnalysisResult;
   analysisKey: string;
 }) {
-  const { removeWordAnalysis } = useDocumentStore();
+  const removeWordAnalysis = useDocumentStore((s) => s.removeWordAnalysis);
   const [confirming, setConfirming] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const visibleExamTags = useReaderStore((s) => s.visibleExamTags);
@@ -149,7 +150,7 @@ function FocusedSentenceCard({
   analysis: SentenceAnalysisResult;
   analysisKey: string;
 }) {
-  const { removeSentenceAnalysis } = useDocumentStore();
+  const removeSentenceAnalysis = useDocumentStore((s) => s.removeSentenceAnalysis);
   const [confirming, setConfirming] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
@@ -264,8 +265,15 @@ export default function FocusedAnalysisSheet({
   analysisKey,
   onClose,
 }: FocusedAnalysisSheetProps) {
-  const { wordAnalyses, sentenceAnalyses } = useDocumentStore();
-  const { wordPanelFontSize, accent } = useReaderStore();
+  // 只订阅需要的字段：整 store 订阅会在流式 chunk 上反复重渲染聚焦面板
+  const { wordAnalyses, sentenceAnalyses } = useDocumentStore(useShallow((s) => ({
+    wordAnalyses: s.wordAnalyses,
+    sentenceAnalyses: s.sentenceAnalyses,
+  })));
+  const { wordPanelFontSize, accent } = useReaderStore(useShallow((s) => ({
+    wordPanelFontSize: s.wordPanelFontSize,
+    accent: s.accent,
+  })));
 
   const wordAnalysis = type === 'word' ? wordAnalyses[analysisKey] : null;
   const sentenceAnalysis = type === 'sentence' ? sentenceAnalyses[analysisKey] : null;

@@ -853,6 +853,16 @@
   100% { box-shadow: 0 0 0 0 transparent; }
 }
 
+/* 解析面板跳转：正文句子 token 暖黄闪动（句子用暖黄，与词级暖橙区分） */
+.sentence-token-jump-flash {
+  animation: sentence-token-jump-flash-anim 1.8s ease-out;
+}
+@keyframes sentence-token-jump-flash-anim {
+  0% { background-color: rgb(250 204 21 / 0.5); box-shadow: 0 0 0 3px rgb(250 204 21 / 0.55); }
+  60% { background-color: rgb(250 204 21 / 0.25); box-shadow: 0 0 0 2px rgb(250 204 21 / 0.3); }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+
 /* ── Study panel: make Tailwind text sizes relative to container ── */
 .study-panel-content .text-xs { font-size: 0.75em; }
 .study-panel-content .text-sm { font-size: 0.875em; }

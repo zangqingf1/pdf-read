@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import load_only
 
 from app.auth.deps import get_current_user
+from app.api.deps import ai_rate_limit
 from app.config import settings
 from app.database import get_db
 from app.models.document import Document
@@ -158,6 +159,7 @@ async def analyze_sentences(
     request: SentenceAnalysisRequest,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    _rate_limit: None = Depends(ai_rate_limit),
 ):
     """Analyze selected sentences using AI (DeepSeek).
 
@@ -253,6 +255,7 @@ async def analyze_sentences_stream(
     request: SentenceAnalysisRequest,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    _rate_limit: None = Depends(ai_rate_limit),
 ):
     """Analyze sentences with SSE streaming — results arrive progressively.
 

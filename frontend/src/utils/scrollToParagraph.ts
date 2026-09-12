@@ -1,5 +1,6 @@
 const FLASH_DURATION = 1500;
 const WORD_FLASH_DURATION = 1800;
+const SENTENCE_FLASH_DURATION = 1800;
 
 export interface ScrollToParagraphOptions {
   /** scrollIntoView 的对齐方式，默认居中；移动端底部弹层遮挡时用 'start' */
@@ -12,13 +13,35 @@ export interface ScrollToParagraphOptions {
   retryIntervalMs?: number;
 }
 
+/** 每个元素上一个闪动清理定时器：连续点击同一目标时重置，避免旧定时器提前摘掉类名 */
+const _flashTimers = new WeakMap<HTMLElement, ReturnType<typeof setTimeout>>();
+
+/** 给元素重新播放一次闪动动画（先移除 + 强制回流，否则同类名不会重播） */
+function replayFlash(el: HTMLElement, className: string, duration: number): void {
+  const prev = _flashTimers.get(el);
+  if (prev) clearTimeout(prev);
+  el.classList.remove(className);
+  void el.offsetWidth;
+  el.classList.add(className);
+  _flashTimers.set(el, setTimeout(() => {
+    el.classList.remove(className);
+    _flashTimers.delete(el);
+  }, duration));
+}
+
 function flashWordToken(paragraphIndex: number, word: string): boolean {
-  const el = document.querySelector(
+  const el = document.querySelector<HTMLElement>(
     `[data-paragraph-index="${paragraphIndex}"] [data-word-key="${paragraphIndex}:${word.toLowerCase()}"]`,
   );
   if (!el) return false;
-  el.classList.add('word-token-jump-flash');
-  setTimeout(() => el.classList.remove('word-token-jump-flash'), WORD_FLASH_DURATION);
+  replayFlash(el, 'word-token-jump-flash', WORD_FLASH_DURATION);
+  return true;
+}
+
+function flashSentenceToken(paragraphIndex: number, sentenceIndex: number): boolean {
+  const el = findSentenceElement(paragraphIndex, sentenceIndex);
+  if (!el) return false;
+  replayFlash(el, 'sentence-token-jump-flash', SENTENCE_FLASH_DURATION);
   return true;
 }
 
@@ -27,11 +50,10 @@ function flashAndScroll(
   block: ScrollLogicalPosition,
   word?: string | null,
 ): boolean {
-  const el = document.querySelector(`[data-paragraph-index="${index}"]`);
+  const el = document.querySelector<HTMLElement>(`[data-paragraph-index="${index}"]`);
   if (!el) return false;
   el.scrollIntoView({ behavior: 'smooth', block });
-  el.classList.add('paragraph-flash');
-  setTimeout(() => el.classList.remove('paragraph-flash'), FLASH_DURATION);
+  replayFlash(el, 'paragraph-flash', FLASH_DURATION);
   if (word) flashWordToken(index, word);
   return true;
 }
@@ -74,7 +96,8 @@ function findSentenceElement(
 }
 
 /**
- * 滚动到指定段落的某一句话（句子 span 精确居中）。
+ * 滚动到指定段落的某一句话（句子 span 精确居中）并在原文中闪动该句
+ * （.sentence-token-jump-flash，与词级闪动区分色系）。
  * 与 scrollToParagraph 一样带元素未渲染重试；始终找不到时（段落被编辑/
  * 索引错位等）回退到整段定位，不静默失败。
  */
@@ -89,6 +112,7 @@ export function scrollToSentence(
     if (!el) return false;
     found = true;
     el.scrollIntoView({ behavior: 'smooth', block });
+    flashSentenceToken(paragraphIndex, sentenceIndex);
     return true;
   };
   if (scrollOnce()) return;

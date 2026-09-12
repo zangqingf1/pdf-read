@@ -16,31 +16,47 @@ interface PDFUploaderProps {
   onResumed?: () => void;
   onDocumentChanged?: () => void;
   onSelectionChange?: (selecting: boolean) => void;
+  /** 缺少 MinerU Token 时打开 API 配置弹窗 */
+  onRequireApiKey?: (notice: string) => void;
 }
 
-/** Simple toast-like message — replaces antd message */
-let toastMsg: ((msg: string) => void) | null = null;
-export function setToast(fn: (msg: string) => void) { toastMsg = fn; }
-function toast(msg: string) { toastMsg?.(msg); }
+const TOKEN_MISSING_MSG = 'MinerU API Token 未配置，请先填写 Token 后再解析文档';
 
 export default function PDFUploader({
   resumeTaskId,
   onResumed,
   onDocumentChanged,
   onSelectionChange,
+  onRequireApiKey,
 }: PDFUploaderProps) {
   const [phase, setPhase] = useState<UploadPhase>('idle');
   const [taskId, setTaskId] = useState<string | null>(null);
   const [parseProgress, setParseProgress] = useState(0);
-  const [parseStatus, setParseStatus] = useState<string>('');
+  const [parseError, setParseError] = useState<string>('');
   const [pageCount, setPageCount] = useState<number>(0);
   const [docTitle, setDocTitle] = useState<string>('');
   const [dragOver, setDragOver] = useState(false);
   const [inputMode, setInputMode] = useState<'file' | 'url'>('file');
   const [urlInput, setUrlInput] = useState('');
+  const [formError, setFormError] = useState('');
   const navigate = useNavigate();
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  /**
+   * 解析全程依赖 MinerU Token，缺失时后台任务只会以「解析失败」收场。
+   * 所以在上传/选页之前先校验：通过返回 token，否则内联提示并打开 API 配置弹窗。
+   */
+  const requireMineruToken = useCallback((): string | null => {
+    const token = getStoredMineruToken().trim();
+    if (!token) {
+      setFormError(TOKEN_MISSING_MSG);
+      onRequireApiKey?.(TOKEN_MISSING_MSG);
+      return null;
+    }
+    setFormError('');
+    return token;
+  }, [onRequireApiKey]);
 
   // Notify parent when entering/leaving selection phase
   useEffect(() => {
@@ -70,14 +86,13 @@ export default function PDFUploader({
     const poll = async () => {
       try {
         const result = await getPDFStatus(taskId);
-        setParseStatus(result.status);
         if (result.status === 'completed') {
           setParseProgress(100);
           setPhase('completed');
           onDocumentChanged?.();
           if (pollRef.current) clearInterval(pollRef.current);
         } else if (result.status === 'failed') {
-          toast(result.error || '文档解析失败');
+          setParseError(result.error || '文档解析失败');
           setPhase('failed');
           onDocumentChanged?.();
           if (pollRef.current) clearInterval(pollRef.current);
@@ -93,28 +108,30 @@ export default function PDFUploader({
   }, [phase, taskId]);
 
   const handleFile = useCallback(async (file: File) => {
+    const token = requireMineruToken();
+    if (!token) return;
+
     setPhase('uploading');
     setParseProgress(0);
     setDocTitle(file.name.replace(/\.[^.]+$/, ''));
 
     try {
-      const result = await uploadPDF(file, getStoredMineruToken() || undefined);
+      const result = await uploadPDF(file, token);
       setTaskId(result.task_id);
 
       if (result.status === 'awaiting_selection' && result.page_count != null) {
         setPageCount(result.page_count);
         setPhase('selection');
       } else {
-        setParseStatus('processing');
         setPhase('parsing');
       }
       onDocumentChanged?.();
     } catch (err: any) {
       const errorMsg = err?.response?.data?.detail || '上传失败，请重试';
-      toast(errorMsg);
+      setFormError(errorMsg);
       setPhase('idle');
     }
-  }, []);
+  }, [requireMineruToken]);
 
   const handleDrop = useCallback(
     (e: React.DragEvent) => {
@@ -129,7 +146,7 @@ export default function PDFUploader({
           return;
         }
       }
-      toast('请上传支持的文件（PDF、Word、PPT、Excel、图片或 HTML）');
+      setFormError('请上传支持的文件（PDF、Word、PPT、Excel、图片或 HTML）');
     },
     [handleFile]
   );
@@ -137,24 +154,26 @@ export default function PDFUploader({
   const handleUrlSubmit = useCallback(async () => {
     const url = urlInput.trim();
     if (!/^https?:\/\/.+/i.test(url)) {
-      toast('请输入以 http:// 或 https:// 开头的链接');
+      setFormError('请输入以 http:// 或 https:// 开头的链接');
       return;
     }
+    const token = requireMineruToken();
+    if (!token) return;
+
     setPhase('uploading');
     setParseProgress(0);
     setDocTitle(url.replace(/^https?:\/\//i, '').split('/')[0]);
     try {
-      const result = await parseUrl(url, getStoredMineruToken() || undefined);
+      const result = await parseUrl(url, token);
       setTaskId(result.task_id);
-      setParseStatus('processing');
       setPhase('parsing');
       onDocumentChanged?.();
     } catch (err: any) {
       const errorMsg = err?.response?.data?.detail || '链接解析失败，请重试';
-      toast(errorMsg);
+      setFormError(errorMsg);
       setPhase('idle');
     }
-  }, [urlInput]);
+  }, [urlInput, requireMineruToken]);
 
   const handleInputChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -169,52 +188,55 @@ export default function PDFUploader({
   const handlePageSelection = useCallback(
     async (pages: number[]) => {
       if (!taskId) return;
+      const token = requireMineruToken();
+      if (!token) return;
       setPhase('parsing');
       setParseProgress(0);
-      setParseStatus('processing');
       try {
         await selectPages({
           task_id: taskId,
           selected_pages: pages,
-          mineru_token: getStoredMineruToken() || undefined,
+          mineru_token: token,
         });
         onDocumentChanged?.();
       } catch (err: any) {
         const errorMsg = err?.response?.data?.detail || '页面选择失败';
-        toast(errorMsg);
+        setParseError(errorMsg);
         setPhase('failed');
       }
     },
-    [taskId]
+    [taskId, requireMineruToken]
   );
 
   const handleSkipSelection = useCallback(async () => {
     if (!taskId) return;
+    const token = requireMineruToken();
+    if (!token) return;
     setPhase('parsing');
     setParseProgress(0);
-    setParseStatus('processing');
     try {
       await selectPages({
         task_id: taskId,
         selected_pages: null,
-        mineru_token: getStoredMineruToken() || undefined,
+        mineru_token: token,
       });
       onDocumentChanged?.();
     } catch (err: any) {
       const errorMsg = err?.response?.data?.detail || '页面选择失败';
-      toast(errorMsg);
+      setParseError(errorMsg);
       setPhase('failed');
     }
-  }, [taskId]);
+  }, [taskId, requireMineruToken]);
 
   const handleReset = () => {
     setPhase('idle');
     setTaskId(null);
     setParseProgress(0);
-    setParseStatus('');
     setDocTitle('');
     setPageCount(0);
     setUrlInput('');
+    setFormError('');
+    setParseError('');
   };
 
   // ── Page Selection Phase ──
@@ -269,7 +291,7 @@ export default function PDFUploader({
           </svg>
         </div>
         <h3 className="text-display-sm font-display text-ink mb-2">文档解析失败</h3>
-        <p className="text-muted mb-6">{parseStatus || '请检查文件格式后重试'}</p>
+        <p className="text-muted mb-6">{parseError || '请检查文件格式后重试'}</p>
         <Button variant="primary" onClick={handleReset}>
           重新上传
         </Button>
@@ -331,6 +353,17 @@ export default function PDFUploader({
 
   return (
     <div className="bg-surface-overlay border border-hairline-soft rounded-xl shadow-soft overflow-hidden">
+      {/* 配置/接口错误提示（toast 未接入，错误必须内联可见） */}
+      {formError && (
+        <div className="flex items-start gap-2 px-6 md:px-8 py-2.5 bg-error/10 border-b border-error/20 text-[13px] text-error">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="flex-shrink-0 mt-0.5">
+            <circle cx="12" cy="12" r="10" />
+            <path d="M12 8v4M12 16h.01" />
+          </svg>
+          <span>{formError}</span>
+        </div>
+      )}
+
       {/* Tab 头：上传文件 / 粘贴链接 */}
       <div className="flex items-center gap-7 px-6 md:px-8 border-b border-hairline-soft">
         {renderTab('file', '上传文件')}

@@ -1,5 +1,6 @@
 from app.models.document import Document
 from app.models.email_verification import EmailVerification
+from app.models.feedback import Feedback
 from app.models.paragraph import Paragraph
 from app.models.prompt_template import PromptTemplate
 from app.models.qa_message import QaMessage
@@ -13,6 +14,7 @@ from app.models.daily_quote import DailyQuote
 __all__ = [
     "Document",
     "EmailVerification",
+    "Feedback",
     "Paragraph",
     "PromptTemplate",
     "QaMessage",

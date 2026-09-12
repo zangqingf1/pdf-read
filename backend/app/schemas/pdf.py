@@ -140,7 +140,8 @@ class UpdateParagraphItem(BaseModel):
 
 
 class UpdateParagraphsRequest(BaseModel):
-    paragraphs: list[UpdateParagraphItem]
+    # 校对页只提交被改动的段落（子集），2000 段足以覆盖真实文档
+    paragraphs: list[UpdateParagraphItem] = Field(..., max_length=2000)
 
 
 class UpdateParagraphsResponse(BaseModel):
@@ -167,7 +168,9 @@ class MergeParagraphsResponse(BaseModel):
 
 class ReorderParagraphsRequest(BaseModel):
     ordered_indices: list[int] = Field(
-        ..., description="New order of paragraph indices, e.g. [3, 1, 0, 2]"
+        ...,
+        max_length=2000,
+        description="New order of paragraph indices, e.g. [3, 1, 0, 2]",
     )
 
 

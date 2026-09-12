@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import { useDocumentStore } from '../../stores/documentStore';
 import { generateSummaryStream, saveSummaryDraft } from '../../services/summaryApi';
 import type { AIProvider } from '../../services/translateApi';
@@ -22,6 +23,8 @@ const DRAFT_SAVE_DEBOUNCE_MS = 1000;
  * 流式期间输入框锁定，完成后结果填回输入框（可继续编辑）。
  */
 export default function DocumentSummary({ apiKey, onRequireApiKey, provider }: DocumentSummaryProps) {
+  // 只订阅本组件真正使用的字段：此前整 store 订阅会在单词/句子流式的每个
+  // chunk 上重渲染整个总结区（与其无关）。
   const {
     documentId,
     summary,
@@ -35,7 +38,20 @@ export default function DocumentSummary({ apiKey, onRequireApiKey, provider }: D
     setSummaryError,
     appendSummaryStreamingText,
     clearSummaryStreamingText,
-  } = useDocumentStore();
+  } = useDocumentStore(useShallow((s) => ({
+    documentId: s.documentId,
+    summary: s.summary,
+    summaryDraft: s.summaryDraft,
+    isSummarizing: s.isSummarizing,
+    summaryError: s.summaryError,
+    summaryStreamingText: s.summaryStreamingText,
+    setSummary: s.setSummary,
+    setSummaryDraft: s.setSummaryDraft,
+    setSummarizing: s.setSummarizing,
+    setSummaryError: s.setSummaryError,
+    appendSummaryStreamingText: s.appendSummaryStreamingText,
+    clearSummaryStreamingText: s.clearSummaryStreamingText,
+  })));
 
   const summaryAbortRef = useRef<AbortController | null>(null);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);

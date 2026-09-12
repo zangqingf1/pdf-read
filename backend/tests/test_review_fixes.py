@@ -5,7 +5,8 @@ from datetime import timedelta
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import select
+from fastapi import HTTPException
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
@@ -16,7 +17,7 @@ from app.api.v1 import words as words_module
 from app.auth import verification as verification_module
 from app.auth.deps import get_current_user
 from app.auth.security import create_access_token
-from app.config import Settings
+from app.config import Settings, settings
 from app.database import Base
 from app.models.document import Document
 from app.models.email_verification import EmailVerification
@@ -95,6 +96,91 @@ async def test_verification_failed_attempt_persists_after_raise(db):
         )
     ).scalar_one()
     assert row.failed_attempts == 1
+
+
+async def _seed_code(db: AsyncSession, email: str, code: str = "123456") -> EmailVerification:
+    row = EmailVerification(
+        email=email,
+        purpose="register",
+        code_hash=verification_module.hash_code(code),
+        expires_at=verification_module._utcnow() + timedelta(minutes=10),
+    )
+    db.add(row)
+    await db.commit()
+    await db.refresh(row)
+    return row
+
+
+@pytest.mark.asyncio
+async def test_verification_failed_attempt_uses_db_side_increment(db, monkeypatch):
+    """并发丢失更新回归：本会话持有陈旧计数时，不得把数据库中的真实计数覆盖回去。
+
+    旧实现是 ``row.failed_attempts += 1``，会话里的陈旧快照会把并发请求已写入的
+    计数覆盖掉，于是 5 次尝试上限可以被并发绕过（6 位码在 TTL 内可爆破）。
+    新实现把自增放在 DB 侧，因此这里必须是 1 + 1 = 2。
+    """
+    monkeypatch.setattr(settings, "EMAIL_CODE_MAX_ATTEMPTS", 5)
+    email = "lostupdate@example.com"
+    row = await _seed_code(db, email)
+    row_id = row.id
+
+    # 模拟并发窗口：数据库里计数已是 1，而本会话身份映射里仍是 0
+    await db.execute(
+        update(EmailVerification)
+        .where(EmailVerification.id == row_id)
+        .values(failed_attempts=1)
+        .execution_options(synchronize_session=False)
+    )
+    await db.commit()
+    assert row.failed_attempts == 0, "前置条件：会话里必须是陈旧快照"
+
+    with pytest.raises(HTTPException) as exc:
+        await verification_module.consume_verification_code(db, email, "register", "000000")
+    assert exc.value.status_code == 400
+
+    db.expire_all()
+    after = (
+        await db.execute(
+            select(EmailVerification).where(EmailVerification.id == row_id)
+        )
+    ).scalar_one()
+    assert after.failed_attempts == 2, "陈旧快照覆盖了并发写入的计数（丢失更新）"
+
+
+@pytest.mark.asyncio
+async def test_verification_consume_is_single_winner(db, monkeypatch):
+    """消费是带条件的原子 UPDATE：第二次必须拿到 0 行，正确验证码也随之被拒。"""
+    monkeypatch.setattr(settings, "EMAIL_CODE_MAX_ATTEMPTS", 5)
+    email = "singlewinner@example.com"
+    row = await _seed_code(db, email)
+    now = verification_module._utcnow()
+
+    assert await verification_module._consume_row_atomically(db, row.id, now) == 1
+    await db.commit()
+    # 并发第二个请求：同一行再消费一次必须失败
+    assert await verification_module._consume_row_atomically(db, row.id, verification_module._utcnow()) == 0
+    await db.commit()
+
+    with pytest.raises(HTTPException) as exc:
+        await verification_module.consume_verification_code(db, email, "register", "123456")
+    assert exc.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_verification_cap_rejects_correct_code(db, monkeypatch):
+    """达到尝试上限后，正确验证码也失效（不能被“再试一次正确的”翻盘）。"""
+    monkeypatch.setattr(settings, "EMAIL_CODE_MAX_ATTEMPTS", 2)
+    email = "cap@example.com"
+    await _seed_code(db, email)
+
+    for _ in range(2):
+        with pytest.raises(HTTPException) as exc:
+            await verification_module.consume_verification_code(db, email, "register", "000000")
+        assert exc.value.status_code == 400
+
+    with pytest.raises(HTTPException) as exc:
+        await verification_module.consume_verification_code(db, email, "register", "123456")
+    assert exc.value.status_code == 400
 
 
 # ── Critical/High: Prompt 写入必须是管理员 ─────────────────────────

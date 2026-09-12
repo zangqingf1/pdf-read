@@ -6,7 +6,8 @@ from pydantic import BaseModel, Field
 
 
 class TranslateRequest(BaseModel):
-    paragraphs: list[str] = Field(..., min_length=0)
+    # 未设上限时单个请求可携带任意数量段落（整篇文档一次性发送）；2000 段远超实际文档
+    paragraphs: list[str] = Field(..., min_length=0, max_length=2000)
     title: str | None = Field(
         default=None,
         description="大标题原文，随段落一并翻译并持久化到 documents.title_zh "
@@ -20,6 +21,7 @@ class TranslateRequest(BaseModel):
     )
     indices: list[int] | None = Field(
         default=None,
+        max_length=2000,
         description="Real paragraph indices, positionally aligned with `paragraphs`. "
         "When omitted, positions are treated as indices (legacy behavior).",
     )

@@ -36,6 +36,9 @@ Thumbs.db
 uploads/
 backend/uploads/
 *.db
+# SQLite WAL sidecar files (journal_mode=WAL)
+*.db-wal
+*.db-shm
 
 # TTS disk cache
 backend/.tts_cache/

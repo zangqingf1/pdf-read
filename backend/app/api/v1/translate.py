@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import load_only
 
 from app.auth.deps import get_current_user
+from app.api.deps import ai_rate_limit
 from app.database import get_db, async_session_factory
 from app.models.document import Document
 from app.models.paragraph import Paragraph
@@ -171,6 +172,7 @@ async def translate_paragraphs(
     request: TranslateRequest,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    _rate_limit: None = Depends(ai_rate_limit),
 ):
     """Translate paragraphs using AI (DeepSeek).
 
@@ -277,6 +279,7 @@ async def translate_stream(
     request: TranslateRequest,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    _rate_limit: None = Depends(ai_rate_limit),
 ):
     """Translate paragraphs with SSE streaming — results arrive progressively.
 

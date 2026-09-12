@@ -237,6 +237,23 @@ async def _send_async_safe(
     await asyncio.to_thread(send_email, email, subject, text_body, html_body)
 
 
+async def _consume_row_atomically(db: AsyncSession, row_id, now: datetime) -> int:
+    """把一行标记为已消费，返回受影响行数。
+
+    条件里带 ``consumed_at IS NULL``，因此并发请求中只有一个能把行数改成 1 ——
+    这是「单次使用」真正的原子性来源（先 select 再赋值写回存在 TOCTOU 竞态）。
+    """
+    result = await db.execute(
+        update(EmailVerification)
+        .where(
+            EmailVerification.id == row_id,
+            EmailVerification.consumed_at.is_(None),
+        )
+        .values(consumed_at=now)
+    )
+    return result.rowcount or 0
+
+
 async def consume_verification_code(
     db: AsyncSession, email: str, purpose: str, code: str
 ) -> EmailVerification:
@@ -245,8 +262,14 @@ async def consume_verification_code(
     Raises HTTPException (400) with a user-friendly Chinese message on any
     failure. On success the row is marked consumed (flushed, not committed —
     the caller's transaction commits it together with its own changes).
+
+    Concurrency: both the consumption and the failed-attempt bump are single
+    conditional UPDATEs, so two parallel requests with the same code cannot
+    both succeed, and the attempt counter cannot lose updates — losing them
+    previously made the attempt cap bypassable by firing parallel guesses.
     """
     email = email.lower().strip()
+    now = _utcnow()
     row = (
         await db.execute(
             select(EmailVerification)
@@ -266,9 +289,8 @@ async def consume_verification_code(
             detail="验证码错误或已失效，请重新获取。",
         )
 
-    if row.expires_at < _utcnow():
-        row.consumed_at = _utcnow()  # invalidate expired code
-        await db.flush()
+    if row.expires_at < now:
+        await _consume_row_atomically(db, row.id, now)  # invalidate expired code
         # Commit the invalidation before raising: get_db would otherwise
         # roll back this write along with the HTTPException.
         await db.commit()
@@ -277,9 +299,10 @@ async def consume_verification_code(
             detail="验证码已过期，请重新获取。",
         )
 
-    if row.failed_attempts >= settings.EMAIL_CODE_MAX_ATTEMPTS:
-        row.consumed_at = _utcnow()  # invalidate exhausted code
-        await db.flush()
+    max_attempts = settings.EMAIL_CODE_MAX_ATTEMPTS
+
+    if row.failed_attempts >= max_attempts:
+        await _consume_row_atomically(db, row.id, now)  # invalidate exhausted code
         await db.commit()
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -287,16 +310,42 @@ async def consume_verification_code(
         )
 
     if not verify_code(code, row.code_hash):
-        row.failed_attempts += 1
-        if row.failed_attempts >= settings.EMAIL_CODE_MAX_ATTEMPTS:
-            row.consumed_at = _utcnow()  # invalidate on final failure
-        await db.flush()
+        # Atomic increment, guarded by "still under the cap": parallel wrong
+        # guesses can no longer overwrite each other's increment (lost update),
+        # which is what previously let an attacker exceed the attempt cap.
+        bumped = await db.execute(
+            update(EmailVerification)
+            .where(
+                EmailVerification.id == row.id,
+                EmailVerification.consumed_at.is_(None),
+                EmailVerification.failed_attempts < max_attempts,
+            )
+            .values(failed_attempts=EmailVerification.failed_attempts + 1)
+            .execution_options(synchronize_session=False)
+        )
+        if (bumped.rowcount or 0) == 0:
+            # Lost the race: a parallel request already consumed/exhausted it.
+            await db.commit()
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="验证码错误或已失效，请重新获取。",
+            )
+        # Re-read the authoritative counter; if this attempt hit the cap,
+        # invalidate the code so even a correct code is rejected afterwards.
+        await db.refresh(row)
+        if row.failed_attempts >= max_attempts:
+            await _consume_row_atomically(db, row.id, now)
         await db.commit()
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="验证码错误，请重新输入。",
         )
 
-    row.consumed_at = _utcnow()
+    # Correct code: the DB decides the single winner (rowcount == 1).
+    if await _consume_row_atomically(db, row.id, now) != 1:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="验证码错误或已失效，请重新获取。",
+        )
     await db.flush()
     return row

@@ -8,6 +8,8 @@ monkeypatch `subprocess.run`：解析 cmd 中的 --print-to-pdf= 路径写入伪
 import os
 import subprocess
 import tempfile
+import urllib.error
+import urllib.request
 
 import pytest
 from fastapi import HTTPException
@@ -82,13 +84,18 @@ async def test_render_html_to_pdf(fake_chrome):
     cmd = fake_chrome[0]
     assert "--headless=new" in cmd
     assert "--no-pdf-header-footer" in cmd
-    assert "--disable-javascript" in cmd
-    # SSRF 防护：禁网参数必须存在
-    assert "--host-resolver-rules=MAP * ~NOTFOUND" in cmd
+    # `--disable-javascript` 在 --headless=new 下是空操作（实测脚本仍执行），
+    # 脚本拦截由 _ExportHtmlServer 下发的 CSP 负责，不要再加回这个误导性参数。
+    assert "--disable-javascript" not in cmd
+    # SSRF/本地文件防护：禁网参数必须存在，且要放行本次回环渲染服务
+    assert "--host-resolver-rules=MAP * ~NOTFOUND,EXCLUDE 127.0.0.1" in cmd
     assert "--disable-background-networking" in cmd
     assert "--user-data-dir=" in " ".join(cmd)
     assert any(arg.startswith("--print-to-pdf=") for arg in cmd)
-    assert any(arg.startswith("file://") for arg in cmd)
+    # 文档源必须是回环 HTTP（http: 源下 Chrome 拒绝加载 file:// 子资源），
+    # 绝不能再回到 file:// —— 那等于把服务器本地文件读取放回来。
+    assert any(arg.startswith("http://127.0.0.1:") for arg in cmd)
+    assert not any(arg.startswith("file://") for arg in cmd)
     assert any(arg.startswith("--virtual-time-budget=") for arg in cmd)
 
 
@@ -155,3 +162,37 @@ async def test_export_pdf_error_mapping(monkeypatch):
     with pytest.raises(HTTPException) as exc:
         await export_pdf(body=type("Body", (), {"html": "<html></html>"})(), current_user=_FakeUser())
     assert exc.value.status_code == 502
+
+
+def test_export_html_server_serves_csp_and_404s_other_paths():
+    """回环服务只认带 token 的路径，并由响应头下发阻断脚本/外链的 CSP。
+
+    这是 file:// 本地文件读取漏洞的核心缓解：文档源是 http:，且 CSP 覆盖整篇文档。
+    """
+    payload = b"<html><body>hi</body></html>"
+    with export_service._ExportHtmlServer(payload) as server:
+        assert server.url.startswith("http://127.0.0.1:")
+        with urllib.request.urlopen(server.url, timeout=10) as resp:
+            assert resp.read() == payload
+            assert resp.headers["Content-Security-Policy"] == export_service._EXPORT_CSP
+            assert resp.headers["X-Content-Type-Options"] == "nosniff"
+            assert resp.headers["Cache-Control"] == "no-store"
+            assert "text/html" in resp.headers["Content-Type"]
+            # 没有 CSP 就挡不住脚本，缺了它这个测试必须失败
+            assert "default-src 'none'" in resp.headers["Content-Security-Policy"]
+
+        wrong_path = server.url.rsplit("/", 1)[0] + "/wrong-token"
+        with pytest.raises(urllib.error.HTTPError) as exc:
+            urllib.request.urlopen(wrong_path, timeout=10)
+        assert exc.value.code == 404
+
+
+def test_export_html_server_bind_failure_fails_closed(monkeypatch):
+    """回环服务起不来时必须直接报错，不能悄悄降级回 file://。"""
+
+    def _boom(*args, **kwargs):
+        raise OSError("loopback unavailable")
+
+    monkeypatch.setattr("http.server.ThreadingHTTPServer", _boom)
+    with pytest.raises(export_service.ChromeRenderError):
+        export_service._ExportHtmlServer(b"<html></html>")

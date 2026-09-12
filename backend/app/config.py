@@ -57,6 +57,11 @@ class Settings(BaseSettings):
     # ── Avatar upload ──
     AVATAR_MAX_MB: int = 2
 
+    # ── 问题反馈截图上传 ──
+    FEEDBACK_MAX_MB: int = 5  # 单张截图大小上限
+    FEEDBACK_MAX_IMAGES: int = 9  # 每条反馈最多几张截图
+    FEEDBACK_MAX_TOTAL_MB: int = 20  # 单条反馈全部截图总大小上限
+
     # CORS
     CORS_ORIGINS: str = (
         "http://localhost:5173,http://localhost:3000,"
@@ -107,6 +112,16 @@ class Settings(BaseSettings):
     TTS_CACHE_MAX_MB: int = 200
     # TTS 每用户每分钟最大合成次数（进程内令牌桶）
     TTS_RATE_LIMIT_PER_MIN: int = 60
+
+    # 按用户限流（进程内滑动窗口，每分钟请求数；0 = 关闭）
+    # AI/SSE 端点共享一个全局并发信号量，无限流时单用户可占满所有槽位饿死其他用户
+    AI_RATE_LIMIT_PER_MIN: int = 30
+    # 每次导出都会拉起一个 Chrome 进程（全局并发上限 2），配额要更紧
+    EXPORT_RATE_LIMIT_PER_MIN: int = 10
+    # 考纲匹配走本地 ECDICT 大表查询，属 CPU 消耗点
+    SYLLABUS_MATCH_RATE_LIMIT_PER_MIN: int = 30
+    # 反馈提交带可选截图落盘（磁盘消耗点），按小时限流而非按分钟
+    FEEDBACK_RATE_LIMIT_PER_HOUR: int = 10
 
 
     class Config:

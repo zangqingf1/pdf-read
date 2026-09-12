@@ -7,9 +7,11 @@
 段落朗读额外携带 WordBoundary 词级时间戳（100ns 单位），供前端做卡拉OK高亮。
 """
 
+import asyncio
 import hashlib
 import json
 import re
+import threading
 from pathlib import Path
 
 import edge_tts
@@ -42,56 +44,90 @@ _cache_dir: Path | None = Path(__file__).resolve().parent.parent.parent / ".tts_
 # 磁盘缓存总容量上限（字节），超限按 mtime 淘汰最旧文件
 _CACHE_MAX_BYTES = settings.TTS_CACHE_MAX_MB * 1024 * 1024
 
+# 磁盘缓存「目录 → 当前总字节数」的运行计数：首次写入实测一次，之后增量维护，
+# 只有真正超限时才再全目录扫描淘汰。目录被替换（测试 monkeypatch）会自动重测。
+_disk_state: tuple[Path, int] | None = None
+_disk_lock = threading.Lock()
+
 
 class TTSUnavailableError(Exception):
     """edge-tts 合成失败（网络不可达 / 微软服务异常）。"""
 
 
-def _evict_disk_cache_if_needed() -> None:
-    """Keep the disk cache directory under TTS_CACHE_MAX_MB.
+def _scan_disk_bytes_locked() -> int:
+    """实测缓存目录总字节数（仅首次写入与超限淘汰时调用）。"""
+    if _cache_dir is None or not _cache_dir.is_dir():
+        return 0
+    total = 0
+    for p in _cache_dir.iterdir():
+        if not p.is_file():
+            continue
+        try:
+            total += p.stat().st_size
+        except OSError:
+            continue
+    return total
 
-    Best-effort: walks all files and deletes oldest-mtime entries (mp3 与其
-    sidecar json 成对淘汰) until total size fits. Silent on any OSError.
+
+def _evict_disk_cache_locked() -> int:
+    """超限时删除最旧文件（mp3 与 sidecar json 成对淘汰），返回剩余字节数。
+
+    调用方持有 ``_disk_lock``，且仅在计数超限时进入这里。
     """
     if _cache_dir is None or not _cache_dir.is_dir():
-        return
-    try:
-        sized = []
-        total = 0
-        for p in _cache_dir.iterdir():
-            if not p.is_file():
-                continue
+        return 0
+    sized: list[tuple[float, int, Path]] = []
+    total = 0
+    for p in _cache_dir.iterdir():
+        if not p.is_file():
+            continue
+        try:
+            st = p.stat()
+        except OSError:
+            continue
+        sized.append((st.st_mtime, st.st_size, p))
+        total += st.st_size
+    if total <= _CACHE_MAX_BYTES:
+        return total
+    by_path = {p: size for _, size, p in sized}
+    sized.sort(key=lambda t: t[0])  # oldest first
+    for _, _, p in sized:
+        if total <= _CACHE_MAX_BYTES:
+            break
+        base = str(p)
+        victims = [p]
+        if base.endswith(".mp3"):
+            victims.append(Path(base[: -len(".mp3")] + ".json"))
+        elif base.endswith(".json"):
+            victims.append(Path(base[: -len(".json")] + ".mp3"))
+        for victim in victims:
+            info = by_path.get(victim)
             try:
-                st = p.stat()
+                if victim.exists():
+                    victim.unlink()
             except OSError:
                 continue
-            sized.append((st.st_mtime, st.st_size, p))
-            total += st.st_size
-        if total <= _CACHE_MAX_BYTES:
-            return
-        by_path = {p: size for _, size, p in sized}
-        sized.sort(key=lambda t: t[0])  # oldest first
-        for _, _, p in sized:
-            if total <= _CACHE_MAX_BYTES:
-                break
-            base = str(p)
-            victims = [p]
-            if base.endswith(".mp3"):
-                victims.append(Path(base[: -len(".mp3")] + ".json"))
-            elif base.endswith(".json"):
-                victims.append(Path(base[: -len(".json")] + ".mp3"))
-            for victim in victims:
-                info = by_path.get(victim)
-                try:
-                    if victim.exists():
-                        victim.unlink()
-                except OSError:
-                    continue
-                if info is not None:
-                    total -= info
-                    by_path.pop(victim, None)
-    except OSError:
-        pass
+            if info is not None:
+                total -= info
+                by_path.pop(victim, None)
+    return total
+
+
+def _save_disk_files_locked(entries: list[tuple[Path, bytes]]) -> None:
+    """写入文件并维护运行中的字节总数，仅在超限时触发一次全目录淘汰。"""
+    global _disk_state
+    assert _cache_dir is not None
+    written = 0
+    for path, data in entries:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+        written += len(data)
+    if _disk_state is None or _disk_state[0] != _cache_dir:
+        _disk_state = (_cache_dir, _scan_disk_bytes_locked())
+    else:
+        _disk_state = (_cache_dir, _disk_state[1] + written)
+    if _disk_state[1] > _CACHE_MAX_BYTES:
+        _disk_state = (_cache_dir, _evict_disk_cache_locked())
 
 
 def _store_memory(key: tuple[str, str], data: bytes) -> bytes:
@@ -121,11 +157,23 @@ def _save_disk(word: str, accent: str, data: bytes) -> None:
     if _cache_dir is None:
         return
     try:
-        _cache_dir.mkdir(parents=True, exist_ok=True)
-        _evict_disk_cache_if_needed()
-        _disk_path(word, accent).write_bytes(data)
+        with _disk_lock:
+            _save_disk_files_locked([(_disk_path(word, accent), data)])
     except OSError:
         pass  # 磁盘不可写时静默降级，不影响内存缓存
+
+
+async def _load_disk_async(word: str, accent: str) -> bytes | None:
+    """磁盘缓存在线程池读取：同步 read_bytes 会阻塞事件循环。"""
+    if _cache_dir is None:
+        return None
+    return await asyncio.to_thread(_load_disk, word, accent)
+
+
+async def _save_disk_async(word: str, accent: str, data: bytes) -> None:
+    if _cache_dir is None:
+        return
+    await asyncio.to_thread(_save_disk, word, accent, data)
 
 
 async def synthesize(word: str, accent: str) -> bytes:
@@ -141,7 +189,7 @@ async def synthesize(word: str, accent: str) -> bytes:
     if cached is not None:
         return cached
 
-    disk = _load_disk(word, accent)
+    disk = await _load_disk_async(word, accent)
     if disk is not None:
         return _store_memory(key, disk)
 
@@ -162,7 +210,7 @@ async def synthesize(word: str, accent: str) -> bytes:
 
     data = b"".join(chunks)
     _store_memory(key, data)
-    _save_disk(word, accent, data)
+    await _save_disk_async(word, accent, data)
     return data
 
 
@@ -191,16 +239,27 @@ def _para_disk_load(text: str, accent: str, rate: str) -> tuple[bytes, list[dict
 def _para_disk_save(text: str, accent: str, rate: str, audio: bytes, boundaries: list[dict]) -> None:
     if _cache_dir is None:
         return
+    base = _para_disk_path(text, accent, rate)
+    meta = json.dumps(boundaries, ensure_ascii=False).encode("utf-8")
     try:
-        _cache_dir.mkdir(parents=True, exist_ok=True)
-        _evict_disk_cache_if_needed()
-        base = _para_disk_path(text, accent, rate)
-        Path(f"{base}.mp3").write_bytes(audio)
-        Path(f"{base}.json").write_text(
-            json.dumps(boundaries, ensure_ascii=False), encoding="utf-8"
-        )
+        with _disk_lock:
+            _save_disk_files_locked([(Path(f"{base}.mp3"), audio), (Path(f"{base}.json"), meta)])
     except OSError:
         pass  # 磁盘不可写时静默降级
+
+
+async def _para_disk_load_async(text: str, accent: str, rate: str) -> tuple[bytes, list[dict]] | None:
+    if _cache_dir is None:
+        return None
+    return await asyncio.to_thread(_para_disk_load, text, accent, rate)
+
+
+async def _para_disk_save_async(
+    text: str, accent: str, rate: str, audio: bytes, boundaries: list[dict]
+) -> None:
+    if _cache_dir is None:
+        return
+    await asyncio.to_thread(_para_disk_save, text, accent, rate, audio, boundaries)
 
 
 def validate_rate(rate: str) -> str:
@@ -238,7 +297,7 @@ async def synthesize_paragraph(
     if cached is not None:
         return cached
 
-    disk = _para_disk_load(text, accent, rate)
+    disk = await _para_disk_load_async(text, accent, rate)
     if disk is not None:
         if len(_para_cache) >= _MAX_PARA_CACHE:
             _para_cache.pop(next(iter(_para_cache)))
@@ -278,5 +337,5 @@ async def synthesize_paragraph(
     if len(_para_cache) >= _MAX_PARA_CACHE:
         _para_cache.pop(next(iter(_para_cache)))
     _para_cache[key] = result
-    _para_disk_save(text, accent, rate, audio, boundaries)
+    await _para_disk_save_async(text, accent, rate, audio, boundaries)
     return result

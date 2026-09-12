@@ -18,6 +18,7 @@ from sqlalchemy import update, select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.deps import get_current_user
+from app.api.deps import ai_rate_limit
 from app.config import settings
 from app.database import get_db
 from app.models.document import Document
@@ -82,6 +83,7 @@ async def summarize_document_stream(
     request: SummaryRequest,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    _rate_limit: None = Depends(ai_rate_limit),
 ):
     """Stream a full-document summary (or a revision of the user's draft).
 

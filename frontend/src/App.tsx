@@ -1,6 +1,8 @@
 import { Component, lazy, Suspense, type ReactNode, useEffect } from 'react';
-import { Routes, Route } from 'react-router-dom';
+import { Routes, Route, Navigate } from 'react-router-dom';
 import ProtectedRoute from './components/common/ProtectedRoute';
+import EntryRoute from './components/common/EntryRoute';
+import PublicOnlyRoute from './components/common/PublicOnlyRoute';
 import AdminRouteGuard from './components/admin/AdminRouteGuard';
 import AdminLayout from './components/admin/AdminLayout';
 import { PageSpinner } from './components/ui/Spinner';
@@ -18,11 +20,13 @@ const LoginPage = lazy(() => import('./pages/LoginPage'));
 const RegisterPage = lazy(() => import('./pages/RegisterPage'));
 const ForgotPasswordPage = lazy(() => import('./pages/ForgotPasswordPage'));
 const ProfilePage = lazy(() => import('./pages/ProfilePage'));
+const FeedbackPage = lazy(() => import('./pages/FeedbackPage'));
 const AdminDashboard = lazy(() => import('./pages/admin/AdminDashboard'));
 const AdminUsers = lazy(() => import('./pages/admin/AdminUsers'));
 const AdminDocuments = lazy(() => import('./pages/admin/AdminDocuments'));
 const AdminPrompts = lazy(() => import('./pages/admin/AdminPrompts'));
 const AdminQuotes = lazy(() => import('./pages/admin/AdminQuotes'));
+const AdminFeedback = lazy(() => import('./pages/admin/AdminFeedback'));
 
 // ── Error Boundary (no Ant Design dependency) ──
 class ErrorBoundary extends Component<
@@ -78,11 +82,39 @@ export default function App() {
       <div className="min-h-screen bg-canvas">
         <Suspense fallback={<PageSpinner />}>
           <Routes>
-          {/* Public routes */}
-          <Route path="/welcome" element={<LandingPage />} />
-          <Route path="/login" element={<LoginPage />} />
-          <Route path="/register" element={<RegisterPage />} />
-          <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+          {/* Public routes — 已登录用户访问时回主页 */}
+          <Route
+            path="/welcome"
+            element={
+              <PublicOnlyRoute>
+                <LandingPage />
+              </PublicOnlyRoute>
+            }
+          />
+          <Route
+            path="/login"
+            element={
+              <PublicOnlyRoute>
+                <LoginPage />
+              </PublicOnlyRoute>
+            }
+          />
+          <Route
+            path="/register"
+            element={
+              <PublicOnlyRoute>
+                <RegisterPage />
+              </PublicOnlyRoute>
+            }
+          />
+          <Route
+            path="/forgot-password"
+            element={
+              <PublicOnlyRoute>
+                <ForgotPasswordPage />
+              </PublicOnlyRoute>
+            }
+          />
 
           {/* Protected routes */}
           <Route
@@ -93,14 +125,22 @@ export default function App() {
               </ProtectedRoute>
             }
           />
+          <Route
+            path="/feedback"
+            element={
+              <ProtectedRoute>
+                <FeedbackPage />
+              </ProtectedRoute>
+            }
+          />
 
-          {/* Protected routes */}
+          {/* 入口闸门：已登录→主页 / 首次访问→欢迎页 / 老访客未登录→登录页 */}
           <Route
             path="/"
             element={
-              <ProtectedRoute>
+              <EntryRoute>
                 <HomePage />
-              </ProtectedRoute>
+              </EntryRoute>
             }
           />
           <Route
@@ -150,7 +190,11 @@ export default function App() {
             <Route path="documents" element={<AdminDocuments />} />
             <Route path="prompts" element={<AdminPrompts />} />
             <Route path="quotes" element={<AdminQuotes />} />
+            <Route path="feedback" element={<AdminFeedback />} />
           </Route>
+
+          {/* 未知路径兜底到入口闸门（此前是空白页） */}
+          <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
         </Suspense>
       </div>
